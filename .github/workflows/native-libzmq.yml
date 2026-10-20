@@ -24,7 +24,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download and verify upstream source
         run: |
@@ -46,14 +46,15 @@ jobs:
           cmake --build build --config Release --target quote_bridge_zmq native_probe --parallel
           if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
-
       - name: Inspect DLL (machine, exports, imports)
         run: |
           $dll = (Resolve-Path build/Release/libzmq-mt-4_3_5.dll).Path
           New-Item -ItemType Directory out | Out-Null
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          $bin = "$vs\VC\Tools\MSVC\$tools\bin\Hostx64\x86"
+          function dumpbin { & "$bin\dumpbin.exe" /nologo @args }
           dumpbin /headers $dll > out/headers.txt
           dumpbin /exports $dll > out/exports.txt
           dumpbin /imports $dll > out/imports.txt
@@ -68,7 +69,8 @@ jobs:
           "Exports: $($actual -join ', ')"
           "Imports: $($deps -join ', ')"
           (Get-FileHash $dll -Algorithm SHA256).Hash | Tee-Object out/libzmq-mt-4_3_5.dll.sha256
-          cl 2>&1 | Select-Object -First 1 | Tee-Object out/compiler.txt
+          $banner = (& "$bin\cl.exe" 2>&1 | Out-String) -split "`r?`n" | Where-Object { $_ -match 'Version' } | Select-Object -First 1
+          "$($banner.Trim()); MSVC toolset $tools; $(cmake --version | Select-Object -First 1)" | Tee-Object out/compiler.txt
 
       - name: ABI probe (inproc only, 15 s timeout)
         run: |
@@ -79,7 +81,7 @@ jobs:
           Get-Content out/probe.txt, out/probe-err.txt
           if ($p.ExitCode -ne 0) { throw "Probe failed with exit code $($p.ExitCode)" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: libzmq-mt-4_3_5-x86
           path: |
