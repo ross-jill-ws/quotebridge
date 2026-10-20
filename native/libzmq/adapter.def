@@ -1,0 +1,13 @@
+LIBRARY libzmq-mt-4_3_5
+EXPORTS
+    zmq_ctx_new=_qb_zmq_ctx_new@0
+    zmq_ctx_term=_qb_zmq_ctx_term@4
+    zmq_socket=_qb_zmq_socket@8
+    zmq_close=_qb_zmq_close@4
+    zmq_connect=_qb_zmq_connect@8
+    zmq_setsockopt=_qb_zmq_setsockopt@16
+    zmq_send=_qb_zmq_send@16
+    zmq_recv=_qb_zmq_recv@16
+    zmq_errno=_qb_zmq_errno@0
+    zmq_version=_qb_zmq_version@12
+    zmq_getsockopt=_qb_zmq_getsockopt@16

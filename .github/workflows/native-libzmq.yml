@@ -1,0 +1,86 @@
+name: native libzmq (x86)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - native/libzmq/**
+      - .github/workflows/native-libzmq.yml
+
+permissions:
+  contents: read
+
+env:
+  ZMQ_VERSION: 4.3.5
+  ZMQ_ZIP_URL: https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.zip
+  ZMQ_ZIP_SHA256: 276F5C9213589C4ECF0D8C836018604E7A56542B10913CFC16D0ADCFBC04298C
+  ZMQ_ZIP_SHA1: A8A8B800CBB3E13DB0246473362D4D1F17813879
+
+jobs:
+  build-x86:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify upstream source
+        run: |
+          $zip = "$env:RUNNER_TEMP\zeromq-$env:ZMQ_VERSION.zip"
+          Invoke-WebRequest $env:ZMQ_ZIP_URL -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $env:ZMQ_ZIP_SHA256) { throw 'Archive SHA256 mismatch' }
+          if ((Get-FileHash $zip -Algorithm SHA1).Hash -ne $env:ZMQ_ZIP_SHA1) { throw 'Archive SHA1 mismatch' }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\upstream"
+          "ZMQ_SOURCE_DIR=$env:RUNNER_TEMP\upstream\zeromq-$env:ZMQ_VERSION" >> $env:GITHUB_ENV
+
+      - name: Configure and build (Win32, Release, static CRT)
+        run: |
+          cmake -S native/libzmq -B build -A Win32 "-DZMQ_SOURCE_DIR=$env:ZMQ_SOURCE_DIR" `
+            '-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT' `
+            '-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT' `
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+          cmake --build build --config Release --target quote_bridge_zmq native_probe --parallel
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Inspect DLL (machine, exports, imports)
+        run: |
+          $dll = (Resolve-Path build/Release/libzmq-mt-4_3_5.dll).Path
+          New-Item -ItemType Directory out | Out-Null
+          dumpbin /headers $dll > out/headers.txt
+          dumpbin /exports $dll > out/exports.txt
+          dumpbin /imports $dll > out/imports.txt
+          if (-not (Select-String -Path out/headers.txt -Pattern '14C machine \(x86\)' -Quiet)) { throw 'Not an x86 DLL' }
+          $expected = @('zmq_close','zmq_connect','zmq_ctx_new','zmq_ctx_term','zmq_errno','zmq_getsockopt','zmq_recv','zmq_send','zmq_setsockopt','zmq_socket','zmq_version')
+          $actual = Select-String -Path out/exports.txt -Pattern '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object
+          if (Compare-Object $expected $actual) { Get-Content out/exports.txt; throw "Export mismatch: $($actual -join ', ')" }
+          $deps = Select-String -Path out/imports.txt -Pattern '^\s{4}(\S+\.dll)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.ToUpper() } | Sort-Object -Unique
+          $allowed = @('ADVAPI32.DLL','IPHLPAPI.DLL','KERNEL32.DLL','WS2_32.DLL')
+          $extra = $deps | Where-Object { $_ -notin $allowed }
+          if ($extra) { throw "Unexpected DLL dependencies: $($extra -join ', ')" }
+          "Exports: $($actual -join ', ')"
+          "Imports: $($deps -join ', ')"
+          (Get-FileHash $dll -Algorithm SHA256).Hash | Tee-Object out/libzmq-mt-4_3_5.dll.sha256
+          cl 2>&1 | Select-Object -First 1 | Tee-Object out/compiler.txt
+
+      - name: ABI probe (inproc only, 15 s timeout)
+        run: |
+          $dll = (Resolve-Path build/Release/libzmq-mt-4_3_5.dll).Path
+          $p = Start-Process build/Release/native_probe.exe -ArgumentList "`"$dll`"" -NoNewWindow -PassThru `
+            -RedirectStandardOutput out/probe.txt -RedirectStandardError out/probe-err.txt
+          if (-not $p.WaitForExit(15000)) { $p.Kill(); throw 'Probe timed out' }
+          Get-Content out/probe.txt, out/probe-err.txt
+          if ($p.ExitCode -ne 0) { throw "Probe failed with exit code $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libzmq-mt-4_3_5-x86
+          path: |
+            build/Release/libzmq-mt-4_3_5.dll
+            out/
