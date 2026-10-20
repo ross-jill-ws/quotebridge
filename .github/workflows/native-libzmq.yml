@@ -38,7 +38,7 @@ jobs:
       - name: Configure and build (Win32, Release, static CRT)
         run: |
           # Upstream 4.3.5 declares cmake_minimum_required < 3.5, which CMake 4 rejects without this.
-          cmake -S native/libzmq -B build -A Win32 "-DZMQ_SOURCE_DIR=$env:ZMQ_SOURCE_DIR" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+          cmake -S native/libzmq -B build -A Win32 "-DZMQ_SOURCE_DIR=$env:ZMQ_SOURCE_DIR" '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' `
             '-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT' `
             '-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT' `
             '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
