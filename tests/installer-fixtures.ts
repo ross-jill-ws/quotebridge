@@ -62,9 +62,10 @@ export class InstallerFixture {
   /**
    * A bridge bundle. By default the real mt4/ sources and a dummy 4.3.5 DLL folder. `changeEa`
    * edits the bundled QuoteBridge.mq4 (a new app version); `dll` swaps in another DLL version, and
-   * the bundled EA then imports that file name.
+   * the bundled EA then imports that file name. `changeTemplate` edits the bundled QuoteBridge.tpl
+   * (a chart setting, kept valid); `changeNotice` edits the MPL-2.0 notice next to the DLL.
    */
-  async bundle(name = "bundle", options: { changeEa?: string; dll?: { file: string; bytes: Buffer } } = {}): Promise<{ sourceFolder: string; dllFolder: string }> {
+  async bundle(name = "bundle", options: { changeEa?: string; changeTemplate?: string; changeNotice?: string; dll?: { file: string; bytes: Buffer } } = {}): Promise<{ sourceFolder: string; dllFolder: string }> {
     const sourceFolder = join(this.root, name, "mt4");
     await cp(REPO_MT4_FOLDER, sourceFolder, { recursive: true });
     const dll = options.dll ?? { file: "libzmq-mt-4_3_5.dll", bytes: DLL_4_3_5 };
@@ -76,10 +77,17 @@ export class InstallerFixture {
       const mq4 = join(sourceFolder, "Experts", "QuoteBridge.mq4");
       await writeFile(mq4, (await readFile(mq4, "utf8")) + `\r\n// ${options.changeEa}\r\n`);
     }
+    if (options.changeTemplate) {
+      const tpl = join(sourceFolder, "Templates", "QuoteBridge.tpl");
+      const text = await readFile(tpl, "utf8");
+      if (!text.includes("scale=8")) throw new Error("fixture: the bundled template has no scale=8 to change");
+      await writeFile(tpl, text.replace("scale=8", "scale=4"));
+    }
     const dllFolder = join(this.root, name, "native");
     await mkdir(dllFolder, { recursive: true });
     await writeFile(join(dllFolder, dll.file), dll.bytes);
     for (const [file, text] of Object.entries(NATIVE_NOTICES)) await writeFile(join(dllFolder, file), text);
+    if (options.changeNotice) await writeFile(join(dllFolder, "QuoteBridgeNative-LICENSE.txt"), NATIVE_NOTICES["QuoteBridgeNative-LICENSE.txt"] + options.changeNotice + "\r\n");
     return { sourceFolder, dllFolder };
   }
 }

@@ -8,7 +8,7 @@ import { compileWithMetaEditor, type CompileOutcome, type MetaEditorProcesses } 
 import { terminalIdFor } from "../../shared/terminal-catalog/index.js";
 import { EA_SOURCE_TARGET, EA_TARGET, isDll, loadBridgeBundle, sha256, TEMPLATE_TARGET, type BridgeBundle, type BridgeBundleFolders, type BundledFile } from "./bundle.js";
 import { errorCode, nodeInstallerFileSystem, readIfPresent, writeFileAtomic, type InstallerFileSystem } from "./file-system.js";
-import { emptyRecord, InstallRecords, type InstallFailure, type InstallRecord, type RecordedFile } from "./install-record.js";
+import { emptyRecord, InstallRecords, type InstallFailure, type InstallRecord, type InstalledBridge, type RecordedFile } from "./install-record.js";
 import { serverEndpointFor, substituteTemplate, templateTerminalId } from "./template.js";
 
 /** A terminal to install into (a detected terminal fits). */
@@ -33,12 +33,19 @@ export interface BridgeInstallerOptions {
  * - `not-installed`: no bridge files from this app or the legacy setup.
  * - `installing`: an install is running now.
  * - `installed`: the bundled EA version is installed (`eaVersion`).
- * - `outdated`: installed, but the app's bundled EA sources changed since.
+ * - `outdated`: installed, but the app's bundled bridge files (EA sources, template, DLL, notices) changed since.
  * - `compile-failed`: the last install of the current sources failed to compile (`lastFailure`).
  * - `no-metaeditor`: the installation folder has no `metaeditor.exe`; the terminal can't be managed.
  * - `installed-legacy`: bridge files from the legacy manual setup, no install by this app.
  */
 export type TerminalInstallState = "not-installed" | "installing" | "installed" | "outdated" | "compile-failed" | "no-metaeditor" | "installed-legacy";
+
+/**
+ * Why an installed terminal needs the normal install path again (ADR 9):
+ * - `bridge-files`: the app's bundled bridge files (EA sources, template, DLL, notices) differ from the install record.
+ * - `server-endpoint`: the installed template points at another EA port than the app's.
+ */
+export type UpdateReason = "bridge-files" | "server-endpoint";
 
 export interface TerminalInstallStatus {
   terminalId: string;
@@ -144,7 +151,7 @@ export class BridgeInstaller {
     if (this.installing.has(terminalId)) status.state = "installing";
     else if (status.lastFailure?.reason === "no-metaeditor") status.state = "no-metaeditor";
     else if (status.lastFailure?.stage === "compile") status.state = "compile-failed";
-    else if (record?.installed && record.installed.sourceHash === bundle.sourceHash) status.state = "installed";
+    else if (record?.installed && isCurrent(record.installed, bundle)) status.state = "installed";
     else if (!(await this.hasMetaEditor(target))) status.state = "no-metaeditor";
     else if (record?.installed) status.state = "outdated";
     else if (await this.hasLegacyFiles(target.dataFolder)) {
@@ -154,6 +161,15 @@ export class BridgeInstaller {
       if (legacyId) status.legacyTerminalId = legacyId;
     }
     return status;
+  }
+
+  /** Why the app's install in this terminal is out of date; null when it is current or the app has not installed here. */
+  async updateReason(target: InstallTarget, settings: { eaPort: number }): Promise<UpdateReason | null> {
+    const installed = (await this.records.read(terminalIdFor(target.dataFolder)))?.installed;
+    if (!installed) return null;
+    if (!isCurrent(installed, await this.loadBundle())) return "bridge-files";
+    if (installed.serverEndpoint !== serverEndpointFor(settings.eaPort)) return "server-endpoint";
+    return null;
   }
 
   /**
@@ -273,6 +289,7 @@ export class BridgeInstaller {
         installed: {
           eaVersion: bundle.eaVersion,
           sourceHash: bundle.sourceHash,
+          bundleHash: bundle.bundleHash,
           serverEndpoint,
           terminalId,
           dllName: bundle.dllName,
@@ -439,6 +456,11 @@ export class BridgeInstaller {
   private newRunId(): string {
     return `${this.now().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   }
+}
+
+/** The install carries the bundle this app ships (EA sources and every other bridge file). */
+function isCurrent(installed: InstalledBridge, bundle: BridgeBundle): boolean {
+  return installed.sourceHash === bundle.sourceHash && installed.bundleHash === bundle.bundleHash;
 }
 
 function fileAction(file: PlannedFile): FileAction {

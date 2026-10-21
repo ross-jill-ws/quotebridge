@@ -14,6 +14,8 @@ export interface RecordedFile {
 export interface InstalledBridge {
   eaVersion: string;
   sourceHash: string;
+  /** Hash of every bundled bridge file at install time (the bundle's `bundleHash`); absent in records written before it existed. */
+  bundleHash?: string;
   serverEndpoint: string;
   /** The Terminal ID written into the installed template. */
   terminalId: string;

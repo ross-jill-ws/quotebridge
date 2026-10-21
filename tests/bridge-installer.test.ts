@@ -118,6 +118,24 @@ test("a terminal becomes outdated when the app's bundled EA sources change, and 
   assert.equal((await newer.status(terminal)).state, "installed");
 });
 
+test("a changed bundled template, DLL or notice also makes an installed terminal outdated; the update brings the new file", async (t) => {
+  for (const [name, change, target] of [
+    ["template", { changeTemplate: "scale 4" }, "templates/QuoteBridge.tpl"],
+    ["notice", { changeNotice: "Notice amended" }, "MQL4/Libraries/QuoteBridgeNative-LICENSE.txt"],
+    ["dll", { dll: { file: "libzmq-mt-4_3_6.dll", bytes: Buffer.from("MZ dummy libzmq 4.3.6 x86") } }, "MQL4/Libraries/libzmq-mt-4_3_6.dll"],
+  ] as const) {
+    const { fixture, terminal } = await installedTerminal(t);
+    const newer = new BridgeInstaller({ appDataFolder: fixture.appData, bundle: await fixture.bundle(`bundle-${name}`, change), metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE) });
+
+    assert.equal((await newer.status(terminal)).state, "outdated", name);
+    const update = await newer.install(terminal, { eaPort: 5555 });
+
+    assert.ok(update.ok, name);
+    assert.notEqual(update.files.find((file) => file.target === target)?.action, "unchanged", name);
+    assert.equal((await newer.status(terminal)).state, "installed", name);
+  }
+});
+
 test("a new DLL version lands beside the old one, which is never overwritten", async (t) => {
   const { fixture, terminal } = await installedTerminal(t);
   const DLL_4_3_6 = Buffer.from("MZ dummy libzmq 4.3.6 x86");

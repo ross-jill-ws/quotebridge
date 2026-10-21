@@ -16,5 +16,6 @@ export type {
   RollbackReport,
   TerminalInstallState,
   TerminalInstallStatus,
+  UpdateReason,
 } from "./installer.js";
 export { serverEndpointFor, substituteTemplate } from "./template.js";

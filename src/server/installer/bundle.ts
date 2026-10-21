@@ -24,6 +24,12 @@ export interface BridgeBundle {
   eaVersion: string;
   /** SHA-256 over the bundled EA sources (`.mq4` and `.mqh`); a change makes installs outdated. */
   sourceHash: string;
+  /**
+   * SHA-256 over every bundled bridge file: the EA sources, the template (before substitution), the
+   * DLL and its notices. Any change makes installs outdated, so a template- or notice-only change in
+   * a newer app version reaches every managed terminal too.
+   */
+  bundleHash: string;
   /** `QuoteBridge.mq4` → `MQL4/Experts/`, `.mqh` → `MQL4/Include/`. */
   sources: BundledFile[];
   /** The bundled `QuoteBridge.tpl`, before substitution. */
@@ -62,12 +68,13 @@ export async function loadBridgeBundle(folders: BridgeBundleFolders, fs: Install
   const template = (await fs.readFile(join(folders.sourceFolder, "Templates", "QuoteBridge.tpl"))).toString("utf8");
   checkTemplate(template);
 
-  return { eaVersion, sourceHash: sourceHashOf(sources), sources, template, dllName, nativeFiles };
+  const bundleHash = hashOf([...sources, { target: TEMPLATE_TARGET, bytes: Buffer.from(template, "utf8") }, ...nativeFiles]);
+  return { eaVersion, sourceHash: hashOf(sources), bundleHash, sources, template, dllName, nativeFiles };
 }
 
-function sourceHashOf(sources: BundledFile[]): string {
+function hashOf(files: BundledFile[]): string {
   const hash = createHash("sha256");
-  for (const source of sources) hash.update(`${source.target}\0${sha256(source.bytes)}\n`);
+  for (const source of files) hash.update(`${source.target}\0${sha256(source.bytes)}\n`);
   return hash.digest("hex");
 }
 

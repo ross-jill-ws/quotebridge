@@ -2,6 +2,8 @@
 // catalog (detection, read-only), the settings (managed and declined terminals), the bridge
 // installer (install state, Install / Recompile / Remove) and the bridge server's terminal presence
 // (EA connected, EA version, the self-ticking checklist). Runs in the server process.
+// On start it also propagates updates (ADR 9): every managed terminal whose install is out of date
+// (newer bundled bridge files, or another EA port) is reinstalled through the normal install path.
 import { isAbsolute, join } from "node:path";
 import { type BridgeServer, ONLINE_WINDOW_MS } from "../bridge/index.js";
 import {
@@ -53,6 +55,12 @@ export interface TerminalManagerRuntime {
   /** The EA port the server listens on; written into installed templates. */
   eaPort: number;
   now: () => number;
+  /**
+   * True while the terminal has an in-flight order request; its update then waits (ADR 9).
+   * Milestone 1 sends no order requests, so nothing is ever in flight. Milestone 4 supplies this
+   * and runs the held-back updates once the requests settle.
+   */
+  hasInFlightOrderRequests?: (terminalId: string) => boolean;
 }
 
 export type TerminalOperation = "queued" | "installing" | "removing";
@@ -172,11 +180,13 @@ export class TerminalManager {
     this.catalogFs = options.catalogFs ?? nodeTerminalFileSystem;
     this.sources = options.sources ?? ((folders) => windowsTerminalSources(folders));
     this.startedAt = runtime.now();
-    // Interrupted installs are rolled back and locked removals retried before the first scan.
+    // Interrupted installs are rolled back and locked removals retried before the first scan; then
+    // out-of-date managed terminals are queued for their update.
     this.scanning = this.installer
       .recover()
       .catch((e) => console.error(`[QuoteBridge] install recovery failed: ${(e as Error).message}`))
-      .then(() => this.scan());
+      .then(() => this.scan())
+      .then(() => this.queueUpdates());
     void this.scanning.then(() => this.emit());
   }
 
@@ -329,17 +339,47 @@ export class TerminalManager {
     await Promise.race([this.queue, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   }
 
-  private enqueueInstalls(entries: Entry[]) {
+  private enqueueInstalls(entries: Entry[], options: { onlyIfManaged?: boolean } = {}) {
+    if (entries.length === 0) return;
     for (const entry of entries) this.operations.set(entry.terminalId!, "queued");
     this.emit();
     for (const entry of entries) {
-      this.queue = this.queue.then(() => this.runInstall(entry));
+      this.queue = this.queue.then(() => this.runInstall(entry, options));
     }
   }
 
-  private async runInstall(entry: Entry) {
+  /**
+   * ADR 9: reinstalls every managed terminal whose install differs from the bundled bridge files or
+   * whose template points at another EA port. Not-installed, legacy, unticked and removed terminals
+   * are left alone. One at a time, through the same queue as Install.
+   */
+  private async queueUpdates() {
+    try {
+      const settings = await this.options.settings.read();
+      const outdated: Entry[] = [];
+      for (const entry of this.withManaged(settings)) {
+        if (!isSupported(entry) || !settings.managedTerminals.some((m) => m.terminalId === entry.terminalId)) continue;
+        if (this.runtime.hasInFlightOrderRequests?.(entry.terminalId!)) continue;
+        try {
+          if (await this.installer.updateReason(target(entry), { eaPort: this.runtime.eaPort })) outdated.push(entry);
+        } catch (e) {
+          console.error(`[QuoteBridge] checking ${entry.name} for an EA update failed: ${(e as Error).message}`);
+        }
+      }
+      this.enqueueInstalls(outdated, { onlyIfManaged: true });
+    } catch (e) {
+      console.error(`[QuoteBridge] checking for EA updates failed: ${(e as Error).message}`);
+    }
+  }
+
+  private async runInstall(entry: Entry, options: { onlyIfManaged?: boolean } = {}) {
     const id = entry.terminalId!;
     if (this.closed) return void this.operations.delete(id);
+    // An update waiting in the queue is dropped when the user stopped managing the terminal meanwhile.
+    if (options.onlyIfManaged && !(await this.options.settings.read()).managedTerminals.some((m) => m.terminalId === id)) {
+      this.operations.delete(id);
+      return this.emit();
+    }
     this.operations.set(id, "installing");
     this.emit();
     try {
