@@ -152,11 +152,12 @@ export class BridgeInstaller {
     const status: TerminalInstallStatus = { terminalId, state: "not-installed", pendingRemoval: record?.pendingRemoval.map((file) => file.target) ?? [] };
     if (record?.installed) status.eaVersion = record.installed.eaVersion;
     const failure = record?.lastFailure;
-    if (failure && failure.sourceHash === bundle.sourceHash) status.lastFailure = failure;
+    // "No MetaEditor" is about the folder now, not the last attempt: once metaeditor.exe is back, that failure is over.
+    const stillCurrent = failure && failure.sourceHash === bundle.sourceHash && !(failure.reason === "no-metaeditor" && (await this.hasMetaEditor(target)));
+    if (stillCurrent) status.lastFailure = failure;
 
     if (this.installing.has(terminalId)) status.state = "installing";
-    else if (status.lastFailure?.reason === "no-metaeditor") status.state = "no-metaeditor";
-    else if (status.lastFailure?.stage === "compile") status.state = "compile-failed";
+    else if (status.lastFailure?.stage === "compile" && status.lastFailure.reason !== "no-metaeditor") status.state = "compile-failed";
     else if (record?.installed && isCurrent(record.installed, bundle)) status.state = "installed";
     else if (!(await this.hasMetaEditor(target))) status.state = "no-metaeditor";
     else if (record?.installed) status.state = "outdated";

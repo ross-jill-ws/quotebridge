@@ -493,3 +493,20 @@ test("the install state checks that metaeditor.exe exists without reading the wh
   assert.equal((await installer.status(emptyEditor)).state, "no-metaeditor");
   assert.deepEqual(reads.filter((path) => /metaeditor\.exe$/i.test(path)), []);
 });
+
+test("once MetaEditor is back in the installation folder the terminal is no longer reported as no MetaEditor, and an install succeeds", async (t) => {
+  const fixture = await InstallerFixture.create();
+  t.after(() => fixture.cleanup());
+  const terminal = await fixture.terminal("Broker Without Editor", { metaEditor: false });
+  const installer = new BridgeInstaller({ appDataFolder: fixture.appData, bundle: await fixture.bundle(), metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE) });
+  const failed = await installer.install(terminal, { eaPort: 5555 });
+  assert.equal(!failed.ok && failed.failure.reason, "no-metaeditor");
+
+  await writeFile(join(terminal.installationFolder, "metaeditor.exe"), "MZ metaeditor");
+
+  const status = await installer.status(terminal);
+  assert.equal(status.state, "not-installed");
+  assert.equal(status.lastFailure, undefined);
+  assert.ok((await installer.install(terminal, { eaPort: 5555 })).ok);
+  assert.equal((await installer.status(terminal)).state, "installed");
+});
