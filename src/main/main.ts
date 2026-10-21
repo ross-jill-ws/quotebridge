@@ -44,7 +44,14 @@ async function boot() {
   // Main only reads settings; the server process is the single writer (update-settings).
   let settings: Settings = await new SettingsStore(dataFolder).read();
   if (overrides.dataFolder || overrides.eaPort || overrides.httpPort) {
-    console.log(`[QuoteBridge] dev overrides: data folder ${dataFolder}, ports ${JSON.stringify(effectivePorts(settings.ports, overrides))}`);
+    // Ports that cannot work are reported by the supervisor (it reads them again before every launch).
+    let ports: string;
+    try {
+      ports = JSON.stringify(effectivePorts(settings.ports, overrides));
+    } catch (e) {
+      ports = `unusable (${(e as Error).message})`;
+    }
+    console.log(`[QuoteBridge] dev overrides: data folder ${dataFolder}, ports ${ports}`);
   }
 
   const bridgeBundle = bridgeBundleFolders({ isPackaged: app.isPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath }, process.env);

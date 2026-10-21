@@ -65,6 +65,8 @@ export type SupervisorState =
   | "restarting"
   /** The EA or HTTP port is taken by another program; retrying slowly. */
   | "port-in-use"
+  /** The start configuration cannot work (e.g. equal EA and HTTP ports); no server launched, retrying slowly. */
+  | "invalid-config"
   /** The stop path is running. */
   | "stopping"
   /** Final: the stop path finished; the app exits. */
@@ -72,7 +74,8 @@ export type SupervisorState =
 
 export type SupervisorWarning =
   | { reason: "repeated-failures"; failures: number; message: string }
-  | { reason: "port-in-use"; message: string };
+  | { reason: "port-in-use"; message: string }
+  | { reason: "invalid-config"; message: string };
 
 export type SupervisorStatus = {
   state: SupervisorState;
@@ -80,7 +83,7 @@ export type SupervisorStatus = {
   warning: SupervisorWarning | null;
   /** Consecutive failures since the server last ran stably. */
   failures: number;
-  /** In `restarting` and `port-in-use`: when the next launch happens (clock time). */
+  /** In `restarting`, `port-in-use` and `invalid-config`: when the next launch happens (clock time). */
   nextLaunchAt: number | null;
   /** The last error the server reported, or the last failure. */
   lastError: ServerError | null;
@@ -114,7 +117,7 @@ export type SupervisorEvent =
 
 export type SupervisorOptions = {
   launch: () => ServerProcess;
-  /** Read at every launch, so changed ports apply on the next (re)start. */
+  /** Read at every launch, so changed ports apply on the next (re)start. May throw when it cannot work (e.g. equal ports). */
   config: () => Omit<ServerStartConfig, "windowToken">;
   clock?: SupervisorClock;
   createToken?: () => string;
@@ -257,11 +260,20 @@ export class Supervisor {
 
   /** Launches now instead of waiting out a backoff or a port-in-use retry. */
   retry() {
-    if (this.state === "restarting" || this.state === "port-in-use") this.launch();
+    if (this.state === "restarting" || this.state === "port-in-use" || this.state === "invalid-config") this.launch();
   }
 
   private launch() {
     this.status_.nextLaunchAt = null;
+    // Before launching, so a configuration that cannot work leaves no server process behind.
+    let config: Omit<ServerStartConfig, "windowToken">;
+    try {
+      config = this.options.config();
+    } catch (e) {
+      this.invalidConfig(e);
+      return;
+    }
+    if (this.status_.warning?.reason === "invalid-config") this.status_.warning = null;
     let process: ServerProcess;
     try {
       process = this.options.launch();
@@ -284,7 +296,7 @@ export class Supervisor {
       this.fail({ code: "internal", message: `The QuoteBridge server did not start within ${this.limits.startTimeoutMs / 1000} seconds.` }, { kill: true }),
     );
     // A process may answer (or exit) before `send` returns, so nothing follows it.
-    process.transport.send({ type: "start", config: { ...this.options.config(), windowToken } });
+    process.transport.send({ type: "start", config: { ...config, windowToken } });
   }
 
   private onMessage(message: ServerMessage) {
@@ -366,6 +378,16 @@ export class Supervisor {
     this.scheduleLaunch("port-in-use", this.limits.portInUseRetryMs);
   }
 
+  /** Not a crash: no server was launched. Warn with the reason and read the configuration again slowly (or on retry). */
+  private invalidConfig(e: unknown) {
+    this.clearTimer();
+    this.startToken = null;
+    const message = `The QuoteBridge server cannot start with its settings: ${(e as Error)?.message ?? String(e)}`;
+    this.status_.lastError = { code: "internal", message };
+    this.status_.warning = { reason: "invalid-config", message };
+    this.scheduleLaunch("invalid-config", this.limits.portInUseRetryMs);
+  }
+
   /** A crash, a failed or hung start: count it, maybe warn, and restart after the backoff. */
   private fail(error: ServerError, { kill = false } = {}) {
     const process = this.detach();
@@ -386,7 +408,7 @@ export class Supervisor {
     this.scheduleLaunch("restarting", delay);
   }
 
-  private scheduleLaunch(state: "restarting" | "port-in-use", delayMs: number) {
+  private scheduleLaunch(state: "restarting" | "port-in-use" | "invalid-config", delayMs: number) {
     this.status_.nextLaunchAt = this.clock.now() + delayMs;
     this.setTimer(delayMs, () => this.launch());
     this.setState(state);

@@ -115,16 +115,31 @@ function withDefaults(stored: unknown): Settings {
     format: SETTINGS_FORMAT,
     managedTerminals: Array.isArray(partial.managedTerminals) ? partial.managedTerminals : defaults.managedTerminals,
     declinedTerminals: Array.isArray(partial.declinedTerminals) ? partial.declinedTerminals : defaults.declinedTerminals,
-    ports: { ...defaults.ports, ...(typeof partial.ports === "object" && partial.ports ? partial.ports : {}) },
+    ports: readPorts(partial.ports, defaults.ports),
     startWithWindows: typeof partial.startWithWindows === "boolean" ? partial.startWithWindows : defaults.startWithWindows,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };
 }
 
+/**
+ * Stored ports as the app can use them: a port that is not a whole number from 1 to 65535 (e.g. a hand
+ * edit) is read as its default, and equal EA and HTTP ports as both defaults, so the server can start and
+ * settings can still be saved.
+ */
+function readPorts(stored: unknown, defaults: Settings["ports"]): Settings["ports"] {
+  const given = typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>) : {};
+  const ports = { ea: isPort(given.ea) ? given.ea : defaults.ea, http: isPort(given.http) ? given.http : defaults.http };
+  return ports.ea === ports.http ? { ...defaults } : ports;
+}
+
+function isPort(port: unknown): port is number {
+  return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
 function validate(settings: Settings): void {
   for (const [name, port] of Object.entries(settings.ports)) {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`The ${name} port must be a whole number from 1 to 65535, not ${port}`);
+    if (!isPort(port)) throw new Error(`The ${name} port must be a whole number from 1 to 65535, not ${port}`);
   }
   if (settings.ports.ea === settings.ports.http) throw new Error("The EA port and the HTTP port must differ");
 }

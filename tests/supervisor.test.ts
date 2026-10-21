@@ -336,6 +336,30 @@ test("an error about another message (a failed settings save) does not fail a pe
   await assert.rejects(first, /Token refused/);
 });
 
+test("a configuration that cannot work (e.g. equal EA and HTTP ports) launches no server, warns with the reason, and is read again on retry", () => {
+  const launcher = new FakeLauncher();
+  const clock = new ManualClock();
+  let config: () => typeof CONFIG = () => {
+    throw new Error("The EA port and the HTTP port must differ (both are 6555).");
+  };
+  const supervisor = new Supervisor({ launch: launcher.launch, config: () => config(), clock, createToken: () => "token-0123456789abcdef" });
+
+  assert.doesNotThrow(() => supervisor.start());
+
+  assert.equal(launcher.processes.length, 0, "no server process is left running without a start");
+  const status = supervisor.status();
+  assert.match(status.warning?.message ?? "", /must differ/);
+  assert.match(status.lastError?.message ?? "", /must differ/);
+  assert.doesNotThrow(() => clock.advance(60_000), "the retry timer does not throw either");
+  assert.equal(launcher.processes.length, 0);
+
+  config = () => CONFIG;
+  supervisor.retry();
+  assert.equal(launcher.processes.length, 1);
+  assert.equal(supervisor.status().state, "running");
+  assert.equal(supervisor.status().warning, null);
+});
+
 test("the server's status pushes are passed on", () => {
   const { supervisor, launcher, events } = setup();
   supervisor.start();

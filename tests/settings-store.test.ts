@@ -109,3 +109,26 @@ test("first run lasts until setup is completed, even when other settings were sa
   await store.update((settings) => void (settings.setupCompleted = true));
   assert.equal(await new SettingsStore(store.folder).isFirstRun(), false);
 });
+
+test("hand-edited ports that cannot work are read as defaults (a bad port as its default, equal ports as both defaults); the rest is kept and can still be saved", async (t) => {
+  const cases: [unknown, { ea: number; http: number }][] = [
+    [{ ea: 6000, http: 6000 }, { ea: 5555, http: 5580 }],
+    [{ ea: 70000, http: 8080 }, { ea: 5555, http: 8080 }],
+    [{ ea: "6000", http: 8080 }, { ea: 5555, http: 8080 }],
+    [{ ea: 5580 }, { ea: 5555, http: 5580 }],
+  ];
+  for (const [ports, expected] of cases) {
+    const folder = await appData(t);
+    await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, managedTerminals: [CMC], ports, setupCompleted: true }));
+    const store = new SettingsStore(folder);
+
+    const settings = await store.read();
+
+    assert.deepEqual(settings.ports, expected, JSON.stringify(ports));
+    assert.deepEqual(settings.managedTerminals, [CMC]);
+    const saved = await store.update((s) => {
+      s.startWithWindows = false;
+    });
+    assert.equal(saved.startWithWindows, false);
+  }
+});
