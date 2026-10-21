@@ -295,7 +295,7 @@ test("a recreated app window gets a fresh one-time token from the running server
   supervisor.start();
   const url = await supervisor.issueWindowToken();
   assert.equal(url, "http://127.0.0.1:6580/session?token=token-2-0123456789abcdef");
-  assert.deepEqual(launcher.last.received.at(-1), { type: "issue-window-token", token: "token-2-0123456789abcdef" });
+  assert.deepEqual(launcher.last.received.at(-1), { type: "issue-window-token", token: "token-2-0123456789abcdef", requestId: 1 });
 });
 
 test("a window token cannot be issued while no server is running, and a pending one fails if the server crashes", async () => {
@@ -313,6 +313,27 @@ test("a window token cannot be issued while no server is running, and a pending 
   await assert.rejects(pending, /stopped/);
   clock.advance(1_000);
   assert.equal(supervisor.status().state, "starting", "restarting as usual; the next ready brings a new window-url");
+});
+
+test("an error about another message (a failed settings save) does not fail a pending window token, and each reply settles its own request", async () => {
+  const { supervisor, launcher } = setup();
+  supervisor.start();
+  const server = launcher.last;
+  server.transport.send = (m) => void server.received.push(m);
+  const first = supervisor.issueWindowToken();
+  const second = supervisor.issueWindowToken();
+  const [firstRequest, secondRequest] = server.received.filter((m) => m.type === "issue-window-token") as Extract<HostMessage, { type: "issue-window-token" }>[];
+  let firstSettled = false;
+  void first.then(() => (firstSettled = true), () => (firstSettled = true));
+
+  server.reply({ type: "error", during: "message", error: { code: "internal", message: "The settings could not be saved: EPERM" } });
+  server.reply({ type: "window-token-issued", requestId: secondRequest.requestId });
+
+  assert.equal(await second, `http://127.0.0.1:6580/session?token=${encodeURIComponent(secondRequest.token)}`);
+  await Promise.resolve();
+  assert.equal(firstSettled, false, "the first request is still waiting for its own reply");
+  server.reply({ type: "error", during: "message", requestId: firstRequest.requestId, error: { code: "bad-message", message: "Token refused" } });
+  await assert.rejects(first, /Token refused/);
 });
 
 test("the server's status pushes are passed on", () => {

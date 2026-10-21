@@ -34,8 +34,11 @@ export type HostMessage =
   | { type: "start"; config: ServerStartConfig }
   /** Asks for a `status` now (the server also sends one whenever the summary changes). */
   | { type: "get-status" }
-  /** Another one-time window token, e.g. for an app window recreated after a renderer crash. */
-  | { type: "issue-window-token"; token: string }
+  /**
+   * Another one-time window token, e.g. for an app window recreated after a renderer crash. Answered with
+   * `window-token-issued` or an `error` carrying the same `requestId`.
+   */
+  | { type: "issue-window-token"; token: string; requestId: number }
   /** Main's setting changes (Start with Windows, first-close notification shown); answered with `settings`. Needs a started server. */
   | { type: "update-settings"; change: HostSettingsChange }
   | { type: "stop" };
@@ -77,10 +80,16 @@ export type ServerStatus = {
 export type ServerMessage =
   | { type: "ready"; eaPort: number; httpPort: number; httpOrigin: string; databaseFile: string; schemaVersion: number }
   | { type: "status"; status: ServerStatus }
-  | { type: "window-token-issued" }
+  | { type: "window-token-issued"; requestId: number }
   /** The settings after the server saved a change (main applies Start with Windows from here). */
   | { type: "settings"; settings: Settings }
   /** `during: "start"` means the start failed and nothing is left bound or open; the host may send `start` again. */
-  | { type: "error"; during: "start" | "stop" | "message"; error: ServerError }
+  | {
+      type: "error";
+      during: "start" | "stop" | "message";
+      error: ServerError;
+      /** For `during: "message"`: the `requestId` of the host message it answers, when that message had one. */
+      requestId?: number;
+    }
   /** `checkpoint: false` when there was no database open, or CHECKPOINT failed (the WAL is then left for replay). */
   | { type: "stopped"; checkpoint: boolean };

@@ -142,8 +142,9 @@ export class Supervisor {
   private timer: unknown = null;
   /** The token sent with the current `start`; handed to the window on `ready`. */
   private startToken: string | null = null;
-  /** `issue-window-token` requests awaiting `window-token-issued`, oldest first. */
-  private tokenRequests: { resolve: () => void; reject: (error: Error) => void }[] = [];
+  /** `issue-window-token` requests awaiting `window-token-issued` (or an error) with their request id. */
+  private readonly tokenRequests = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
+  private nextRequestId = 1;
   private stopping: Promise<StopResult> | null = null;
   /** Setting changes waiting for a running server, merged (latest value wins). */
   private pendingSettings: HostSettingsChange | null = null;
@@ -230,8 +231,9 @@ export class Supervisor {
       return Promise.reject(Error(`The QuoteBridge server is not running (it is ${this.state}).`));
     }
     const token = this.createToken();
-    const issued = new Promise<void>((resolve, reject) => this.tokenRequests.push({ resolve, reject }));
-    current.process.transport.send({ type: "issue-window-token", token });
+    const requestId = this.nextRequestId++;
+    const issued = new Promise<void>((resolve, reject) => this.tokenRequests.set(requestId, { resolve, reject }));
+    current.process.transport.send({ type: "issue-window-token", token, requestId });
     return issued.then(() => windowUrl(origin, token));
   }
 
@@ -305,7 +307,7 @@ export class Supervisor {
         return;
       }
       case "window-token-issued":
-        this.tokenRequests.shift()?.resolve();
+        this.settleTokenRequest(message.requestId)?.resolve();
         return;
       case "stopped":
         if (this.state === "stopping") this.finishStop?.({ outcome: "stopped", checkpoint: message.checkpoint });
@@ -318,12 +320,19 @@ export class Supervisor {
         this.emit({ type: "server-status", status: message.status });
         return;
       case "error":
-        if (message.during === "message") this.tokenRequests.shift()?.reject(Error(message.error.message));
+        // Only an error naming a token request settles it; others are about other messages (e.g. a failed settings save).
+        if (message.during === "message" && message.requestId !== undefined) this.settleTokenRequest(message.requestId)?.reject(Error(message.error.message));
         if (message.during !== "start" || this.state !== "starting") return;
         if (message.error.code === "port-in-use") this.portInUse(message.error);
         else this.fail(message.error, { kill: true });
         return;
     }
+  }
+
+  private settleTokenRequest(requestId: number) {
+    const request = this.tokenRequests.get(requestId);
+    this.tokenRequests.delete(requestId);
+    return request;
   }
 
   private onExit(code: number | null) {
@@ -336,7 +345,9 @@ export class Supervisor {
     const current = this.current;
     if (!current) return null;
     this.current = null;
-    for (const request of this.tokenRequests.splice(0)) request.reject(Error("The QuoteBridge server stopped before the window token was issued."));
+    const pending = [...this.tokenRequests.values()];
+    this.tokenRequests.clear();
+    for (const request of pending) request.reject(Error("The QuoteBridge server stopped before the window token was issued."));
     current.unsubscribe();
     current.process.transport.close();
     return current.process;

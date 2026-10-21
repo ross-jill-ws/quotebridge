@@ -219,8 +219,8 @@ test("issue-window-token gives a recreated app window a fresh one-time token", {
 
   const fresh = "recreated-window-token-abcdef";
   assert.equal((await openWindow(httpOrigin, fresh)).status, 401, "not valid before it is issued");
-  host.send({ type: "issue-window-token", token: fresh });
-  await host.next("window-token-issued");
+  host.send({ type: "issue-window-token", token: fresh, requestId: 7 });
+  assert.equal((await host.next("window-token-issued")).requestId, 7);
   const opened = await openWindow(httpOrigin, fresh);
   assert.equal(opened.status, 303);
   assert.match(opened.cookie ?? "", /^qb_session=/);
@@ -232,9 +232,10 @@ test("a window token that is too short is refused with a bad-message error", { t
   const host = hostInProcess(t);
   host.send({ type: "start", config });
   await host.next("ready");
-  host.send({ type: "issue-window-token", token: "short" });
+  host.send({ type: "issue-window-token", token: "short", requestId: 8 });
   const refused = await host.next("error");
   assert.equal(refused.during, "message");
+  assert.equal(refused.requestId, 8, "the refusal names the request it answers");
   assert.equal(refused.error.code, "bad-message");
 });
 

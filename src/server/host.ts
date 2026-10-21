@@ -133,11 +133,14 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       case "get-status":
         if (!running) return rejectMessage(`"get-status" needs a running server (it is ${phase}).`);
         return send({ type: "status", status: summarise(running.server.bridge.snapshot(), running.server.terminals?.attention() ?? []) });
-      case "issue-window-token":
-        if (!running) return rejectMessage(`"issue-window-token" needs a running server (it is ${phase}); pass the token with "start" instead.`);
-        if (typeof message.token !== "string" || message.token.length < 16) return rejectMessage("A window token must be a string of at least 16 characters.");
+      case "issue-window-token": {
+        const requestId = typeof message.requestId === "number" ? message.requestId : undefined;
+        if (!running) return rejectMessage(`"issue-window-token" needs a running server (it is ${phase}); pass the token with "start" instead.`, requestId);
+        if (requestId === undefined) return rejectMessage('"issue-window-token" needs a numeric requestId.');
+        if (typeof message.token !== "string" || message.token.length < 16) return rejectMessage("A window token must be a string of at least 16 characters.", requestId);
         running.server.addWindowToken(message.token);
-        return send({ type: "window-token-issued" });
+        return send({ type: "window-token-issued", requestId });
+      }
       case "update-settings": {
         if (!running) return rejectMessage(`"update-settings" needs a running server (it is ${phase}).`);
         const problem = invalidSettingsChange(message.change);
@@ -162,8 +165,8 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     }
   });
 
-  function rejectMessage(text: string) {
-    send({ type: "error", during: "message", error: { code: "bad-message", message: text } });
+  function rejectMessage(text: string, requestId?: number) {
+    send({ type: "error", during: "message", error: { code: "bad-message", message: text }, ...(requestId !== undefined ? { requestId } : {}) });
   }
 }
 

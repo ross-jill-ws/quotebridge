@@ -114,7 +114,7 @@ export class FakeServerProcess implements ServerProcess {
       this.settings = { ...this.settings, ...message.change };
       this.reply({ type: "settings", settings: this.settings });
     } else if (message.type === "issue-window-token") {
-      this.reply({ type: "window-token-issued" });
+      this.reply({ type: "window-token-issued", requestId: message.requestId });
     }
   }
 }
