@@ -1,6 +1,6 @@
 // Settings store: the app's settings as JSON in its data folder (`%APPDATA%\QuoteBridge\settings.json`),
 // written atomically (temp file + rename). Updates are applied one at a time.
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const SETTINGS_FORMAT = 1;
@@ -34,6 +34,8 @@ export interface Settings {
   };
   startWithWindows: boolean;
   firstCloseNotificationShown: boolean;
+  /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
+  setupCompleted: boolean;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
@@ -44,6 +46,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   ports: { ea: 5555, http: 5580 },
   startWithWindows: true,
   firstCloseNotificationShown: false,
+  setupCompleted: false,
 });
 
 export class SettingsStore {
@@ -54,14 +57,12 @@ export class SettingsStore {
     this.file = join(folder, SETTINGS_FILE);
   }
 
-  /** True until settings have been saved once (the app shows its setup screen). */
+  /**
+   * True until the user completes the setup screen (the app shows it and ignores a hidden start).
+   * Not "no file yet": the first-close notification may be saved while setup is still open.
+   */
   async isFirstRun(): Promise<boolean> {
-    try {
-      await stat(this.file);
-      return false;
-    } catch {
-      return true;
-    }
+    return !(await this.read()).setupCompleted;
   }
 
   /** The current settings; defaults when there is no file. A corrupt file is kept aside. */
@@ -117,6 +118,7 @@ function withDefaults(stored: unknown): Settings {
     ports: { ...defaults.ports, ...(typeof partial.ports === "object" && partial.ports ? partial.ports : {}) },
     startWithWindows: typeof partial.startWithWindows === "boolean" ? partial.startWithWindows : defaults.startWithWindows,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
+    setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };
 }
 

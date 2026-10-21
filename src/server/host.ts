@@ -1,7 +1,8 @@
 // The server side of the server host protocol (ADR 10): runs the bridge server and the database
 // on the host's `start`, and takes them down through the one stop path on `stop`.
 import type { HostTransport } from "../shared/host-transport.js";
-import type { HostMessage, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../shared/server-host-protocol.js";
+import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus } from "../shared/server-host-protocol.js";
+import { SettingsStore } from "../shared/settings-store.js";
 import type { BridgeSnapshot } from "./bridge/index.js";
 import { openDatabase, type AppDatabase } from "./database.js";
 import { startServer, type RunningServer } from "./server.js";
@@ -15,7 +16,7 @@ export type ServerHostOptions = {
   onStopped?: () => void;
 };
 
-type Running = { server: RunningServer; database: AppDatabase; stopStatus: () => void };
+type Running = { server: RunningServer; database: AppDatabase; settings: SettingsStore; stopStatus: () => void };
 
 export function runServerHost(transport: HostTransport<HostMessage, ServerMessage>, options: ServerHostOptions = {}) {
   let phase: "idle" | "starting" | "running" | "stopping" | "stopped" = "idle";
@@ -40,7 +41,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         dashboardFolder: config.dashboardFolder,
         now: options.now,
       });
-      running = { server, database, stopStatus: pushStatusOnChange(server) };
+      running = { server, database, settings: new SettingsStore(config.dataFolder), stopStatus: pushStatusOnChange(server) };
       settle("running");
       send({ type: "ready", eaPort: config.eaPort, httpPort: config.httpPort, httpOrigin: server.httpOrigin, databaseFile: database.file, schemaVersion: database.schemaVersion });
     } catch (e) {
@@ -122,6 +123,21 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         if (typeof message.token !== "string" || message.token.length < 16) return rejectMessage("A window token must be a string of at least 16 characters.");
         running.server.addWindowToken(message.token);
         return send({ type: "window-token-issued" });
+      case "update-settings": {
+        if (!running) return rejectMessage(`"update-settings" needs a running server (it is ${phase}).`);
+        const problem = invalidSettingsChange(message.change);
+        if (problem) return rejectMessage(problem);
+        const { settings } = running;
+        // Queued behind start/stop, so a stop still finds every accepted change saved.
+        return enqueue(() =>
+          settings
+            .update((current) => ({ ...current, ...message.change }))
+            .then(
+              (saved) => send({ type: "settings", settings: saved }),
+              (e) => send({ type: "error", during: "message", error: { code: "internal", message: `The settings could not be saved: ${(e as Error).message}` } }),
+            ),
+        );
+      }
       case "stop":
         if (phase === "stopping" || phase === "stopped") return;
         phase = "stopping";
@@ -134,6 +150,16 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   function rejectMessage(text: string) {
     send({ type: "error", during: "message", error: { code: "bad-message", message: text } });
   }
+}
+
+/** Why a change main sent is not one main may make, or null when it is fine. */
+function invalidSettingsChange(change: unknown): string | null {
+  if (typeof change !== "object" || change === null || Array.isArray(change)) return "A settings change must be an object.";
+  for (const [key, value] of Object.entries(change as HostSettingsChange)) {
+    if (!(HOST_SETTINGS_KEYS as readonly string[]).includes(key)) return `The setting "${key}" is not one main may change.`;
+    if (typeof value !== "boolean") return `The setting "${key}" must be true or false.`;
+  }
+  return null;
 }
 
 function toServerError(e: unknown): ServerError {

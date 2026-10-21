@@ -2,6 +2,7 @@
 import type { HostTransport } from "../src/shared/host-transport.js";
 import type { HostMessage, ServerError, ServerMessage } from "../src/shared/server-host-protocol.js";
 import type { ServerProcess, SupervisorClock } from "../src/main/supervisor/index.js";
+import { DEFAULT_SETTINGS, type Settings } from "../src/shared/settings-store.js";
 
 /** Timers that fire only when the test advances time. */
 export class ManualClock implements SupervisorClock {
@@ -50,6 +51,8 @@ export const PORT_IN_USE: ServerError = { code: "port-in-use", which: "ea", port
 export class FakeServerProcess implements ServerProcess {
   readonly received: HostMessage[] = [];
   killed = false;
+  /** What this fake has saved from `update-settings`. */
+  settings: Settings = structuredClone(DEFAULT_SETTINGS) as Settings;
   exited = false;
   private listeners = new Set<(m: ServerMessage) => void>();
   private exitListeners = new Set<(code: number | null) => void>();
@@ -107,6 +110,9 @@ export class FakeServerProcess implements ServerProcess {
         this.reply({ type: "stopped", checkpoint: true });
         this.exit(0);
       } else if (onStop === "crash") this.exit(3);
+    } else if (message.type === "update-settings") {
+      this.settings = { ...this.settings, ...message.change };
+      this.reply({ type: "settings", settings: this.settings });
     } else if (message.type === "issue-window-token") {
       this.reply({ type: "window-token-issued" });
     }

@@ -1,16 +1,154 @@
-import { app, BrowserWindow } from "electron";
-import { APP_NAME } from "../shared/app-identity.js";
+// Main process: thin Electron wiring for the shell (src/main/shell) and the supervisor (ADR 10).
+// The rules live in `Shell` and `Supervisor` and are tested there; this file only connects Electron.
+import { app, BrowserWindow, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
+import { SettingsStore, type Settings } from "../shared/settings-store.js";
+import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
+import { appDataFolder, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
+import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 
-function createWindow(): void {
+const SERVER_ENTRY = fileURLToPath(new URL("../server/entry.js", import.meta.url));
+const STARTING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
+  `<!doctype html><title>${APP_NAME}</title><body style="font-family:Segoe UI,sans-serif;margin:2rem;color:#444">Starting ${APP_NAME}…</body>`,
+)}`;
+
+const overrides = readDevOverrides(process.env);
+const dataFolder = appDataFolder(app.getPath("appData"), overrides);
+// Before the single-instance lock: Electron keys the lock on this folder, so a dev run with its own
+// data folder never collides with the installed app.
+app.setPath("userData", dataFolder);
+// Chromium's caches and storage in a subfolder, beside the app's own files rather than among them.
+app.setPath("sessionData", join(dataFolder, "Browser"));
+app.setAppUserModelId(APP_USER_MODEL_ID);
+
+if (!app.requestSingleInstanceLock()) {
+  // Another copy runs; it receives `second-instance` and shows its window.
+  app.exit(0);
+} else {
+  // The app lives in the tray (ADR 6): closing every window must not quit.
+  app.on("window-all-closed", () => {});
+  app.whenReady().then(boot, (e) => {
+    console.error(e);
+    app.exit(1);
+  });
+}
+
+async function boot() {
+  // Main only reads settings; the server process is the single writer (update-settings).
+  let settings: Settings = await new SettingsStore(dataFolder).read();
+  if (overrides.dataFolder || overrides.eaPort || overrides.httpPort) {
+    console.log(`[QuoteBridge] dev overrides: data folder ${dataFolder}, ports ${JSON.stringify(effectivePorts(settings.ports, overrides))}`);
+  }
+
+  const supervisor = new Supervisor({
+    launch: utilityProcessLauncher(utilityProcess.fork, SERVER_ENTRY),
+    config: () => {
+      const ports = effectivePorts(settings.ports, overrides);
+      return { eaPort: ports.ea, httpPort: ports.http, dataFolder };
+    },
+  });
+  supervisor.onEvent((event) => {
+    if (event.type === "settings") settings = event.settings;
+    logEvent(event);
+  });
+
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
+    show: false,
     title: APP_NAME,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   window.removeMenu();
+  void window.loadURL(STARTING_PAGE);
+  // The window shows only the app's own dashboard.
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, url) => {
+    const origin = supervisor.status().server?.httpOrigin;
+    if (!origin || new URL(url).origin !== origin) event.preventDefault();
+  });
+
+  const icons = {
+    normal: nativeImage.createFromBitmap(discBitmap(16, TRAY_COLOURS.normal), { width: 16, height: 16 }),
+    warning: nativeImage.createFromBitmap(discBitmap(16, TRAY_COLOURS.warning), { width: 16, height: 16 }),
+  };
+  const tray = new Tray(icons.normal);
+  tray.setToolTip(APP_NAME);
+  let startWithWindows = settings.startWithWindows;
+  const buildMenu = () =>
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "Open", click: () => shell.openFromTray() },
+        { label: "Start with Windows", type: "checkbox", checked: startWithWindows, click: (item) => shell.setStartWithWindows(item.checked) },
+        { type: "separator" },
+        { label: "Quit", click: () => void shell.quit("quit") },
+      ]),
+    );
+
+  const ports: ShellPorts = {
+    window: {
+      show: () => window.show(),
+      hide: () => window.hide(),
+      focus: () => window.focus(),
+      restore: () => window.restore(),
+      isMinimized: () => window.isMinimized(),
+      loadURL: (url) => void window.loadURL(url).catch((e) => console.error(`[QuoteBridge] window load failed: ${e.message}`)),
+    },
+    tray: {
+      setWarning: (message) => {
+        tray.setImage(message ? icons.warning : icons.normal);
+        tray.setToolTip(message ? `${APP_NAME}: ${message}` : APP_NAME);
+      },
+      setStartWithWindows: (on) => {
+        startWithWindows = on;
+        buildMenu();
+      },
+    },
+    supervisor: {
+      start: () => supervisor.start(),
+      stop: async (reason) => {
+        const result = await supervisor.stop(reason);
+        console.log(`[QuoteBridge] stop path (${reason}): ${result.outcome}, checkpoint ${result.checkpoint}`);
+        return result;
+      },
+      issueWindowToken: () => supervisor.issueWindowToken(),
+      updateSettings: (change) => supervisor.updateSettings(change),
+      onEvent: (listener) => supervisor.onEvent(listener),
+    },
+    notify: (title, body) => {
+      if (Notification.isSupported()) new Notification({ title, body }).show();
+    },
+    // A dev run leaves the OS login item alone: it would start the dev Electron at every login.
+    setLoginItem: app.isPackaged ? (item) => app.setLoginItemSettings(item) : null,
+    exit: (code) => app.exit(code),
+  };
+  const shell = new Shell(ports, { settings, argv: process.argv });
+
+  tray.on("click", () => shell.openFromTray());
+  window.on("close", (event) => {
+    if (shell.closeRequested() === "hide") event.preventDefault();
+  });
+  window.webContents.on("render-process-gone", () => void shell.rendererGone());
+  app.on("second-instance", (_event, argv) => shell.secondInstance(argv));
+  // Any other way of quitting (e.g. an update installer) goes through the same stop path.
+  app.on("before-quit", (event) => {
+    event.preventDefault();
+    void shell.quit("quit");
+  });
+  // Windows shutdown or logoff (Electron cannot tell them apart here); powerMonitor covers other systems.
+  window.on("session-end", () => void shell.quit("shutdown"));
+  powerMonitor.on("shutdown", () => void shell.quit("shutdown"));
+
+  shell.start();
 }
 
-app.whenReady().then(createWindow);
-
-app.on("window-all-closed", () => app.quit());
+function logEvent(event: SupervisorEvent) {
+  if (event.type === "state") {
+    const { state, warning, lastError } = event.status;
+    console.log(`[QuoteBridge] server ${state}${warning ? ` (warning: ${warning.message})` : ""}${lastError && state !== "running" ? ` (last error: ${lastError.message})` : ""}`);
+  } else if (event.type === "settings") {
+    console.log("[QuoteBridge] settings saved by the server");
+  }
+}

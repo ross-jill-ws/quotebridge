@@ -33,6 +33,7 @@ test("settings are saved as JSON in the app data folder and read back by a new s
     settings.startWithWindows = false;
     settings.firstCloseNotificationShown = true;
     settings.ports = { ea: 5600, http: 8080 };
+    settings.setupCompleted = true;
   });
 
   const reopened = new SettingsStore(folder);
@@ -95,4 +96,16 @@ test("settings written by an older version get defaults for the fields it did no
   assert.deepEqual(settings.ports, { ea: 5600, http: DEFAULT_SETTINGS.ports.http });
   assert.equal(settings.startWithWindows, true);
   assert.deepEqual(settings.declinedTerminals, []);
+});
+
+test("first run lasts until setup is completed, even when other settings were saved before", async (t) => {
+  const store = new SettingsStore(await appData(t));
+
+  // The first-close notification is saved while the setup screen is still open.
+  await store.update((settings) => void (settings.firstCloseNotificationShown = true));
+  assert.equal(await store.isFirstRun(), true);
+  assert.equal((await store.read()).setupCompleted, false);
+
+  await store.update((settings) => void (settings.setupCompleted = true));
+  assert.equal(await new SettingsStore(store.folder).isFirstRun(), false);
 });

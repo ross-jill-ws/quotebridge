@@ -357,3 +357,46 @@ test("supervises the real server entry point: start, window session, stop", asyn
   assert.equal(child.exitCode, 0);
   assert.equal(children.length, 1);
 });
+
+test("setting changes go to the running server, and its saved settings are passed on", () => {
+  const { supervisor, launcher, events } = setup();
+  supervisor.start();
+
+  supervisor.updateSettings({ firstCloseNotificationShown: true });
+
+  assert.deepEqual(launcher.last.received.at(-1), { type: "update-settings", change: { firstCloseNotificationShown: true } });
+  const saved = events.flatMap((e) => (e.type === "settings" ? [e.settings] : []));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]!.firstCloseNotificationShown, true);
+});
+
+test("setting changes made while no server runs are kept and sent, merged, once the next server is ready", () => {
+  const { supervisor, launcher, clock } = setup(new FakeLauncher().then({ onStart: "ready" }, { onStart: "hang" }));
+  supervisor.start();
+  launcher.last.exit(1);
+  assert.equal(supervisor.status().state, "restarting");
+
+  supervisor.updateSettings({ startWithWindows: false });
+  supervisor.updateSettings({ firstCloseNotificationShown: true });
+  supervisor.updateSettings({ startWithWindows: true });
+  clock.advance(1_000);
+  assert.equal(supervisor.status().state, "starting");
+  assert.deepEqual(launcher.last.sentTypes(), ["start"], "nothing before ready");
+
+  launcher.last.reply({ type: "ready", eaPort: 6555, httpPort: 6580, httpOrigin: "http://127.0.0.1:6580", databaseFile: "db", schemaVersion: 1 });
+  assert.deepEqual(launcher.last.received.slice(1), [{ type: "update-settings", change: { startWithWindows: true, firstCloseNotificationShown: true } }]);
+
+  launcher.last.exit(1);
+  clock.advance(2_000);
+  assert.deepEqual(launcher.last.sentTypes(), ["start"], "a sent change is not sent again to the next server");
+});
+
+test("setting changes after stop are dropped", async () => {
+  const { supervisor, launcher } = setup();
+  supervisor.start();
+  await supervisor.stop("quit");
+  const sent = launcher.last.received.length;
+  supervisor.updateSettings({ startWithWindows: false });
+  assert.equal(launcher.last.received.length, sent);
+  assert.equal(launcher.processes.length, 1);
+});

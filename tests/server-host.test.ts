@@ -2,7 +2,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -267,4 +267,42 @@ test("an unknown host message is answered with a bad-message error", { timeout: 
   host.send({ type: "reboot" } as unknown as HostMessage);
   const refused = await host.next("error");
   assert.equal(refused.error.code, "bad-message");
+});
+
+test("update-settings: the server writes main's setting changes to the settings file and answers with the settings", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t);
+  host.send({ type: "start", config });
+  await host.next("ready");
+
+  host.send({ type: "update-settings", change: { firstCloseNotificationShown: true } });
+  const first = await host.next("settings");
+  assert.equal(first.settings.firstCloseNotificationShown, true);
+  assert.equal(first.settings.startWithWindows, true, "other settings are kept");
+
+  host.send({ type: "update-settings", change: { startWithWindows: false } });
+  const second = await host.next("settings");
+  assert.equal(second.settings.startWithWindows, false);
+  assert.equal(second.settings.firstCloseNotificationShown, true);
+
+  const saved = JSON.parse(await readFile(join(config.dataFolder, "settings.json"), "utf8"));
+  assert.equal(saved.startWithWindows, false);
+  assert.equal(saved.firstCloseNotificationShown, true);
+});
+
+test("update-settings is refused before start, and for settings main does not own, and nothing is written", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t);
+  host.send({ type: "update-settings", change: { startWithWindows: false } });
+  assert.equal((await host.next("error")).error.code, "bad-message");
+
+  host.send({ type: "start", config });
+  await host.next("ready");
+  for (const change of [{ ports: { ea: 1, http: 2 } }, { startWithWindows: "no" }, { setupCompleted: true }]) {
+    host.send({ type: "update-settings", change } as unknown as HostMessage);
+    const refused = await host.next("error");
+    assert.equal(refused.during, "message");
+    assert.equal(refused.error.code, "bad-message");
+  }
+  assert.equal(existsSync(join(config.dataFolder, "settings.json")), false);
 });

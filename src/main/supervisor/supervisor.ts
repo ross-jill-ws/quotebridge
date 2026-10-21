@@ -4,7 +4,8 @@
 // It talks to the server only through the server host protocol; processes and time come in as ports.
 import { randomBytes } from "node:crypto";
 import type { HostTransport } from "../../shared/host-transport.js";
-import type { HostMessage, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../../shared/server-host-protocol.js";
+import type { HostMessage, HostSettingsChange, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../../shared/server-host-protocol.js";
+import type { Settings } from "../../shared/settings-store.js";
 
 /** One launched server process (an Electron utility process in the app). */
 export interface ServerProcess {
@@ -107,7 +108,9 @@ export type SupervisorEvent =
   | { type: "state"; status: SupervisorStatus }
   /** Load the app window at this URL: a fresh one-time token, after every server (re)start. */
   | { type: "window-url"; url: string }
-  | { type: "server-status"; status: ServerStatus };
+  | { type: "server-status"; status: ServerStatus }
+  /** The settings the server saved after an `updateSettings` change. */
+  | { type: "settings"; settings: Settings };
 
 export type SupervisorOptions = {
   launch: () => ServerProcess;
@@ -142,6 +145,8 @@ export class Supervisor {
   /** `issue-window-token` requests awaiting `window-token-issued`, oldest first. */
   private tokenRequests: { resolve: () => void; reject: (error: Error) => void }[] = [];
   private stopping: Promise<StopResult> | null = null;
+  /** Setting changes waiting for a running server, merged (latest value wins). */
+  private pendingSettings: HostSettingsChange | null = null;
   private finishStop: ((result: Omit<StopResult, "reason">) => void) | null = null;
   private state: SupervisorState = "idle";
   private status_: Omit<SupervisorStatus, "state"> = {
@@ -230,6 +235,24 @@ export class Supervisor {
     return issued.then(() => windowUrl(origin, token));
   }
 
+  /**
+   * Saves main's setting changes through the server, the single writer of the settings file. While no
+   * server runs (starting, restarting, port in use) changes are kept and sent, merged, on the next `ready`.
+   * After stop they are dropped. The saved settings come back as a `settings` event.
+   */
+  updateSettings(change: HostSettingsChange) {
+    if (this.stopping) return;
+    this.pendingSettings = { ...this.pendingSettings, ...change };
+    if (this.state === "running") this.flushSettings();
+  }
+
+  private flushSettings() {
+    const change = this.pendingSettings;
+    if (!change || !this.current) return;
+    this.pendingSettings = null;
+    this.current.process.transport.send({ type: "update-settings", change });
+  }
+
   /** Launches now instead of waiting out a backoff or a port-in-use retry. */
   retry() {
     if (this.state === "restarting" || this.state === "port-in-use") this.launch();
@@ -278,6 +301,7 @@ export class Supervisor {
         this.startToken = null;
         this.setState("running");
         if (token) this.emit({ type: "window-url", url: windowUrl(httpOrigin, token) });
+        this.flushSettings();
         return;
       }
       case "window-token-issued":
@@ -285,6 +309,9 @@ export class Supervisor {
         return;
       case "stopped":
         if (this.state === "stopping") this.finishStop?.({ outcome: "stopped", checkpoint: message.checkpoint });
+        return;
+      case "settings":
+        this.emit({ type: "settings", settings: message.settings });
         return;
       case "status":
         this.status_.serverStatus = message.status;
