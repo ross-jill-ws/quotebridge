@@ -233,6 +233,26 @@ test("an open MetaEditor of that terminal stops the install and asks the user to
   assert.equal(await readIfExists(join(app.spike.cmcData, "MQL4", "Experts", "QuoteBridge.ex4")), undefined);
 });
 
+test("an install that throws (e.g. the MetaEditor process query timed out) shows its failure and needs attention; a retry clears it", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  app.metaEditor.current.runningMetaEditors = async () => {
+    throw new Error("Listing processes with PowerShell timed out");
+  };
+  const cmcId = (await app.state()).terminals.find((x) => x.name === CMC)!.terminalId!;
+  await app.post("/api/setup", { install: [cmcId], startWithWindows: true });
+
+  const failed = await app.until(CMC, (x) => x.operation === null && x.lastFailure !== null);
+  assert.match(failed.lastFailure?.message ?? "", /PowerShell timed out/);
+  assert.match(failed.attention ?? "", /PowerShell timed out/);
+  assert.deepEqual(app.server.terminals!.attention().map((a) => a.terminalId), [cmcId]);
+
+  app.metaEditor.set(SUCCESSFUL_COMPILE);
+  assert.equal((await app.post("/api/terminals/install", { terminalIds: [cmcId] })).status, 202);
+  const fixed = await app.until(CMC, (x) => x.state === "installed" && x.operation === null);
+  assert.equal(fixed.lastFailure, null);
+  assert.equal(fixed.attention, null);
+});
+
 test("Remove takes the bridge files out and stops managing the terminal", { timeout: 15000 }, async (t) => {
   const app = await start(t);
   const cmcId = await setUpCmc(app);

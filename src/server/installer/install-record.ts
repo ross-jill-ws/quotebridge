@@ -32,8 +32,12 @@ export interface InstalledBridge {
 
 /** Why the last install attempt failed. Cleared by the next successful install. */
 export interface InstallFailure {
-  /** `compile`: MetaEditor did not produce an EA (nothing was copied). `copy`: rolled back. */
-  stage: "compile" | "copy";
+  /**
+   * `compile`: MetaEditor did not produce an EA (nothing was copied). `copy`: rolled back.
+   * `prepare`: the install stopped with an unexpected error before changing the terminal (e.g. staging
+   * could not be written, or the running MetaEditors could not be listed).
+   */
+  stage: "compile" | "copy" | "prepare";
   /** For `compile`: the runner's reason (`compile-errors`, `no-metaeditor`, `metaeditor-running`, …). For `copy`: `copy-failed`. */
   reason: string;
   /** Plain words for the user. */

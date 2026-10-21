@@ -161,6 +161,8 @@ export class TerminalManager {
   /** Bumped on every change to `operations`, so a state read can tell it saw one consistent moment. */
   private operationsVersion = 0;
   private readonly installedAt = new Map<string, number>();
+  /** Installs that threw instead of returning a result; shown as the terminal's last failure until the next attempt. */
+  private readonly installErrors = new Map<string, InstallFailure>();
   private readonly listeners = new Set<() => void>();
   private entries: Entry[] = [];
   private scanning: Promise<void>;
@@ -307,6 +309,7 @@ export class TerminalManager {
     const [entry] = this.supportedEntries([id], settings);
     if (this.operations.has(id)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
     this.setOperation(id, "removing");
+    this.installErrors.delete(id);
     this.emit();
     try {
       const result = await this.installer.remove(target(entry));
@@ -392,12 +395,21 @@ export class TerminalManager {
       return this.emit();
     }
     this.setOperation(id, "installing");
+    this.installErrors.delete(id);
     this.emit();
     try {
       const result = await this.installer.install(target(entry), { eaPort: this.runtime.eaPort });
       if (result.ok) this.installedAt.set(id, this.runtime.now());
     } catch (e) {
-      console.error(`[QuoteBridge] install into ${entry.name} failed: ${(e as Error).message}`);
+      const message = (e as Error).message ?? String(e);
+      console.error(`[QuoteBridge] install into ${entry.name} failed: ${message}`);
+      this.installErrors.set(id, {
+        stage: "prepare",
+        reason: "install-error",
+        message: `The install stopped before changing the terminal: ${message}`,
+        at: new Date(this.runtime.now()).toISOString(),
+        sourceHash: "",
+      });
     } finally {
       this.setOperation(id, null);
       this.emit();
@@ -465,6 +477,7 @@ export class TerminalManager {
     const now = this.runtime.now();
     const eaConnected = !!seen;
     const state = status?.state ?? null;
+    const lastFailure = (id && this.installErrors.get(id)) || status?.lastFailure || null;
 
     let hint: string | null = null;
     const since = Math.max(this.startedAt, (id && this.installedAt.get(id)) || 0);
@@ -477,8 +490,8 @@ export class TerminalManager {
     let attention: string | null = null;
     if (managed && status) {
       if (status.state === "no-metaeditor") attention = "This terminal has no MetaEditor, so the app cannot compile the QuoteBridge EA for it.";
-      else if (status.lastFailure) attention = status.lastFailure.message;
-    }
+      else if (lastFailure) attention = lastFailure.message;
+    } else if (managed && lastFailure) attention = lastFailure.message;
 
     return {
       key: id ?? `folder:${entry.installationFolder}`,
@@ -500,7 +513,7 @@ export class TerminalManager {
       operation: (id && operations.get(id)) || null,
       installedEaVersion: status?.eaVersion ?? null,
       legacyTerminalId: status?.legacyTerminalId ?? null,
-      lastFailure: status?.lastFailure ?? null,
+      lastFailure,
       pendingRemoval: status?.pendingRemoval ?? [],
       presence: seen ? { lastHello: seen.lastHello, eaVersion: seen.eaVersion, online: now - seen.lastHello < ONLINE_WINDOW_MS } : null,
       checklist: { refreshNavigator: eaConnected, applyTemplate: eaConnected, allowDllImports: eaConnected, eaConnected },
