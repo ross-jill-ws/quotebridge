@@ -11,7 +11,7 @@ import { BridgeInstaller } from "../src/server/installer/index.js";
 import type { TerminalsState } from "../src/server/terminals/index.js";
 import { SettingsStore } from "../src/shared/settings-store.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
-import { freePort } from "./fake-ea.js";
+import { freePort } from "./free-port.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
 import { MachineFixture, spikeMachine } from "./terminal-fixtures.js";

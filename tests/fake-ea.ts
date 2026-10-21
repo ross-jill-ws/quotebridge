@@ -1,7 +1,7 @@
 // A fake QuoteBridge EA: a real ZeroMQ DEALER speaking the EA wire protocol.
 // Synthetic fixture: no MetaTrader, broker or DLL is involved.
-import { createServer } from "node:net";
 import { Dealer } from "zeromq";
+import { freePort } from "./free-port.js";
 
 export type FakeEAOptions = {
   session?: string;
@@ -85,19 +85,7 @@ export class FakeEA {
   }
 }
 
-/** A free high TCP port on 127.0.0.1 (never the legacy 5555). */
-export function freePort(): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => (typeof address === "object" && address ? resolve(address.port) : reject(Error("no port"))));
-    });
-  });
-}
-
-/** A ZeroMQ endpoint on a free high port. */
+/** A ZeroMQ endpoint on a free port (see free-port.ts). */
 export async function freeEndpoint(): Promise<string> {
   return `tcp://127.0.0.1:${await freePort()}`;
 }

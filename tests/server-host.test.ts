@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { inProcessTransportPair, ipcTransport, type HostTransport } from "../src/shared/host-transport.js";
 import type { HostMessage, ServerMessage, ServerStartConfig } from "../src/shared/server-host-protocol.js";
 import { runServerHost, type ServerHostOptions } from "../src/server/host.js";
-import { FakeClock, FakeEA, freePort } from "./fake-ea.js";
+import { FakeClock, FakeEA } from "./fake-ea.js";
+import { freePort } from "./free-port.js";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 

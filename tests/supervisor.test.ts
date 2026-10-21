@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ipcTransport } from "../src/shared/host-transport.js";
 import type { HostMessage, ServerMessage } from "../src/shared/server-host-protocol.js";
-import { freePort } from "./fake-ea.js";
+import { freePort } from "./free-port.js";
 import { FakeLauncher, ManualClock, PORT_IN_USE } from "./fake-server-process.js";
 
 const ENTRY = fileURLToPath(new URL("../src/server/entry.ts", import.meta.url));

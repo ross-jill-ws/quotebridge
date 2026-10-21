@@ -4,7 +4,8 @@ import { createServer } from "node:net";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { PortInUseError, startServer, type ServerConfig } from "../src/server/index.js";
 import WebSocket from "ws";
-import { FakeClock, FakeEA, freePort, type FakeEAOptions } from "./fake-ea.js";
+import { FakeClock, FakeEA, type FakeEAOptions } from "./fake-ea.js";
+import { freePort } from "./free-port.js";
 
 async function config(overrides: Partial<ServerConfig> = {}): Promise<ServerConfig> {
   return { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, ...overrides };

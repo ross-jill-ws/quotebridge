@@ -10,7 +10,8 @@ import type { TerminalsState, TerminalView } from "../src/server/terminals/index
 import type { MetaEditorProcesses } from "../src/shared/metaeditor/index.js";
 import { SettingsStore, type Settings } from "../src/shared/settings-store.js";
 import type { TerminalSources } from "../src/shared/terminal-catalog/index.js";
-import { FakeClock, FakeEA, freePort } from "./fake-ea.js";
+import { FakeClock, FakeEA } from "./fake-ea.js";
+import { freePort } from "./free-port.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE, EX4, readIfExists } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
 import { MachineFixture, spikeMachine } from "./terminal-fixtures.js";
