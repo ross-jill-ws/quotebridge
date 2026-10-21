@@ -154,6 +154,18 @@ test("status reflects feeds and terminal presence as EAs say hello", { timeout: 
   assert.equal(status.status.terminals[0].eaVersion, "1.08");
 });
 
+test("a (re)started server sends its first status right after ready, so main drops what the previous server reported", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  // Sweeps far apart: only a status sent because the server started can arrive in time.
+  const host = hostInProcess(t, { statusIntervalMs: 60_000 });
+  host.send({ type: "start", config });
+  await host.next("ready");
+
+  const first = await host.next("status", undefined, 2000);
+  assert.deepEqual(first.status.terminalsNeedingAttention, []);
+  assert.equal(first.status.feeds.total, 0);
+});
+
 test("status follows a feed going offline after the heartbeat gap, with no EA message", { timeout: 30000 }, async (t) => {
   const clock = new FakeClock();
   const config = await startConfig(t);

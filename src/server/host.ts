@@ -53,9 +53,11 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
             }
           : {}),
       });
-      running = { server, database, settings, stopStatus: pushStatusOnChange(server) };
+      running = { server, database, settings, stopStatus: () => {} };
       settle("running");
       send({ type: "ready", eaPort: config.eaPort, httpPort: config.httpPort, httpOrigin: server.httpOrigin, databaseFile: database.file, schemaVersion: database.schemaVersion });
+      // The first status follows ready at once: main may still show what a previous server reported.
+      running.stopStatus = pushStatusOnChange(server);
     } catch (e) {
       await database?.checkpointAndClose().catch(() => {});
       settle("idle");
@@ -86,11 +88,11 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     options.onStopped?.();
   }
 
-  /** Sends a status whenever the summary changes (ignoring lastHello heartbeats), throttled. */
+  /** Sends a status now, then whenever the summary changes (ignoring lastHello heartbeats), throttled. */
   function pushStatusOnChange(server: RunningServer) {
     const interval = options.statusIntervalMs ?? 1000;
     const current = () => summarise(server.bridge.snapshot(), server.terminals?.attention() ?? []);
-    let lastKey = statusKey(current());
+    let lastKey: string | undefined;
     let lastSent = 0;
     let trailing: NodeJS.Timeout | undefined;
     const check = () => {
@@ -112,6 +114,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     const unsubscribe = server.bridge.onChange(check);
     const unsubscribeTerminals = server.terminals?.onChange(check);
     const sweep = setInterval(check, interval);
+    check();
     return () => {
       unsubscribe();
       unsubscribeTerminals?.();
