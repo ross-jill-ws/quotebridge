@@ -6,6 +6,7 @@ import { SettingsStore } from "../shared/settings-store.js";
 import type { BridgeSnapshot } from "./bridge/index.js";
 import { openDatabase, type AppDatabase } from "./database.js";
 import { startServer, type RunningServer } from "./server.js";
+import type { TerminalManagerOptions } from "./terminals/index.js";
 
 export type ServerHostOptions = {
   /** Clock in epoch milliseconds; injectable for tests. */
@@ -14,9 +15,13 @@ export type ServerHostOptions = {
   statusIntervalMs?: number;
   /** Called after `stopped` has been sent; the entry point exits the process here. */
   onStopped?: () => void;
+  /** Adjusts the terminal manager's options (`npm run dev` swaps in fake terminals and a fake MetaEditor). */
+  terminals?: (options: TerminalManagerOptions) => TerminalManagerOptions | Promise<TerminalManagerOptions>;
+  /** Called once the server runs; the returned function is called when it stops (`npm run dev`'s fake EAs). */
+  onRunning?: (server: RunningServer, config: ServerStartConfig) => (() => void) | void;
 };
 
-type Running = { server: RunningServer; database: AppDatabase; settings: SettingsStore; stopStatus: () => void };
+type Running = { server: RunningServer; database: AppDatabase; settings: SettingsStore; stopStatus: () => void; stopHook: () => void };
 
 export function runServerHost(transport: HostTransport<HostMessage, ServerMessage>, options: ServerHostOptions = {}) {
   let phase: "idle" | "starting" | "running" | "stopping" | "stopped" = "idle";
@@ -35,25 +40,26 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     try {
       database = await openDatabase(config.dataFolder);
       const settings = new SettingsStore(config.dataFolder);
+      let terminals: TerminalManagerOptions | undefined;
+      if (config.bridgeBundle) {
+        terminals = {
+          appDataFolder: config.dataFolder,
+          settings,
+          bundle: config.bridgeBundle,
+          // Setup and Remove change settings; main applies Start with Windows from them.
+          onSettingsSaved: (saved) => send({ type: "settings", settings: saved }),
+        };
+        if (options.terminals) terminals = await options.terminals(terminals);
+      }
       const server = await startServer({
         eaPort: config.eaPort,
         httpPort: config.httpPort,
         windowToken: config.windowToken,
         dashboardFolder: config.dashboardFolder,
         now: options.now,
-        ...(config.bridgeBundle
-          ? {
-              terminals: {
-                appDataFolder: config.dataFolder,
-                settings,
-                bundle: config.bridgeBundle,
-                // Setup and Remove change settings; main applies Start with Windows from them.
-                onSettingsSaved: (saved) => send({ type: "settings", settings: saved }),
-              },
-            }
-          : {}),
+        ...(terminals ? { terminals } : {}),
       });
-      running = { server, database, settings, stopStatus: () => {} };
+      running = { server, database, settings, stopStatus: () => {}, stopHook: options.onRunning?.(server, config) ?? (() => {}) };
       settle("running");
       send({ type: "ready", eaPort: config.eaPort, httpPort: config.httpPort, httpOrigin: server.httpOrigin, databaseFile: database.file, schemaVersion: database.schemaVersion });
       // The first status follows ready at once: main may still show what a previous server reported.
@@ -70,9 +76,10 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     phase = "stopping";
     let checkpoint = false;
     if (running) {
-      const { server, database, stopStatus } = running;
+      const { server, database, stopStatus, stopHook } = running;
       running = undefined;
       stopStatus();
+      stopHook();
       await server.close().catch((e) => send({ type: "error", during: "stop", error: toServerError(e) }));
       // Milestone 1 buffers nothing for recording, so there is nothing to flush before CHECKPOINT.
       try {

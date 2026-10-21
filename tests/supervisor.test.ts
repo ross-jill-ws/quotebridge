@@ -445,3 +445,59 @@ test("setting changes after stop are dropped", async () => {
   assert.equal(launcher.last.received.length, sent);
   assert.equal(launcher.processes.length, 1);
 });
+
+test("restart (a dev run's server rebuild) stops the server through the stop path and launches a new one, without counting a failure", async () => {
+  const { supervisor, launcher, windowUrls } = setup();
+  supervisor.start();
+  await supervisor.restart();
+
+  assert.deepEqual(launcher.processes[0].sentTypes(), ["start", "stop"]);
+  assert.equal(launcher.processes[0].killed, false);
+  assert.equal(launcher.processes.length, 2);
+  assert.equal(supervisor.status().state, "running");
+  assert.equal(supervisor.status().failures, 0);
+  assert.equal(supervisor.status().warning, null);
+  assert.equal(windowUrls().length, 2);
+});
+
+test("restart ends a server that misses the stop deadline, and launches at once while waiting out a backoff", async () => {
+  const { supervisor, launcher, clock } = setup(new FakeLauncher().then({ onStop: "hang" }));
+  supervisor.start();
+  const restarted = supervisor.restart();
+  clock.advance(5_000);
+  await restarted;
+  assert.equal(launcher.processes[0].killed, true);
+  assert.equal(launcher.processes.length, 2);
+  assert.equal(supervisor.status().state, "running");
+
+  launcher.last.exit(1);
+  assert.equal(supervisor.status().state, "restarting");
+  await supervisor.restart();
+  assert.equal(launcher.processes.length, 3);
+  assert.equal(supervisor.status().state, "running");
+});
+
+test("restart after stop launches nothing", async () => {
+  const { supervisor, launcher } = setup();
+  supervisor.start();
+  await supervisor.stop("quit");
+  await supervisor.restart();
+  assert.equal(launcher.processes.length, 1);
+  assert.equal(supervisor.status().state, "stopped");
+});
+
+test("Quit during a restart stops the server the restart brought up, and nothing is launched after", async () => {
+  const { supervisor, launcher, clock } = setup(new FakeLauncher().then({ onStop: "hang" }));
+  supervisor.start();
+  const restarted = supervisor.restart();
+  const stopped = supervisor.stop("quit");
+  clock.advance(5_000);
+  await restarted;
+  const result = await stopped;
+  assert.equal(result.outcome, "stopped");
+  assert.equal(launcher.processes.length, 2);
+  assert.deepEqual(launcher.processes[1].sentTypes(), ["start", "stop"]);
+  assert.equal(supervisor.status().state, "stopped");
+  clock.advance(60_000);
+  assert.equal(launcher.processes.length, 2);
+});

@@ -5,6 +5,8 @@ CLAUDE.local.md
 # Build output and dependencies
 /node_modules/
 /dist/
+# npm run dev: the dev server bundle
+/.dev-build/
 
 # Packaging output; the CI-built DLL bundle (dev default for the DLL folder)
 /release/

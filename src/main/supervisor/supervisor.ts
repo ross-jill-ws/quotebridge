@@ -149,6 +149,8 @@ export class Supervisor {
   private readonly tokenRequests = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
   private nextRequestId = 1;
   private stopping: Promise<StopResult> | null = null;
+  /** A restart's stop path in progress. */
+  private restarting: Promise<void> | null = null;
   /** Setting changes waiting for a running server, merged (latest value wins). */
   private pendingSettings: HostSettingsChange | null = null;
   private finishStop: ((result: Omit<StopResult, "reason">) => void) | null = null;
@@ -194,6 +196,11 @@ export class Supervisor {
    */
   stop(reason: StopReason): Promise<StopResult> {
     if (this.stopping) return this.stopping;
+    // A restart's stop path cannot be joined (it launches afterwards): stop the server it brings up.
+    if (this.restarting) return (this.stopping = this.restarting.then(() => {
+      this.stopping = null;
+      return this.stop(reason);
+    }));
     this.clearTimer();
     this.startToken = null;
     this.status_.nextLaunchAt = null;
@@ -256,6 +263,43 @@ export class Supervisor {
     if (!change || !this.current) return;
     this.pendingSettings = null;
     this.current.process.transport.send({ type: "update-settings", change });
+  }
+
+  /**
+   * Stops the server through the stop path (as for Quit, ending it if it misses the deadline), then
+   * launches a new one. Not a failure: the backoff and warning are unchanged. Used by a dev run after
+   * the server code was rebuilt. Waiting out a backoff or a port retry, it launches at once; before
+   * `start()` and after `stop()` it does nothing. Resolves once the new server has been launched.
+   */
+  restart(): Promise<void> {
+    if (this.restarting) return this.restarting;
+    if (this.stopping || this.state === "idle") return Promise.resolve();
+    const process = this.current?.process;
+    if (!process) {
+      this.retry();
+      return Promise.resolve();
+    }
+    this.clearTimer();
+    this.startToken = null;
+    this.restarting = new Promise<void>((resolve) => {
+      this.finishStop = () => {
+        this.finishStop = null;
+        this.clearTimer();
+        this.detach();
+        this.status_.server = null;
+        this.restarting = null;
+        this.launch();
+        resolve();
+      };
+    });
+    const restarting = this.restarting;
+    this.setState("stopping");
+    this.setTimer(this.limits.stopDeadlineMs, () => {
+      this.detach()?.kill();
+      this.finishStop?.({ outcome: "deadline-missed", checkpoint: false });
+    });
+    process.transport.send({ type: "stop" });
+    return restarting;
   }
 
   /** Launches now instead of waiting out a backoff or a port-in-use retry. */

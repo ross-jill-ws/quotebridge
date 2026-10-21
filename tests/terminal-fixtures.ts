@@ -30,6 +30,12 @@ export class MachineFixture {
     return new MachineFixture(await mkdtemp(join(tmpdir(), "quotebridge-catalog-")));
   }
 
+  /** A fixture in a given folder that is kept (`npm run dev`'s fake terminals). */
+  static async at(root: string): Promise<MachineFixture> {
+    await mkdir(root, { recursive: true });
+    return new MachineFixture(root);
+  }
+
   get dataRoot(): string {
     return join(this.root, "AppData", "MetaQuotes", "Terminal");
   }

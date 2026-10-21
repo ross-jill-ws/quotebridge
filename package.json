@@ -9,9 +9,9 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/build-dashboard.mjs",
+    "build": "tsc -p tsconfig.build.json && tsx scripts/build-dashboard.ts",
     "start": "npm run build && electron .",
-    "dev:dashboard": "tsx scripts/dev-dashboard.ts",
+    "dev": "tsx scripts/dev/dev.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"tests/**/*.test.ts\"",
     "package": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && electron-builder --win nsis --x64 --publish never",

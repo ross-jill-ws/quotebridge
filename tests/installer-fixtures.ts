@@ -34,6 +34,12 @@ export class InstallerFixture {
     return new InstallerFixture(await mkdtemp(join(tmpdir(), "quotebridge-installer-")));
   }
 
+  /** A fixture in a given folder that is kept (`npm run dev`'s fake bridge bundle). */
+  static async at(root: string): Promise<InstallerFixture> {
+    await mkdir(root, { recursive: true });
+    return new InstallerFixture(root);
+  }
+
   cleanup(): Promise<void> {
     return rm(this.root, { recursive: true, force: true });
   }

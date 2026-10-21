@@ -2,14 +2,17 @@
 // The rules live in `Shell` and `Supervisor` and are tested there; this file only connects Electron.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
 import { dirname, join } from "node:path";
+import { get } from "node:http";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { aboutText, APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
-import { appDataFolder, bridgeBundleFolders, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
+import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 
-const SERVER_ENTRY = fileURLToPath(new URL("../server/entry.js", import.meta.url));
+const devRun = devRunControls(app.isPackaged, process.env);
+const SERVER_ENTRY = devRun.serverEntry ?? fileURLToPath(new URL("../server/entry.js", import.meta.url));
 const PRELOAD = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 /** Must match src/main/preload.cts. */
 const PICK_FOLDER_CHANNEL = "quotebridge:pick-folder";
@@ -172,6 +175,18 @@ async function boot() {
   powerMonitor.on("shutdown", () => void shell.quit("shutdown"));
 
   shell.start();
+
+  if (devRun.controlUrl) {
+    // `npm run dev -- --app`: the runner restarts the server after a rebuild and quits main before relaunching it.
+    get(devRun.controlUrl, (response) => {
+      createInterface({ input: response }).on("line", (line) => {
+        if (line === "event: restart-server") void supervisor.restart();
+        else if (line === "event: quit") void shell.quit("quit");
+      });
+    }).on("error", (e) => console.error(`[QuoteBridge] dev control stream: ${e.message}`));
+    // Ctrl+C in the runner's console reaches this process too; the runner quits it through the stop path.
+    process.on("SIGINT", () => {});
+  }
 }
 
 function logEvent(event: SupervisorEvent) {

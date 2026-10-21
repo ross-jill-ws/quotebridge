@@ -64,3 +64,18 @@ export function bridgeBundleFolders(
   if (where.isPackaged) return { sourceFolder: join(where.resourcesPath, "bridge", "mt4"), dllFolder: join(where.resourcesPath, "bridge", "native") };
   return { sourceFolder: join(where.appPath, "mt4"), dllFolder: env.QUOTEBRIDGE_DLL_FOLDER?.trim() || join(where.appPath, "native", "libzmq", "out") };
 }
+
+/**
+ * `npm run dev -- --app` only (never a packaged app): `QUOTEBRIDGE_DEV_SERVER_ENTRY` launches the dev
+ * server bundle instead of `dist/server/entry.js`, and `QUOTEBRIDGE_DEV_CONTROL` names the runner's
+ * event stream (on 127.0.0.1) that sends `restart-server` after a server rebuild and `quit` before
+ * relaunching main.
+ */
+export function devRunControls(isPackaged: boolean, env: Record<string, string | undefined>): { serverEntry: string | undefined; controlUrl: string | undefined } {
+  if (isPackaged) return { serverEntry: undefined, controlUrl: undefined };
+  const control = env.QUOTEBRIDGE_DEV_CONTROL?.trim();
+  return {
+    serverEntry: env.QUOTEBRIDGE_DEV_SERVER_ENTRY?.trim() || undefined,
+    controlUrl: control && control.startsWith("http://127.0.0.1:") ? control : undefined,
+  };
+}
