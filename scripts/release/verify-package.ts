@@ -12,6 +12,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { PE_MACHINE_X86, peMachineType } from "../../src/shared/terminal-catalog/pe-machine.js";
 
 const run = promisify(execFile);
 
@@ -23,8 +24,6 @@ const UNPACKED_ADDONS = [
   { folder: "zeromq", label: "zeromq" },
   { folder: "@duckdb/node-bindings-win32-x64", label: "@duckdb/node-bindings-win32-x64" },
 ];
-
-const PE_MACHINE_X86 = 0x14c;
 
 export interface VerifyOptions {
   /** The unpacked app: holds `resources\`. */
@@ -96,7 +95,7 @@ export async function verifyPackage(options: VerifyOptions): Promise<string[]> {
   return problems;
 }
 
-/** The PE machine type of a file, or undefined when it is missing or not a PE file. */
+/** The PE machine type of a file: undefined when it is missing, -1 when it is not a PE file. */
 async function peMachine(file: string): Promise<number | undefined> {
   let bytes: Buffer;
   try {
@@ -104,10 +103,7 @@ async function peMachine(file: string): Promise<number | undefined> {
   } catch {
     return undefined;
   }
-  if (bytes.length < 0x40 || bytes.toString("latin1", 0, 2) !== "MZ") return -1;
-  const pe = bytes.readUInt32LE(0x3c);
-  if (pe + 6 > bytes.length || bytes.toString("latin1", pe, pe + 4) !== "PE\0\0") return -1;
-  return bytes.readUInt16LE(pe + 4);
+  return peMachineType(bytes) ?? -1;
 }
 
 async function git(repo: string, ...args: string[]): Promise<string> {
