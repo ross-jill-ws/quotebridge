@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MetaEditorProcesses, StartedProcess } from "../src/main/metaeditor/index.js";
+import type { MetaEditorProcesses, StartedProcess } from "../src/shared/metaeditor/index.js";
 
 /**
  * A real MetaEditor log of a clean QuoteBridge compile (legacy repo, `log/mt4-compile-*.log`),

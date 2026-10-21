@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { metaEditorsFromProcessList, windowsMetaEditorProcesses } from "../src/main/metaeditor/index.js";
+import { metaEditorsFromProcessList, windowsMetaEditorProcesses } from "../src/shared/metaeditor/index.js";
 
 const onWindows = { skip: process.platform !== "win32" && "Windows command-line quoting" };
 

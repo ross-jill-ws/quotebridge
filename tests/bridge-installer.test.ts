@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { terminalIdFor } from "../src/main/terminal-catalog/index.js";
+import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { BridgeInstaller, nodeInstallerFileSystem, type InstallerFileSystem } from "../src/server/installer/index.js";
 import { FAILED_LOG, FakeMetaEditor } from "./metaeditor-fixtures.js";
 import { DEFAULT_TPL, DLL_4_3_5, EX4, faultyFileSystem, InstallerFixture, NATIVE_NOTICES, OTHER_TPL, readIfExists, REPO_MT4_FOLDER, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";

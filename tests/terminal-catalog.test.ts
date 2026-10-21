@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { dataFolderNameFor, detectTerminals, runningTerminalsFromProcessList, terminalIdFor } from "../src/main/terminal-catalog/index.js";
+import { dataFolderNameFor, detectTerminals, runningTerminalsFromProcessList, terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { MachineFixture, spikeMachine, X64 } from "./terminal-fixtures.js";
 
 const win = String.raw;

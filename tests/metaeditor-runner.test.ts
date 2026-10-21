@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rm, writeFile } from "node:fs/promises";
-import { compileWithMetaEditor, METAEDITOR_TIMEOUT_MS } from "../src/main/metaeditor/index.js";
+import { compileWithMetaEditor, METAEDITOR_TIMEOUT_MS } from "../src/shared/metaeditor/index.js";
 import { compileLogBytes, FAILED_LOG, FakeMetaEditor, REAL_SUCCESS_LOG, stagingFolder, WARNINGS_LOG } from "./metaeditor-fixtures.js";
 
 const EX4 = new Uint8Array([0x45, 0x58, 0x34, 0x00, 1, 2, 3]);

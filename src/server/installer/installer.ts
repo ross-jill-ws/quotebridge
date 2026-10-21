@@ -4,8 +4,8 @@
 // Transport-free: the server's HTTP endpoints call it.
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { compileWithMetaEditor, type CompileOutcome, type MetaEditorProcesses } from "../../main/metaeditor/index.js";
-import { terminalIdFor } from "../../main/terminal-catalog/index.js";
+import { compileWithMetaEditor, type CompileOutcome, type MetaEditorProcesses } from "../../shared/metaeditor/index.js";
+import { terminalIdFor } from "../../shared/terminal-catalog/index.js";
 import { EA_SOURCE_TARGET, EA_TARGET, isDll, loadBridgeBundle, sha256, TEMPLATE_TARGET, type BridgeBundle, type BridgeBundleFolders, type BundledFile } from "./bundle.js";
 import { errorCode, nodeInstallerFileSystem, readIfPresent, writeFileAtomic, type InstallerFileSystem } from "./file-system.js";
 import { emptyRecord, InstallRecords, type InstallFailure, type InstallRecord, type RecordedFile } from "./install-record.js";
@@ -299,6 +299,11 @@ export class BridgeInstaller {
     } finally {
       await this.fs.removeFolder(stage);
     }
+  }
+
+  /** The MetaEditor log of the terminal's latest compile, as MetaEditor wrote it; undefined when none was kept. */
+  lastCompileLog(target: InstallTarget): Promise<Buffer | undefined> {
+    return readIfPresent(this.fs, join(this.records.folderFor(terminalIdFor(target.dataFolder)), "last-compile.log"));
   }
 
   /** Deletes only the files in the install record, and only while they are unchanged. */

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCompileLog } from "../src/main/metaeditor/index.js";
+import { parseCompileLog } from "../src/shared/metaeditor/index.js";
 import { compileLogBytes, FAILED_LOG, REAL_SUCCESS_LOG, WARNINGS_LOG } from "./metaeditor-fixtures.js";
 
 test("a real UTF-16LE MetaEditor log with 0 errors and 0 warnings parses as a clean result", () => {

@@ -3,7 +3,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dataFolderNameFor } from "../src/main/terminal-catalog/index.js";
+import { dataFolderNameFor } from "../src/shared/terminal-catalog/index.js";
 
 export const X86 = 0x014c;
 export const X64 = 0x8664;
