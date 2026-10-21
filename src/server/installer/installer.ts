@@ -33,7 +33,7 @@ export interface BridgeInstallerOptions {
  * - `not-installed`: no bridge files from this app or the legacy setup.
  * - `installing`: an install is running now.
  * - `installed`: the bundled EA version is installed (`eaVersion`).
- * - `outdated`: installed, but the app's bundled bridge files (EA sources, template, DLL, notices) changed since.
+ * - `outdated`: installed, but an install would now change bridge files: the bundled EA sources, template or notices changed, or the EA imports a DLL under a new name. A rebuilt DLL under the same name does not count; the installer keeps a same-named DLL (ADR 3).
  * - `compile-failed`: the last install of the current sources failed to compile (`lastFailure`).
  * - `no-metaeditor`: the installation folder has no `metaeditor.exe`; the terminal can't be managed.
  * - `installed-legacy`: bridge files from the legacy manual setup, no install by this app.
@@ -42,7 +42,7 @@ export type TerminalInstallState = "not-installed" | "installing" | "installed" 
 
 /**
  * Why an installed terminal needs the normal install path again (ADR 9):
- * - `bridge-files`: the app's bundled bridge files (EA sources, template, DLL, notices) differ from the install record.
+ * - `bridge-files`: the bundle differs from the install record in something an install would change (see `outdated`).
  * - `server-endpoint`: the installed template points at another EA port than the app's.
  */
 export type UpdateReason = "bridge-files" | "server-endpoint";

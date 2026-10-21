@@ -4,7 +4,7 @@
 // touches a real terminal, MetaEditor or %APPDATA%.
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer } from "../src/server/index.js";
 import { BridgeInstaller } from "../src/server/installer/index.js";
@@ -12,7 +12,7 @@ import type { TerminalsState } from "../src/server/terminals/index.js";
 import { SettingsStore } from "../src/shared/settings-store.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { freePort } from "./free-port.js";
-import { InstallerFixture, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";
+import { DLL_4_3_5, InstallerFixture, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
 import { MachineFixture, spikeMachine } from "./terminal-fixtures.js";
 
@@ -64,7 +64,13 @@ async function previousAppVersion(t: TestContext) {
         metaEditor,
       },
     });
-    t.after(() => server.close());
+    let closed = false;
+    const close = async () => {
+      if (closed) return;
+      closed = true;
+      await server.close();
+    };
+    t.after(close);
     let state: TerminalsState | undefined;
     for (let i = 0; i < 200; i++) {
       state = await server.terminals!.state();
@@ -73,7 +79,7 @@ async function previousAppVersion(t: TestContext) {
     }
     assert.equal(state?.busy, false, "start-up updates never finished");
     const view = (x: typeof cmc) => state!.terminals.find((v) => v.terminalId === x.terminalId)!;
-    return { server, metaEditor, state: state!, view };
+    return { server, close, metaEditor, state: state!, view };
   };
 
   return { fixture, machine, spike, settings, oldBundle, cmc, easyForex, installWith, manage, decline, startNewer };
@@ -165,4 +171,27 @@ test("a changed EA port rewrites the template in every managed terminal on start
     assert.match(await template(x.dataFolder), new RegExp(`^ServerEndpoint=tcp://127\\.0\\.0\\.1:${newPort}\\r?$`, "m"));
     assert.equal(view(x).state, "installed");
   }
+});
+
+test("a newer app version whose DLL differs only in bytes, under the same name, reinstalls nothing, however the DLL got there", { timeout: 30000 }, async (t) => {
+  const app = await previousAppVersion(t);
+  const eaPort = await freePort();
+  // CMC: the previous app version installed its DLL. Easy-forex: a different DLL of the same name
+  // was already there (the legacy build), so the installer kept it and did not record it.
+  await app.installWith(app.oldBundle, app.cmc, eaPort);
+  const foreignDll = Buffer.from("MZ legacy build of libzmq 4.3.5");
+  await mkdir(join(app.easyForex.dataFolder, "MQL4", "Libraries"), { recursive: true });
+  await writeFile(join(app.easyForex.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll"), foreignDll);
+  await app.installWith(app.oldBundle, app.easyForex, eaPort);
+  await app.manage(app.cmc, app.easyForex);
+  const rebuilt = await app.fixture.bundle("bundle-rebuilt-dll", { dll: { file: "libzmq-mt-4_3_5.dll", bytes: Buffer.from("MZ dummy libzmq 4.3.5 x86, another CI build") } });
+
+  for (const run of ["first start", "second start"]) {
+    const { close, metaEditor, view } = await app.startNewer({ bundle: rebuilt, eaPort });
+    assert.equal(metaEditor.starts.length, 0, `${run}: nothing to reinstall`);
+    for (const x of [app.cmc, app.easyForex]) assert.equal(view(x).state, "installed", `${run}: ${x.terminalId}`);
+    await close();
+  }
+  assert.deepEqual(await readFile(join(app.cmc.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll")), DLL_4_3_5);
+  assert.deepEqual(await readFile(join(app.easyForex.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll")), foreignDll);
 });

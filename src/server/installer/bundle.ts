@@ -25,9 +25,11 @@ export interface BridgeBundle {
   /** SHA-256 over the bundled EA sources (`.mq4` and `.mqh`); a change makes installs outdated. */
   sourceHash: string;
   /**
-   * SHA-256 over every bundled bridge file: the EA sources, the template (before substitution), the
-   * DLL and its notices. Any change makes installs outdated, so a template- or notice-only change in
-   * a newer app version reaches every managed terminal too.
+   * SHA-256 over what an install would change: the EA sources, the template (before substitution),
+   * the notices and the DLL file name. Any change makes installs outdated, so a template- or
+   * notice-only change in a newer app version reaches every managed terminal too. DLL bytes do not
+   * count: the installer never overwrites a DLL of the same name (ADR 3), so a rebuilt DLL under
+   * the same name would change nothing in a terminal. A new DLL version comes with a new name.
    */
   bundleHash: string;
   /** `QuoteBridge.mq4` → `MQL4/Experts/`, `.mqh` → `MQL4/Include/`. */
@@ -68,7 +70,8 @@ export async function loadBridgeBundle(folders: BridgeBundleFolders, fs: Install
   const template = (await fs.readFile(join(folders.sourceFolder, "Templates", "QuoteBridge.tpl"))).toString("utf8");
   checkTemplate(template);
 
-  const bundleHash = hashOf([...sources, { target: TEMPLATE_TARGET, bytes: Buffer.from(template, "utf8") }, ...nativeFiles]);
+  const installable = nativeFiles.map((file) => (isDll(file.target) ? { target: file.target, bytes: Buffer.alloc(0) } : file));
+  const bundleHash = hashOf([...sources, { target: TEMPLATE_TARGET, bytes: Buffer.from(template, "utf8") }, ...installable]);
   return { eaVersion, sourceHash: hashOf(sources), bundleHash, sources, template, dllName, nativeFiles };
 }
 

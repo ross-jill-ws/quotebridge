@@ -118,7 +118,7 @@ test("a terminal becomes outdated when the app's bundled EA sources change, and 
   assert.equal((await newer.status(terminal)).state, "installed");
 });
 
-test("a changed bundled template, DLL or notice also makes an installed terminal outdated; the update brings the new file", async (t) => {
+test("a changed bundled template, notice or DLL version (a new DLL name) also makes an installed terminal outdated; the update brings the new file", async (t) => {
   for (const [name, change, target] of [
     ["template", { changeTemplate: "scale 4" }, "templates/QuoteBridge.tpl"],
     ["notice", { changeNotice: "Notice amended" }, "MQL4/Libraries/QuoteBridgeNative-LICENSE.txt"],
