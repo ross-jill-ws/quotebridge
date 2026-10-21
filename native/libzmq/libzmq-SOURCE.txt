@@ -1,0 +1,17 @@
+libzmq-mt-4_3_5.dll: source code and licence
+============================================
+
+This DLL is ZeroMQ (libzmq) 4.3.5, built for 32-bit Windows (x86) by the
+QuoteBridge for MetaTrader release workflow for use by the QuoteBridge EA.
+
+It is Covered Software under the Mozilla Public License 2.0
+(libzmq-LICENSE-MPL-2.0.txt). It includes wepoll, licensed under a BSD
+licence (libzmq-wepoll-LICENSE.txt).
+
+Source code:
+- Upstream libzmq 4.3.5, unmodified:
+  https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.zip
+  SHA-256 276F5C9213589C4ECF0D8C836018604E7A56542B10913CFC16D0ADCFBC04298C
+- The stdcall adapter, export map and build files (MPL-2.0) are in the
+  native/libzmq folder of https://github.com/ross-jill-ws/quotebridge
+  at the release tag of the QuoteBridge version that installed this file.

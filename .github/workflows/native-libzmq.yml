@@ -2,6 +2,8 @@ name: native libzmq (x86)
 
 on:
   workflow_dispatch:
+  # The release workflow builds the DLL with this same job.
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -80,6 +82,21 @@ jobs:
           if (-not $p.WaitForExit(15000)) { $p.Kill(); throw 'Probe timed out' }
           Get-Content out/probe.txt, out/probe-err.txt
           if ($p.ExitCode -ne 0) { throw "Probe failed with exit code $($p.ExitCode)" }
+
+      - name: Bundle the DLL with its notices (shipped in the app as resources/bridge/native)
+        run: |
+          New-Item -ItemType Directory bundle | Out-Null
+          Copy-Item build/Release/libzmq-mt-4_3_5.dll bundle/
+          Copy-Item "$env:ZMQ_SOURCE_DIR/LICENSE" bundle/libzmq-LICENSE-MPL-2.0.txt
+          Copy-Item "$env:ZMQ_SOURCE_DIR/external/wepoll/license.txt" bundle/libzmq-wepoll-LICENSE.txt
+          Copy-Item native/libzmq/libzmq-SOURCE.txt bundle/
+          if (-not (Select-String -Path bundle/libzmq-LICENSE-MPL-2.0.txt -Pattern "Mozilla Public License" -Quiet)) { throw "Upstream LICENSE is not the MPL-2.0 text" }
+          Get-ChildItem bundle | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libzmq-x86-bundle
+          path: bundle/
 
       - uses: actions/upload-artifact@v7
         with:
