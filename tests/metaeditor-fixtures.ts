@@ -65,6 +65,8 @@ export interface FakeCompile {
   exitCode?: number;
   /** Never exits on its own (only `kill()` ends it). */
   hang?: boolean;
+  /** Compiles only once this settles, e.g. to hold an install at a chosen moment. */
+  waitFor?: Promise<unknown>;
 }
 
 /**
@@ -87,6 +89,7 @@ export class FakeMetaEditor implements MetaEditorProcesses {
     const source = argumentValue(args, "compile");
     const logFile = argumentValue(args, "log");
     const work = (async () => {
+      await this.behaviour.waitFor;
       if (this.behaviour.ex4) await writeFile(source.replace(/\.mq4$/i, ".ex4"), this.behaviour.ex4);
       if (this.behaviour.log) await writeFile(logFile, compileLogBytes(this.behaviour.log.text, this.behaviour.log.encoding));
     })();

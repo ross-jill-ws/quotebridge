@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer, type ServerConfig } from "../src/server/index.js";
 import type { TerminalsState, TerminalView } from "../src/server/terminals/index.js";
+import { nodeInstallerFileSystem, type InstallerFileSystem } from "../src/server/installer/index.js";
 import type { MetaEditorProcesses } from "../src/shared/metaeditor/index.js";
 import { SettingsStore, type Settings } from "../src/shared/settings-store.js";
 import type { TerminalSources } from "../src/shared/terminal-catalog/index.js";
@@ -35,7 +36,7 @@ class SwitchableMetaEditor implements MetaEditorProcesses {
   }
 }
 
-async function start(t: TestContext, options: { now?: () => number; hintAfterMs?: number; compileTimeoutMs?: number } = {}) {
+async function start(t: TestContext, options: { now?: () => number; hintAfterMs?: number; compileTimeoutMs?: number; installerFs?: InstallerFileSystem } = {}) {
   const machine = await MachineFixture.create();
   t.after(() => machine.dispose());
   const spike = await spikeMachine(machine);
@@ -64,6 +65,7 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
       onSettingsSaved: (s) => saved.push(s),
       ...(options.hintAfterMs !== undefined ? { hintAfterMs: options.hintAfterMs } : {}),
       ...(options.compileTimeoutMs !== undefined ? { compileTimeoutMs: options.compileTimeoutMs } : {}),
+      ...(options.installerFs ? { installerFs: options.installerFs } : {}),
     },
   };
   const server = await startServer(cfg);
@@ -317,4 +319,39 @@ test("a hint appears when no EA has connected a while after install, and goes wh
   await chart.request(chart.helloWire());
   const connected = await app.until(CMC, (x) => x.checklist.eaConnected);
   assert.equal(connected.hint, null);
+});
+
+test("the terminals state is one consistent snapshot: an install that ends while it is read never shows as installing with busy false", { timeout: 15000 }, async (t) => {
+  // The installer's file reads for one terminal can run a hook: here, the moment the state reads
+  // the easy-forex status (after it has read CMC's), the held CMC install is let go and runs to its end.
+  let onRead: ((path: string) => Promise<void>) | undefined;
+  const hooked = (path: string) => onRead?.(path);
+  const installerFs: InstallerFileSystem = {
+    ...nodeInstallerFileSystem,
+    readFile: async (path) => (await hooked(path), nodeInstallerFileSystem.readFile(path)),
+    listFolder: async (path) => (await hooked(path), nodeInstallerFileSystem.listFolder(path)),
+  };
+  const app = await start(t, { installerFs });
+  let release!: () => void;
+  app.metaEditor.set({ ...SUCCESSFUL_COMPILE, waitFor: new Promise<void>((resolve) => (release = resolve)) });
+  const before = await app.state();
+  const cmcId = before.terminals.find((x) => x.name === CMC)!.terminalId!;
+  const easyForexId = before.terminals.find((x) => x.name === EASY_FOREX)!.terminalId!;
+  await app.post("/api/setup", { install: [cmcId], startWithWindows: true });
+  await app.until(CMC, (x) => x.state === "installing");
+
+  let installEnded = false;
+  onRead = async (path) => {
+    if (!path.includes(easyForexId)) return;
+    onRead = undefined;
+    const ended = new Promise<void>((resolve) => app.server.terminals!.onChange(() => resolve()));
+    release();
+    await ended;
+    installEnded = true;
+  };
+  const s = await app.state();
+  assert.equal(installEnded, true, "the install ended while the state was being read");
+
+  const working = s.terminals.filter((x) => x.state === "installing" || x.operation !== null).map((x) => x.name);
+  assert.equal(s.busy, working.length > 0, `busy is ${s.busy} while ${JSON.stringify(working)} show an install or operation`);
 });

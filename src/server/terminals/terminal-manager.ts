@@ -158,6 +158,8 @@ export class TerminalManager {
   private readonly startedAt: number;
   private readonly userAdded = new Set<string>();
   private readonly operations = new Map<string, TerminalOperation>();
+  /** Bumped on every change to `operations`, so a state read can tell it saw one consistent moment. */
+  private operationsVersion = 0;
   private readonly installedAt = new Map<string, number>();
   private readonly listeners = new Set<() => void>();
   private entries: Entry[] = [];
@@ -212,8 +214,17 @@ export class TerminalManager {
       bundleProblem = `The bundled bridge files cannot be read: ${(e as Error).message}`;
     }
     const presence = new Map(this.runtime.bridge.snapshot().terminals.map((p) => [p.terminalId, p]));
-    const terminals: TerminalView[] = [];
-    for (const entry of this.withManaged(settings)) terminals.push(await this.view(entry, settings, presence, bundleProblem));
+    // The views are read one after another; an install or removal that starts or ends meanwhile
+    // would leave them disagreeing with each other and with `busy`. Read again until none did.
+    let terminals: TerminalView[];
+    let operations: Map<string, TerminalOperation>;
+    let version: number;
+    do {
+      version = this.operationsVersion;
+      operations = new Map(this.operations);
+      terminals = [];
+      for (const entry of this.withManaged(settings)) terminals.push(await this.view(entry, settings, presence, bundleProblem, operations));
+    } while (version !== this.operationsVersion);
     this.lastAttention = terminals
       .filter((t) => t.attention && t.terminalId)
       .map((t) => ({ terminalId: t.terminalId!, name: t.name, message: t.attention! }));
@@ -222,7 +233,7 @@ export class TerminalManager {
       startWithWindows: settings.startWithWindows,
       bundledEaVersion,
       bundleProblem,
-      busy: this.operations.size > 0,
+      busy: operations.size > 0,
       terminals,
     };
   }
@@ -295,7 +306,7 @@ export class TerminalManager {
     const settings = await this.options.settings.read();
     const [entry] = this.supportedEntries([id], settings);
     if (this.operations.has(id)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
-    this.operations.set(id, "removing");
+    this.setOperation(id, "removing");
     this.emit();
     try {
       const result = await this.installer.remove(target(entry));
@@ -305,7 +316,7 @@ export class TerminalManager {
       if (e instanceof InstallInProgressError) throw new TerminalRequestError(409, `${entry.name} is being installed.`);
       throw e;
     } finally {
-      this.operations.delete(id);
+      this.setOperation(id, null);
       this.emit();
     }
   }
@@ -341,7 +352,7 @@ export class TerminalManager {
 
   private enqueueInstalls(entries: Entry[], options: { onlyIfManaged?: boolean } = {}) {
     if (entries.length === 0) return;
-    for (const entry of entries) this.operations.set(entry.terminalId!, "queued");
+    for (const entry of entries) this.setOperation(entry.terminalId!, "queued");
     this.emit();
     for (const entry of entries) {
       this.queue = this.queue.then(() => this.runInstall(entry, options));
@@ -374,13 +385,13 @@ export class TerminalManager {
 
   private async runInstall(entry: Entry, options: { onlyIfManaged?: boolean } = {}) {
     const id = entry.terminalId!;
-    if (this.closed) return void this.operations.delete(id);
+    if (this.closed) return void this.setOperation(id, null);
     // An update waiting in the queue is dropped when the user stopped managing the terminal meanwhile.
     if (options.onlyIfManaged && !(await this.options.settings.read()).managedTerminals.some((m) => m.terminalId === id)) {
-      this.operations.delete(id);
+      this.setOperation(id, null);
       return this.emit();
     }
-    this.operations.set(id, "installing");
+    this.setOperation(id, "installing");
     this.emit();
     try {
       const result = await this.installer.install(target(entry), { eaPort: this.runtime.eaPort });
@@ -388,7 +399,7 @@ export class TerminalManager {
     } catch (e) {
       console.error(`[QuoteBridge] install into ${entry.name} failed: ${(e as Error).message}`);
     } finally {
-      this.operations.delete(id);
+      this.setOperation(id, null);
       this.emit();
     }
   }
@@ -438,7 +449,13 @@ export class TerminalManager {
     });
   }
 
-  private async view(entry: Entry, settings: Settings, presence: Map<string, { lastHello: number; eaVersion: string | null }>, bundleProblem: string | null): Promise<TerminalView> {
+  private async view(
+    entry: Entry,
+    settings: Settings,
+    presence: Map<string, { lastHello: number; eaVersion: string | null }>,
+    bundleProblem: string | null,
+    operations: ReadonlyMap<string, TerminalOperation>,
+  ): Promise<TerminalView> {
     const id = entry.terminalId ?? null;
     const supported = isSupported(entry);
     const managed = !!id && settings.managedTerminals.some((m) => m.terminalId === id);
@@ -480,7 +497,7 @@ export class TerminalManager {
       declined,
       offered: supported && entry.detected && !managed && !declined,
       state,
-      operation: (id && this.operations.get(id)) || null,
+      operation: (id && operations.get(id)) || null,
       installedEaVersion: status?.eaVersion ?? null,
       legacyTerminalId: status?.legacyTerminalId ?? null,
       lastFailure: status?.lastFailure ?? null,
@@ -490,6 +507,12 @@ export class TerminalManager {
       hint,
       attention,
     };
+  }
+
+  private setOperation(id: string, operation: TerminalOperation | null) {
+    if (operation) this.operations.set(id, operation);
+    else this.operations.delete(id);
+    this.operationsVersion++;
   }
 
   private async saveSettings(change: (settings: Settings) => void) {
