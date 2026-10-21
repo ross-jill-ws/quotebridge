@@ -6,6 +6,11 @@ endif()
 if(NOT ZMQ_SOURCE_DIR)
   message(FATAL_ERROR "Set ZMQ_SOURCE_DIR to the extracted upstream zeromq-4.3.5 folder")
 endif()
+# Reproducible build: /Brepro replaces the timestamps in objects, libraries and the PE header with
+# content hashes, so one commit always builds byte-identical binaries.
+add_compile_options(/Brepro)
+add_link_options(/Brepro)
+string(APPEND CMAKE_STATIC_LINKER_FLAGS " /Brepro")
 set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC ON CACHE BOOL "" FORCE)
 foreach(option BUILD_TESTS WITH_PERF_TOOL ENABLE_CURVE WITH_LIBSODIUM WITH_TLS WITH_LIBBSD WITH_DOC WITH_DOCS ENABLE_DRAFTS ENABLE_WS ENABLE_CPACK ENABLE_CLANG ENABLE_PRECOMPILED)

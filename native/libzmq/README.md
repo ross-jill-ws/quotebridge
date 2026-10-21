@@ -6,7 +6,7 @@
 - `adapter.cpp` wraps it in a DLL. MQL4 calls imported functions with `__stdcall` ([docs](https://docs.mql4.com/runtime/imports)) while upstream uses cdecl; `adapter.def` exports the wrappers under the plain `zmq_*` names the EA imports.
 - `probe.cpp` loads the built DLL and checks version, exports, socket options, non-blocking I/O and 10,000 calls without stack drift. It uses `inproc://` only and never opens a network connection.
 
-Built by `.github/workflows/native-libzmq.yml` (MSVC, Win32, Release, static CRT).
+Built by `.github/workflows/native-libzmq.yml` (MSVC, Win32, Release, static CRT). The build is reproducible (`/Brepro` for compiler, librarian and linker): the same commit on the same runner image gives a byte-identical DLL, so its SHA-256 only changes when the source or toolchain does.
 
 ## License
 
