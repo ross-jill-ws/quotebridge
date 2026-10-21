@@ -2,7 +2,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
-export const SESSION_COOKIE = "qb_session";
+/**
+ * The session cookie's name for the HTTP server on this port. Browsers do not separate cookies by port, so
+ * QuoteBridge servers on different ports (installed app, dev runs) would otherwise replace each other's session.
+ */
+export const sessionCookie = (port: number) => `qb_session_${port}`;
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
@@ -27,13 +31,13 @@ export class WindowSessions {
     return session;
   }
 
-  /** The request's session cookie names a live session. */
-  authenticated(headers: IncomingHttpHeaders) {
+  /** The request's session cookie (named by `sessionCookie`) names a live session. */
+  authenticated(headers: IncomingHttpHeaders, cookie: string) {
     const values = (headers.cookie ?? "")
       .split(";")
       .map((s) => s.trim())
-      .filter((s) => s.startsWith(SESSION_COOKIE + "="))
-      .map((s) => s.slice(SESSION_COOKIE.length + 1));
+      .filter((s) => s.startsWith(cookie + "="))
+      .map((s) => s.slice(cookie.length + 1));
     return values.length === 1 && this.sessions.has(values[0]);
   }
 }

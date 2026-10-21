@@ -95,9 +95,34 @@ test("requests without a session are rejected: dashboard, state endpoint and liv
     const res = await fetch(origin + path);
     assert.equal(res.status, 401, path);
   }
-  const forged = await fetch(origin + "/api/state", { headers: { cookie: "qb_session=forged" } });
+  const forged = await fetch(origin + "/api/state", { headers: { cookie: `qb_session_${new URL(origin).port}=forged` } });
   assert.equal(forged.status, 401);
   await assert.rejects(openLive(origin), { status: 401 });
+});
+
+test("each port has its own session cookie: signing in to one server leaves the other signed in", { timeout: 10000 }, async (t) => {
+  const a = await start(t);
+  const b = await start(t);
+  const port = (origin: string) => new URL(origin).port;
+
+  const cookieA = await signIn(a.origin);
+  assert.match(cookieA, new RegExp(`^qb_session_${port(a.origin)}=`));
+  const cookieB = await signIn(b.origin);
+  assert.match(cookieB, new RegExp(`^qb_session_${port(b.origin)}=`));
+
+  // A browser sends both cookies to both ports (cookies are not separated by port).
+  const both = `${cookieA}; ${cookieB}`;
+  assert.equal((await fetch(a.origin + "/api/state", { headers: { cookie: both } })).status, 200);
+  assert.equal((await fetch(b.origin + "/api/state", { headers: { cookie: both } })).status, 200);
+  const { ws } = await openLive(a.origin, { cookie: both });
+  ws.close();
+
+  // Only the other port's cookie: not signed in here.
+  assert.equal((await fetch(a.origin + "/api/state", { headers: { cookie: cookieB } })).status, 401);
+  await assert.rejects(openLive(a.origin, { cookie: cookieB }), { status: 401 });
+  // Nor with the other port's session value under this port's name.
+  const stolen = `qb_session_${port(a.origin)}=${cookieB.split("=")[1]}`;
+  assert.equal((await fetch(a.origin + "/api/state", { headers: { cookie: stolen } })).status, 401);
 });
 
 test("the window token is exchanged once for a session that opens the dashboard and state endpoint", { timeout: 10000 }, async (t) => {
@@ -106,7 +131,7 @@ test("the window token is exchanged once for a session that opens the dashboard 
   const first = await exchange(origin);
   assert.equal(first.status, 303);
   assert.equal(first.location, "/");
-  assert.match(first.setCookie ?? "", /^qb_session=[\w-]{43}; Path=\/; HttpOnly; SameSite=Strict$/);
+  assert.match(first.setCookie ?? "", new RegExp(`^qb_session_${new URL(origin).port}=[\\w-]{43}; Path=/; HttpOnly; SameSite=Strict$`));
 
   const page = await fetch(origin + "/", { headers: { cookie: first.cookie! } });
   assert.equal(page.status, 200);

@@ -10,7 +10,7 @@ import type { BridgeServer } from "../bridge/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
-import { SESSION_COOKIE, type WindowSessions } from "./window-session.js";
+import { sessionCookie, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
 export const DEFAULT_DASHBOARD_FOLDER = fileURLToPath(new URL("../../dashboard/", import.meta.url));
@@ -54,6 +54,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   const dashboardFolder = resolve(options.dashboardFolder ?? DEFAULT_DASHBOARD_FOLDER);
   const origin = `http://127.0.0.1:${options.port}`;
   const host = `127.0.0.1:${options.port}`;
+  const cookie = sessionCookie(options.port);
   const connections = new Set<Socket>();
 
   const server = createServer((req, res) => {
@@ -65,7 +66,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   });
   const live = new LiveSnapshots(bridge);
   server.on("upgrade", (req, socket: Socket, head: Buffer) => {
-    if (req.headers.host !== host || !sessions.authenticated(req.headers)) return refuse(socket, 401, "Unauthorized");
+    if (req.headers.host !== host || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
     if (new URL(req.url ?? "/", origin).pathname !== "/live") return refuse(socket, 404, "Not Found");
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): only the app window's origin may connect.
     if (req.headers.origin !== origin) return refuse(socket, 403, "Forbidden");
@@ -97,14 +98,14 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       res
         .writeHead(303, {
           location: "/",
-          "set-cookie": `${SESSION_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Strict`,
+          "set-cookie": `${cookie}=${session}; Path=/; HttpOnly; SameSite=Strict`,
           "cache-control": "no-store",
         })
         .end();
       return;
     }
 
-    if (!sessions.authenticated(req.headers)) return json(res, 401, { error: "Open the dashboard from the app window." });
+    if (!sessions.authenticated(req.headers, cookie)) return json(res, 401, { error: "Open the dashboard from the app window." });
 
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });

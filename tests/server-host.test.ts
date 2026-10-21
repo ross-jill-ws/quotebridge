@@ -235,7 +235,7 @@ test("issue-window-token gives a recreated app window a fresh one-time token", {
   assert.equal((await host.next("window-token-issued")).requestId, 7);
   const opened = await openWindow(httpOrigin, fresh);
   assert.equal(opened.status, 303);
-  assert.match(opened.cookie ?? "", /^qb_session=/);
+  assert.match(opened.cookie ?? "", new RegExp(`^qb_session_${new URL(httpOrigin).port}=`));
   assert.equal((await openWindow(httpOrigin, fresh)).status, 401, "one-time");
 });
 
