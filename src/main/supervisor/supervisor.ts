@@ -1,0 +1,380 @@
+// Supervisor (ADR 10): the main process's pure state machine for the server process. It starts the
+// server, hands the app window its one-time token, restarts the server after a crash with exponential
+// backoff, warns after repeated failures, and runs the one stop path for Quit, update, shutdown and logoff.
+// It talks to the server only through the server host protocol; processes and time come in as ports.
+import { randomBytes } from "node:crypto";
+import type { HostTransport } from "../../shared/host-transport.js";
+import type { HostMessage, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../../shared/server-host-protocol.js";
+
+/** One launched server process (an Electron utility process in the app). */
+export interface ServerProcess {
+  readonly transport: HostTransport<ServerMessage, HostMessage>;
+  /** Called once when the process has exited, whatever the cause. */
+  onExit(listener: (code: number | null) => void): void;
+  /** Ends the process now. Its exit is still reported through `onExit`. */
+  kill(): void;
+}
+
+export interface SupervisorClock {
+  now(): number;
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+export const systemClock: SupervisorClock = {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
+export type SupervisorThresholds = {
+  /** First restart delay after a failure; doubles with each consecutive failure. */
+  initialBackoffMs: number;
+  /** Cap on the restart delay. */
+  maxBackoffMs: number;
+  /** Consecutive failures that raise the tray warning. */
+  warnAfterFailures: number;
+  /** Running this long without a failure resets the failure count and clears the warning. */
+  stableAfterMs: number;
+  /** A server that sends no `ready` within this time is killed and counted as a failure. */
+  startTimeoutMs: number;
+  /** While a port is in use, how often to try again (slowly, not a crash loop). */
+  portInUseRetryMs: number;
+  /** How long the stop path waits for `stopped` before ending the server process. */
+  stopDeadlineMs: number;
+};
+
+export const DEFAULT_THRESHOLDS: SupervisorThresholds = {
+  initialBackoffMs: 1_000,
+  maxBackoffMs: 30_000,
+  warnAfterFailures: 3,
+  stableAfterMs: 60_000,
+  startTimeoutMs: 60_000,
+  portInUseRetryMs: 30_000,
+  stopDeadlineMs: 5_000,
+};
+
+export type SupervisorState =
+  /** `start()` not called yet. */
+  | "idle"
+  /** A server process is launched and `start` sent; waiting for `ready`. */
+  | "starting"
+  | "running"
+  /** The server failed; waiting out the backoff before the next launch. */
+  | "restarting"
+  /** The EA or HTTP port is taken by another program; retrying slowly. */
+  | "port-in-use"
+  /** The stop path is running. */
+  | "stopping"
+  /** Final: the stop path finished; the app exits. */
+  | "stopped";
+
+export type SupervisorWarning =
+  | { reason: "repeated-failures"; failures: number; message: string }
+  | { reason: "port-in-use"; message: string };
+
+export type SupervisorStatus = {
+  state: SupervisorState;
+  /** Non-null means the tray shows its warning state. */
+  warning: SupervisorWarning | null;
+  /** Consecutive failures since the server last ran stably. */
+  failures: number;
+  /** In `restarting` and `port-in-use`: when the next launch happens (clock time). */
+  nextLaunchAt: number | null;
+  /** The last error the server reported, or the last failure. */
+  lastError: ServerError | null;
+  /** While running: where the server listens. */
+  server: { eaPort: number; httpPort: number; httpOrigin: string } | null;
+  /** The latest `status` the server pushed. */
+  serverStatus: ServerStatus | null;
+};
+
+export type StopReason = "quit" | "update" | "shutdown" | "logoff";
+
+export type StopResult = {
+  reason: StopReason;
+  /**
+   * `stopped`: the server sent `stopped` within the deadline.
+   * `deadline-missed`: it did not; the process was ended and DuckDB replays the WAL on the next start.
+   * `exited`: the process exited during the stop path without `stopped`.
+   * `not-running`: no server was running (restarting, port in use, idle).
+   */
+  outcome: "stopped" | "deadline-missed" | "exited" | "not-running";
+  checkpoint: boolean;
+};
+
+export type SupervisorEvent =
+  | { type: "state"; status: SupervisorStatus }
+  /** Load the app window at this URL: a fresh one-time token, after every server (re)start. */
+  | { type: "window-url"; url: string }
+  | { type: "server-status"; status: ServerStatus };
+
+export type SupervisorOptions = {
+  launch: () => ServerProcess;
+  /** Read at every launch, so changed ports apply on the next (re)start. */
+  config: () => Omit<ServerStartConfig, "windowToken">;
+  clock?: SupervisorClock;
+  createToken?: () => string;
+  thresholds?: Partial<SupervisorThresholds>;
+};
+
+/** A 256-bit random one-time window token (ADR 5). */
+export function createWindowToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+export function windowUrl(httpOrigin: string, token: string) {
+  return `${httpOrigin}/session?token=${encodeURIComponent(token)}`;
+}
+
+type Current = { process: ServerProcess; unsubscribe: () => void };
+
+export class Supervisor {
+  private readonly clock: SupervisorClock;
+  private readonly createToken: () => string;
+  private readonly limits: SupervisorThresholds;
+  private readonly listeners = new Set<(event: SupervisorEvent) => void>();
+  private current: Current | null = null;
+  /** One timer at a time: start timeout, backoff, stable period, port retry or stop deadline. */
+  private timer: unknown = null;
+  /** The token sent with the current `start`; handed to the window on `ready`. */
+  private startToken: string | null = null;
+  /** `issue-window-token` requests awaiting `window-token-issued`, oldest first. */
+  private tokenRequests: { resolve: () => void; reject: (error: Error) => void }[] = [];
+  private stopping: Promise<StopResult> | null = null;
+  private finishStop: ((result: Omit<StopResult, "reason">) => void) | null = null;
+  private state: SupervisorState = "idle";
+  private status_: Omit<SupervisorStatus, "state"> = {
+    warning: null,
+    failures: 0,
+    nextLaunchAt: null,
+    lastError: null,
+    server: null,
+    serverStatus: null,
+  };
+
+  constructor(private readonly options: SupervisorOptions) {
+    this.clock = options.clock ?? systemClock;
+    this.createToken = options.createToken ?? createWindowToken;
+    this.limits = { ...DEFAULT_THRESHOLDS, ...options.thresholds };
+  }
+
+  onEvent(listener: (event: SupervisorEvent) => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  status(): SupervisorStatus {
+    return structuredClone({ state: this.state, ...this.status_ });
+  }
+
+  /** Launches the server. Call once, at app start. */
+  start() {
+    if (this.state !== "idle") return;
+    this.launch();
+  }
+
+  /**
+   * The one stop path (ADR 10) for Quit, update, Windows shutdown and logoff: ask the server to stop
+   * (it stops EA messages, flushes, runs CHECKPOINT and closes), wait for `stopped` up to the deadline,
+   * then end the process. Missing the deadline leaves the WAL for DuckDB to replay on the next start.
+   * After this the supervisor never launches a server again; the shell exits the app when it resolves.
+   * A second call (e.g. shutdown during Quit) returns the first call's promise.
+   */
+  stop(reason: StopReason): Promise<StopResult> {
+    if (this.stopping) return this.stopping;
+    this.clearTimer();
+    this.startToken = null;
+    this.status_.nextLaunchAt = null;
+    const process = this.current?.process;
+    if (!process) {
+      this.stopping = Promise.resolve({ reason, outcome: "not-running", checkpoint: false });
+      this.setState("stopped");
+      return this.stopping;
+    }
+    this.stopping = new Promise<StopResult>((resolve) => {
+      this.finishStop = (result) => {
+        this.finishStop = null;
+        this.clearTimer();
+        this.detach();
+        this.status_.server = null;
+        this.setState("stopped");
+        resolve({ reason, ...result });
+      };
+    });
+    this.setState("stopping");
+    this.setTimer(this.limits.stopDeadlineMs, () => {
+      this.detach()?.kill();
+      this.finishStop?.({ outcome: "deadline-missed", checkpoint: false });
+    });
+    process.transport.send({ type: "stop" });
+    return this.stopping;
+  }
+
+  /**
+   * A fresh one-time token for an app window that was recreated (e.g. after a renderer crash), from the
+   * running server. Resolves to the URL the window loads. Rejects when no server is running; the next
+   * `ready` then brings a `window-url` event anyway.
+   */
+  issueWindowToken(): Promise<string> {
+    const current = this.current;
+    const origin = this.status_.server?.httpOrigin;
+    if (this.state !== "running" || !current || !origin) {
+      return Promise.reject(Error(`The QuoteBridge server is not running (it is ${this.state}).`));
+    }
+    const token = this.createToken();
+    const issued = new Promise<void>((resolve, reject) => this.tokenRequests.push({ resolve, reject }));
+    current.process.transport.send({ type: "issue-window-token", token });
+    return issued.then(() => windowUrl(origin, token));
+  }
+
+  /** Launches now instead of waiting out a backoff or a port-in-use retry. */
+  retry() {
+    if (this.state === "restarting" || this.state === "port-in-use") this.launch();
+  }
+
+  private launch() {
+    this.status_.nextLaunchAt = null;
+    let process: ServerProcess;
+    try {
+      process = this.options.launch();
+    } catch (e) {
+      this.fail({ code: "internal", message: `The QuoteBridge server could not be launched: ${(e as Error).message}` });
+      return;
+    }
+    const current: Current = { process, unsubscribe: () => {} };
+    this.current = current;
+    current.unsubscribe = process.transport.onMessage((message) => {
+      if (this.current === current) this.onMessage(message);
+    });
+    process.onExit((code) => {
+      if (this.current === current) this.onExit(code);
+    });
+    const windowToken = this.createToken();
+    this.startToken = windowToken;
+    this.setState("starting");
+    this.setTimer(this.limits.startTimeoutMs, () =>
+      this.fail({ code: "internal", message: `The QuoteBridge server did not start within ${this.limits.startTimeoutMs / 1000} seconds.` }, { kill: true }),
+    );
+    // A process may answer (or exit) before `send` returns, so nothing follows it.
+    process.transport.send({ type: "start", config: { ...this.options.config(), windowToken } });
+  }
+
+  private onMessage(message: ServerMessage) {
+    switch (message.type) {
+      case "ready": {
+        if (this.state !== "starting") return;
+        const { eaPort, httpPort, httpOrigin } = message;
+        this.status_.server = { eaPort, httpPort, httpOrigin };
+        if (this.status_.warning?.reason === "port-in-use") this.status_.warning = null;
+        this.setTimer(this.limits.stableAfterMs, () => {
+          this.status_.failures = 0;
+          this.status_.warning = null;
+          this.setState(this.state);
+        });
+        const token = this.startToken;
+        this.startToken = null;
+        this.setState("running");
+        if (token) this.emit({ type: "window-url", url: windowUrl(httpOrigin, token) });
+        return;
+      }
+      case "window-token-issued":
+        this.tokenRequests.shift()?.resolve();
+        return;
+      case "stopped":
+        if (this.state === "stopping") this.finishStop?.({ outcome: "stopped", checkpoint: message.checkpoint });
+        return;
+      case "status":
+        this.status_.serverStatus = message.status;
+        this.emit({ type: "server-status", status: message.status });
+        return;
+      case "error":
+        if (message.during === "message") this.tokenRequests.shift()?.reject(Error(message.error.message));
+        if (message.during !== "start" || this.state !== "starting") return;
+        if (message.error.code === "port-in-use") this.portInUse(message.error);
+        else this.fail(message.error, { kill: true });
+        return;
+    }
+  }
+
+  private onExit(code: number | null) {
+    if (this.state === "stopping") return this.finishStop?.({ outcome: "exited", checkpoint: false });
+    this.fail({ code: "internal", message: `The QuoteBridge server stopped unexpectedly (exit code ${code ?? "none"}).` });
+  }
+
+  /** Stops watching the current process; returns it so the caller can end it. */
+  private detach() {
+    const current = this.current;
+    if (!current) return null;
+    this.current = null;
+    for (const request of this.tokenRequests.splice(0)) request.reject(Error("The QuoteBridge server stopped before the window token was issued."));
+    current.unsubscribe();
+    current.process.transport.close();
+    return current.process;
+  }
+
+  /**
+   * Another program holds a port. Not a crash: the server left nothing bound, so end it, warn,
+   * and try again at a slow fixed interval (the port may be freed, or the ports changed in settings).
+   */
+  private portInUse(error: ServerError) {
+    this.detach()?.kill();
+    this.clearTimer();
+    this.startToken = null;
+    this.status_.lastError = error;
+    this.status_.warning = { reason: "port-in-use", message: error.message };
+    this.scheduleLaunch("port-in-use", this.limits.portInUseRetryMs);
+  }
+
+  /** A crash, a failed or hung start: count it, maybe warn, and restart after the backoff. */
+  private fail(error: ServerError, { kill = false } = {}) {
+    const process = this.detach();
+    if (kill) process?.kill();
+    this.clearTimer();
+    this.startToken = null;
+    this.status_.server = null;
+    this.status_.lastError = error;
+    const failures = ++this.status_.failures;
+    if (failures >= this.limits.warnAfterFailures) {
+      this.status_.warning = {
+        reason: "repeated-failures",
+        failures,
+        message: `The QuoteBridge server keeps stopping unexpectedly (${failures} times in a row). It is being restarted.`,
+      };
+    }
+    const delay = Math.min(this.limits.initialBackoffMs * 2 ** (failures - 1), this.limits.maxBackoffMs);
+    this.scheduleLaunch("restarting", delay);
+  }
+
+  private scheduleLaunch(state: "restarting" | "port-in-use", delayMs: number) {
+    this.status_.nextLaunchAt = this.clock.now() + delayMs;
+    this.setTimer(delayMs, () => this.launch());
+    this.setState(state);
+  }
+
+  private setTimer(ms: number, fn: () => void) {
+    this.clearTimer();
+    const handle = this.clock.setTimeout(() => {
+      if (this.timer !== handle) return;
+      this.timer = null;
+      fn();
+    }, ms);
+    this.timer = handle;
+  }
+
+  private clearTimer() {
+    if (this.timer !== null) this.clock.clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private setState(state: SupervisorState) {
+    this.state = state;
+    this.emit({ type: "state", status: this.status() });
+  }
+
+  private emit(event: SupervisorEvent) {
+    for (const l of [...this.listeners]) l(event);
+  }
+}
