@@ -91,6 +91,13 @@ export interface RemoveResult {
   pending: string[];
 }
 
+/** The install was cancelled (the app is stopping) before it changed the terminal; nothing was recorded. */
+export class InstallCancelledError extends Error {
+  constructor(readonly terminalId: string) {
+    super(`The install for terminal ${terminalId} was cancelled`);
+  }
+}
+
 export class InstallInProgressError extends Error {
   constructor(readonly terminalId: string) {
     super(`An install is already running for terminal ${terminalId}`);
@@ -182,19 +189,23 @@ export class BridgeInstaller {
   /**
    * Installs or updates the bridge files (also the Recompile action). A failed compile copies
    * nothing; a failed copy is rolled back. Either way the old bridge files keep working.
+   * Aborting `signal` (the app is stopping) ends MetaEditor and rejects with {@link InstallCancelledError}
+   * while nothing has been copied yet; a copy already under way runs to its end (it takes moments), and
+   * one cut short by the process ending is rolled back on the next start.
    */
-  async install(target: InstallTarget, settings: { eaPort: number }): Promise<InstallResult> {
+  async install(target: InstallTarget, settings: { eaPort: number }, options: { signal?: AbortSignal } = {}): Promise<InstallResult> {
     const terminalId = terminalIdFor(target.dataFolder);
     if (this.installing.has(terminalId)) throw new InstallInProgressError(terminalId);
     this.installing.add(terminalId);
     try {
-      return await this.runInstall(terminalId, target, settings);
+      return await this.runInstall(terminalId, target, settings, options.signal);
     } finally {
       this.installing.delete(terminalId);
     }
   }
 
-  private async runInstall(terminalId: string, target: InstallTarget, settings: { eaPort: number }): Promise<InstallResult> {
+  private async runInstall(terminalId: string, target: InstallTarget, settings: { eaPort: number }, signal: AbortSignal | undefined): Promise<InstallResult> {
+    if (signal?.aborted) throw new InstallCancelledError(terminalId);
     const bundle = await this.loadBundle();
     const record = (await this.records.read(terminalId)) ?? emptyRecord(terminalId, target.dataFolder);
     const runId = this.newRunId();
@@ -203,7 +214,9 @@ export class BridgeInstaller {
 
     try {
       // 1. Stage and compile.
-      const compiled = await this.compile(target, bundle, stage);
+      const compiled = await this.compile(target, bundle, stage, signal);
+      // Stopping: leave the terminal and its record as they were.
+      if (signal?.aborted || (!compiled.ok && compiled.reason === "cancelled")) throw new InstallCancelledError(terminalId);
       const keptLog = await this.keepCompileLog(terminalId, join(stage, "compile.log"));
       if (!compiled.ok) {
         const failure = compileFailure(compiled, bundle.sourceHash, this.now(), keptLog);
@@ -417,7 +430,7 @@ export class BridgeInstaller {
     }
   }
 
-  private async compile(target: InstallTarget, bundle: BridgeBundle, stage: string): Promise<CompileOutcome> {
+  private async compile(target: InstallTarget, bundle: BridgeBundle, stage: string, signal: AbortSignal | undefined): Promise<CompileOutcome> {
     if (!target.installationFolder) return { ok: false, reason: "no-metaeditor" };
     for (const source of bundle.sources) await this.fs.writeFile(join(stage, source.target), source.bytes);
     return compileWithMetaEditor(
@@ -427,6 +440,7 @@ export class BridgeInstaller {
         includeFolder: join(stage, "MQL4"),
         logFile: join(stage, "compile.log"),
         ...(this.options.compileTimeoutMs ? { timeoutMs: this.options.compileTimeoutMs } : {}),
+        ...(signal ? { signal } : {}),
       },
       this.options.metaEditor,
     );

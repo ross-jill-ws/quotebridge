@@ -8,6 +8,7 @@ import { isAbsolute, join } from "node:path";
 import { type BridgeServer, ONLINE_WINDOW_MS } from "../bridge/index.js";
 import {
   BridgeInstaller,
+  InstallCancelledError,
   InstallInProgressError,
   type BridgeBundleFolders,
   type InstallerFileSystem,
@@ -26,6 +27,12 @@ import {
   type TerminalKind,
   type TerminalSources,
 } from "../../shared/terminal-catalog/index.js";
+
+/**
+ * How long `close()` waits for a running install after cancelling it. Well inside the supervisor's stop
+ * deadline (5 s), so the stop path still reaches CHECKPOINT; an install cut short is rolled back on the next start.
+ */
+export const CLOSE_WAIT_MS = 1_500;
 
 /** How long after an install (or app start) without any EA hello before the view hints at the checklist. */
 export const DEFAULT_HINT_AFTER_MS = 2 * 60_000;
@@ -169,6 +176,8 @@ export class TerminalManager {
   private queue: Promise<void> = Promise.resolve();
   private lastAttention: TerminalAttention[] = [];
   private closed = false;
+  /** Aborted by `close()`: cancels a compile under way. */
+  private readonly stopping = new AbortController();
 
   constructor(
     private readonly options: TerminalManagerOptions,
@@ -346,11 +355,18 @@ export class TerminalManager {
     return parseCompileLog(bytes);
   }
 
-  /** Stops taking new work; waits a moment for a running install (an interrupted one is rolled back on the next start). */
+  /**
+   * Stops taking new work and cancels a running install: a compile is ended at once (nothing copied, nothing
+   * recorded); a copy under way gets up to {@link CLOSE_WAIT_MS} to finish. One cut short when the process
+   * ends is rolled back from its restoration manifest on the next start.
+   */
   async close(): Promise<void> {
     this.closed = true;
     this.listeners.clear();
-    await Promise.race([this.queue, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
+    this.stopping.abort();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.queue, new Promise((resolve) => (timer = setTimeout(resolve, CLOSE_WAIT_MS)))]);
+    clearTimeout(timer);
   }
 
   private enqueueInstalls(entries: Entry[], options: { onlyIfManaged?: boolean } = {}) {
@@ -398,9 +414,10 @@ export class TerminalManager {
     this.installErrors.delete(id);
     this.emit();
     try {
-      const result = await this.installer.install(target(entry), { eaPort: this.runtime.eaPort });
+      const result = await this.installer.install(target(entry), { eaPort: this.runtime.eaPort }, { signal: this.stopping.signal });
       if (result.ok) this.installedAt.set(id, this.runtime.now());
     } catch (e) {
+      if (e instanceof InstallCancelledError) return;
       const message = (e as Error).message ?? String(e);
       console.error(`[QuoteBridge] install into ${entry.name} failed: ${message}`);
       this.installErrors.set(id, {

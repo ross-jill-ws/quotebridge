@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer, type ServerConfig } from "../src/server/index.js";
+import { DEFAULT_THRESHOLDS } from "../src/main/supervisor/index.js";
 import type { TerminalsState, TerminalView } from "../src/server/terminals/index.js";
 import { nodeInstallerFileSystem, type InstallerFileSystem } from "../src/server/installer/index.js";
 import type { MetaEditorProcesses } from "../src/shared/metaeditor/index.js";
@@ -251,6 +252,28 @@ test("an install that throws (e.g. the MetaEditor process query timed out) shows
   const fixed = await app.until(CMC, (x) => x.state === "installed" && x.operation === null);
   assert.equal(fixed.lastFailure, null);
   assert.equal(fixed.attention, null);
+});
+
+test("stopping the server mid-install ends MetaEditor and finishes well inside the supervisor's stop deadline, leaving the terminal untouched", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  app.metaEditor.set({ ...SUCCESSFUL_COMPILE, hang: true });
+  const s = await app.state();
+  const ids = [CMC, EASY_FOREX].map((name) => s.terminals.find((x) => x.name === name)!.terminalId!);
+  await app.post("/api/setup", { install: ids, startWithWindows: true });
+  await app.until(CMC, (x) => x.operation === "installing");
+  const compiling = app.metaEditor.current;
+
+  const began = Date.now();
+  await app.server.close();
+  const took = Date.now() - began;
+
+  assert.ok(took < DEFAULT_THRESHOLDS.stopDeadlineMs / 2, `close took ${took} ms`);
+  assert.equal(compiling.killed, 1);
+  assert.equal(compiling.starts.length, 1, "the queued easy-forex install never started");
+  assert.equal(await readIfExists(join(app.spike.cmcData, "MQL4", "Experts", "QuoteBridge.ex4")), undefined);
+  assert.equal(await readIfExists(join(app.spike.cmcData, "templates", "QuoteBridge.tpl")), undefined);
+  const record = await readIfExists(join(app.appData, "installs", ids[0], "record.json"));
+  assert.ok(!record || JSON.parse(record.toString()).installed === null, "no install was recorded");
 });
 
 test("Remove takes the bridge files out and stops managing the terminal", { timeout: 15000 }, async (t) => {

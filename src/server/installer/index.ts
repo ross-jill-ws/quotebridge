@@ -6,7 +6,7 @@ export { nodeInstallerFileSystem } from "./file-system.js";
 export type { InstallerFileSystem } from "./file-system.js";
 export { INSTALL_RECORD_FORMAT } from "./install-record.js";
 export type { InstalledBridge, InstallFailure, InstallRecord, RecordedFile } from "./install-record.js";
-export { BridgeInstaller, InstallInProgressError } from "./installer.js";
+export { BridgeInstaller, InstallCancelledError, InstallInProgressError } from "./installer.js";
 export type {
   BridgeInstallerOptions,
   FileAction,

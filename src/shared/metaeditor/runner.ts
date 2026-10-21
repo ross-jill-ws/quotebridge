@@ -31,6 +31,8 @@ export interface CompileRequest {
   logFile: string;
   /** Defaults to {@link METAEDITOR_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** Aborting ends MetaEditor and the compile fails with `cancelled` (the app is stopping). */
+  signal?: AbortSignal;
 }
 
 /** How long MetaEditor may take before it is killed and the compile fails. */
@@ -53,7 +55,9 @@ export type CompileFailure =
   /** No fresh, non-empty `.ex4` next to the staged source. */
   | "no-ex4"
   /** MetaEditor did not exit within the timeout and was killed. */
-  | "timeout";
+  | "timeout"
+  /** The compile was cancelled through its signal (the app is stopping); MetaEditor was ended. */
+  | "cancelled";
 
 /**
  * Compiles the staged EA. Success = the log's Result line reports 0 errors and a fresh, non-empty
@@ -78,15 +82,24 @@ export async function compileWithMetaEditor(
   await rm(ex4, { force: true });
   await rm(request.logFile, { force: true });
 
+  if (request.signal?.aborted) return { ok: false, reason: "cancelled" };
   const compiler = processes.start(request.metaEditor, args);
   let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
   const timedOut = new Promise<"timeout">((resolve) => {
     timer = setTimeout(() => resolve("timeout"), request.timeoutMs ?? METAEDITOR_TIMEOUT_MS);
   });
-  const exit = await Promise.race([compiler.exited, timedOut]).finally(() => clearTimeout(timer));
-  if (exit === "timeout") {
+  const cancelled = new Promise<"cancelled">((resolve) => {
+    onAbort = () => resolve("cancelled");
+    request.signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  const exit = await Promise.race([compiler.exited, timedOut, cancelled]).finally(() => {
+    clearTimeout(timer);
+    if (onAbort) request.signal?.removeEventListener("abort", onAbort);
+  });
+  if (exit === "timeout" || exit === "cancelled") {
     compiler.kill();
-    return { ok: false, reason: "timeout" };
+    return { ok: false, reason: exit };
   }
   const exitCode = exit;
 
