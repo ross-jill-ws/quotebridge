@@ -1,0 +1,165 @@
+// The server side of the server host protocol (ADR 10): runs the bridge server and the database
+// on the host's `start`, and takes them down through the one stop path on `stop`.
+import type { HostTransport } from "../shared/host-transport.js";
+import type { HostMessage, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../shared/server-host-protocol.js";
+import type { BridgeSnapshot } from "./bridge/index.js";
+import { openDatabase, type AppDatabase } from "./database.js";
+import { startServer, type RunningServer } from "./server.js";
+
+export type ServerHostOptions = {
+  /** Clock in epoch milliseconds; injectable for tests. */
+  now?: () => number;
+  /** Pushed status messages are at most this often (default 1000 ms); time-based changes are swept at this interval too. */
+  statusIntervalMs?: number;
+  /** Called after `stopped` has been sent; the entry point exits the process here. */
+  onStopped?: () => void;
+};
+
+type Running = { server: RunningServer; database: AppDatabase; stopStatus: () => void };
+
+export function runServerHost(transport: HostTransport<HostMessage, ServerMessage>, options: ServerHostOptions = {}) {
+  let phase: "idle" | "starting" | "running" | "stopping" | "stopped" = "idle";
+  let running: Running | undefined;
+  /** Serialises start and stop so a stop that arrives mid-start waits for it. */
+  let work: Promise<void> = Promise.resolve();
+  const send = (message: ServerMessage) => transport.send(message);
+
+  /** Leaves the phase alone when a stop arrived meanwhile; that stop runs next. */
+  const settle = (next: "idle" | "running") => {
+    if (phase === "starting") phase = next;
+  };
+
+  async function start(config: ServerStartConfig) {
+    let database: AppDatabase | undefined;
+    try {
+      database = await openDatabase(config.dataFolder);
+      const server = await startServer({
+        eaPort: config.eaPort,
+        httpPort: config.httpPort,
+        windowToken: config.windowToken,
+        dashboardFolder: config.dashboardFolder,
+        now: options.now,
+      });
+      running = { server, database, stopStatus: pushStatusOnChange(server) };
+      settle("running");
+      send({ type: "ready", eaPort: config.eaPort, httpPort: config.httpPort, httpOrigin: server.httpOrigin, databaseFile: database.file, schemaVersion: database.schemaVersion });
+    } catch (e) {
+      await database?.checkpointAndClose().catch(() => {});
+      settle("idle");
+      send({ type: "error", during: "start", error: toServerError(e) });
+    }
+  }
+
+  /** The one stop path: stop accepting EA messages, flush, CHECKPOINT, close, `stopped`. */
+  async function stop() {
+    phase = "stopping";
+    let checkpoint = false;
+    if (running) {
+      const { server, database, stopStatus } = running;
+      running = undefined;
+      stopStatus();
+      await server.close().catch((e) => send({ type: "error", during: "stop", error: toServerError(e) }));
+      // Milestone 1 buffers nothing for recording, so there is nothing to flush before CHECKPOINT.
+      try {
+        await database.checkpointAndClose();
+        checkpoint = true;
+      } catch (e) {
+        send({ type: "error", during: "stop", error: toServerError(e) });
+      }
+    }
+    phase = "stopped";
+    send({ type: "stopped", checkpoint });
+    transport.close();
+    options.onStopped?.();
+  }
+
+  /** Sends a status whenever the summary changes (ignoring lastHello heartbeats), throttled. */
+  function pushStatusOnChange(server: RunningServer) {
+    const interval = options.statusIntervalMs ?? 1000;
+    let lastKey = statusKey(summarise(server.bridge.snapshot()));
+    let lastSent = 0;
+    let trailing: NodeJS.Timeout | undefined;
+    const check = () => {
+      const status = summarise(server.bridge.snapshot());
+      const key = statusKey(status);
+      if (key === lastKey) return;
+      const wait = lastSent + interval - Date.now();
+      if (wait > 0) {
+        trailing ??= setTimeout(() => {
+          trailing = undefined;
+          check();
+        }, wait);
+        return;
+      }
+      lastKey = key;
+      lastSent = Date.now();
+      send({ type: "status", status });
+    };
+    const unsubscribe = server.bridge.onChange(check);
+    const sweep = setInterval(check, interval);
+    return () => {
+      unsubscribe();
+      clearInterval(sweep);
+      clearTimeout(trailing);
+    };
+  }
+
+  const enqueue = (job: () => Promise<void>) => {
+    work = work.then(job);
+  };
+
+  transport.onMessage((message) => {
+    switch (message?.type) {
+      case "start":
+        if (phase !== "idle") return rejectMessage(`"start" is not allowed while the server is ${phase}.`);
+        phase = "starting";
+        return enqueue(() => start(message.config));
+      case "get-status":
+        if (!running) return rejectMessage(`"get-status" needs a running server (it is ${phase}).`);
+        return send({ type: "status", status: summarise(running.server.bridge.snapshot()) });
+      case "issue-window-token":
+        if (!running) return rejectMessage(`"issue-window-token" needs a running server (it is ${phase}); pass the token with "start" instead.`);
+        if (typeof message.token !== "string" || message.token.length < 16) return rejectMessage("A window token must be a string of at least 16 characters.");
+        running.server.addWindowToken(message.token);
+        return send({ type: "window-token-issued" });
+      case "stop":
+        if (phase === "stopping" || phase === "stopped") return;
+        phase = "stopping";
+        return enqueue(stop);
+      default:
+        return rejectMessage(`Unknown host message ${JSON.stringify((message as { type?: unknown } | null)?.type)}.`);
+    }
+  });
+
+  function rejectMessage(text: string) {
+    send({ type: "error", during: "message", error: { code: "bad-message", message: text } });
+  }
+}
+
+function toServerError(e: unknown): ServerError {
+  const error = e as { code?: unknown; message?: unknown; which?: "ea" | "http"; port?: number } | null;
+  if (error?.code === "port-in-use") return { code: "port-in-use", message: String(error.message), which: error.which, port: error.port };
+  if (error?.code === "database") return { code: "database", message: String(error.message) };
+  return { code: "internal", message: String(error?.message ?? e) };
+}
+
+export function summarise(snapshot: BridgeSnapshot): ServerStatus {
+  const feeds = snapshot.feeds;
+  const online = feeds.filter((f) => f.online).length;
+  return {
+    feeds: {
+      total: feeds.length,
+      online,
+      offline: feeds.length - online,
+      stale: feeds.filter((f) => f.stale).length,
+      noQuote: feeds.filter((f) => f.quoteStatus === "no-quote").length,
+      duplicateCharts: feeds.filter((f) => f.instances > 1).length,
+      dropped: feeds.reduce((sum, f) => sum + f.dropped, 0),
+    },
+    terminals: snapshot.terminals.map((t) => ({ terminalId: t.terminalId, lastHello: t.lastHello, eaVersion: t.eaVersion })),
+    invalidMessages: snapshot.invalidMessages,
+  };
+}
+
+const statusKey = (status: ServerStatus) =>
+  JSON.stringify({ ...status, terminals: status.terminals.map((t) => ({ terminalId: t.terminalId, eaVersion: t.eaVersion })) });

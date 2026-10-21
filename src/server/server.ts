@@ -20,6 +20,8 @@ export type RunningServer = {
   bridge: BridgeServer;
   /** e.g. "http://127.0.0.1:43123". */
   httpOrigin: string;
+  /** Accepts another one-time window token, e.g. for an app window recreated after a renderer crash. Throws if too short. */
+  addWindowToken(token: string): void;
   close(): Promise<void>;
 };
 
@@ -39,6 +41,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   return {
     bridge,
     httpOrigin: http.origin,
+    addWindowToken: (token) => sessions.addToken(token),
     async close() {
       await http.close();
       await bridge.close();
