@@ -12,7 +12,7 @@ import type { TerminalsState } from "../src/server/terminals/index.js";
 import { SettingsStore } from "../src/shared/settings-store.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { freePort } from "./free-port.js";
-import { DLL_4_3_5, InstallerFixture, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";
+import { DLL_4_3_5, InstallerFixture, SUCCESSFUL_COMPILE, readIfExists } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
 import { MachineFixture, spikeMachine } from "./terminal-fixtures.js";
 
@@ -194,4 +194,63 @@ test("a newer app version whose DLL differs only in bytes, under the same name, 
   }
   assert.deepEqual(await readFile(join(app.cmc.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll")), DLL_4_3_5);
   assert.deepEqual(await readFile(join(app.easyForex.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll")), foreignDll);
+});
+
+/** The window's HTTP session on a started server, as the dashboard uses it. */
+async function dashboard(server: { httpOrigin: string }) {
+  const origin = server.httpOrigin;
+  const res = await fetch(`${origin}/session?token=window-token-0123456789`, { redirect: "manual" });
+  const cookie = res.headers.get("set-cookie")!.split(";")[0];
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(origin + path, { method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const text = await r.text();
+    return { status: r.status, body: (text ? JSON.parse(text) : undefined) as TerminalsState };
+  };
+  const state = async () => (await (await fetch(origin + "/api/terminals", { headers: { cookie } })).json()) as TerminalsState;
+  const idle = async () => {
+    for (let i = 0; i < 200; i++) {
+      const s = await state();
+      if (!s.busy) return s;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.fail("the install never finished");
+  };
+  return { post, state, idle };
+}
+
+test("a terminal unticked on the setup screen is never installed: not by setup, not by a rescan, not by updates on later starts", { timeout: 30000 }, async (t) => {
+  const app = await previousAppVersion(t);
+  const eaPort = await freePort();
+  const ea = (dataFolder: string) => readIfExists(join(dataFolder, "MQL4", "Experts", "QuoteBridge.mq4"));
+
+  // First run: the user leaves easy-forex ticked and unticks CMC.
+  const first = await app.startNewer({ bundle: app.oldBundle, eaPort });
+  assert.equal(first.state.setupCompleted, false);
+  const web = await dashboard(first.server);
+  assert.equal((await web.post("/api/setup", { install: [app.easyForex.terminalId], startWithWindows: true })).status, 202);
+  let state = await web.idle();
+  const cmcView = () => state.terminals.find((v) => v.terminalId === app.cmc.terminalId)!;
+  assert.equal(await ea(app.cmc.dataFolder), undefined, "setup did not install into the unticked terminal");
+  assert.ok(await ea(app.easyForex.dataFolder), "setup installed into the ticked terminal");
+  assert.deepEqual([cmcView().managed, cmcView().declined, cmcView().offered, cmcView().state], [false, true, false, "not-installed"]);
+  const saved = await app.settings.read();
+  assert.deepEqual(saved.managedTerminals.map((m) => m.terminalId), [app.easyForex.terminalId]);
+  assert.deepEqual(saved.declinedTerminals.map((d) => d.terminalId), [app.cmc.terminalId]);
+
+  // A rescan finds it again but neither offers nor installs it.
+  const rescanned = await web.post("/api/terminals/rescan", {});
+  assert.equal(rescanned.status, 200);
+  state = await web.idle();
+  assert.deepEqual([cmcView().managed, cmcView().declined, cmcView().offered], [false, true, false]);
+  assert.equal(await ea(app.cmc.dataFolder), undefined, "a rescan did not install into the unticked terminal");
+  assert.deepEqual(first.metaEditor.starts.map((s) => s.executable), [join(app.easyForex.installationFolder, "metaeditor.exe")]);
+  await first.close();
+
+  // The next app version updates the managed terminal on start and leaves the unticked one alone.
+  const newBundle = await app.fixture.bundle("bundle-new", { changeEa: NEW_EA_MARKER });
+  const next = await app.startNewer({ bundle: newBundle, eaPort });
+  assert.match((await ea(app.easyForex.dataFolder))!.toString("utf8"), new RegExp(NEW_EA_MARKER));
+  assert.equal(await ea(app.cmc.dataFolder), undefined, "an update did not install into the unticked terminal");
+  assert.equal(next.view(app.cmc).declined, true);
+  assert.deepEqual(next.metaEditor.starts.map((s) => s.executable), [join(app.easyForex.installationFolder, "metaeditor.exe")]);
 });

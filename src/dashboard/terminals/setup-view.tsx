@@ -4,6 +4,7 @@ import { useState } from "preact/hooks";
 import type { TerminalsState, TerminalView } from "../../server/terminals/index.js";
 import { post } from "../api.js";
 import { AddFolder } from "./add-folder.js";
+import { setTicked, setupSelection } from "./setup-selection.js";
 import { describeTerminal } from "./terminal-card.js";
 import type { Terminals } from "./use-terminals.js";
 
@@ -29,13 +30,12 @@ export function SetupView({ terminals, onDone }: { terminals: Terminals; onDone:
   if (installing) return <SetupProgress state={state} ids={installing} onDone={onDone} />;
 
   const candidates = state.terminals;
-  const ticked = candidates.filter((t) => t.supported && t.terminalId && !unticked.has(t.terminalId)).map((t) => t.terminalId!);
+  // The rows' ticks and the Install request come from one selection, so Install sends what is shown.
+  const selection = setupSelection(candidates, unticked);
+  const ticked = selection.install;
 
   function toggle(id: string, on: boolean) {
-    const next = new Set(unticked);
-    if (on) next.delete(id);
-    else next.add(id);
-    setUnticked(next);
+    setUnticked((current) => setTicked(current, id, on));
   }
 
   async function install() {
@@ -76,7 +76,7 @@ export function SetupView({ terminals, onDone }: { terminals: Terminals; onDone:
       {candidates.length > 0 && (
         <ul class="setup-list">
           {candidates.map((t) => (
-            <SetupRow key={t.key} t={t} checked={!!t.terminalId && t.supported && !unticked.has(t.terminalId)} onToggle={(on) => t.terminalId && toggle(t.terminalId, on)} onConfirm={() => refresh()} onError={setError} />
+            <SetupRow key={t.key} t={t} checked={selection.checked(t)} onToggle={(on) => t.terminalId && toggle(t.terminalId, on)} onConfirm={() => refresh()} onError={setError} />
           ))}
         </ul>
       )}

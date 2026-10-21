@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TerminalView } from "../src/server/terminals/index.js";
 import { describeTerminal } from "../src/dashboard/terminals/terminal-card.js";
+import { setTicked, setupSelection } from "../src/dashboard/terminals/setup-selection.js";
 
 const NOW = 1_800_000_000_000;
 const NOT_YET = { refreshNavigator: false, applyTemplate: false, allowDllImports: false, eaConnected: false };
@@ -80,4 +81,36 @@ test("queued and running installs show progress and make the card busy", () => {
   const installing = describeTerminal(terminal({ operation: "installing", state: "installing" }), NOW);
   assert.equal(installing.state.text, "Installing…");
   assert.equal(installing.busy, true);
+});
+
+// The setup screen: the ticks it shows are exactly what Install sends.
+const CMC = terminal({ managed: false, offered: true, state: "not-installed", installedEaVersion: null });
+const EASY_FOREX = terminal({ key: "mt4-0f5715a276b2", terminalId: "mt4-0f5715a276b2", name: "MT4 at easy-forex", managed: false, offered: true, state: "not-installed", installedEaVersion: null });
+const MT5 = terminal({ key: "mt5-111111111111", terminalId: "mt5-111111111111", name: "easyMarkets MetaTrader 5", kind: "mt5", supported: false, managed: false, state: null });
+
+test("setup pre-ticks every MT4 terminal, never MT5, and Install sends the ticked ones", () => {
+  const selection = setupSelection([CMC, EASY_FOREX, MT5], new Set());
+  assert.deepEqual([CMC, EASY_FOREX, MT5].map((t) => selection.checked(t)), [true, true, false]);
+  assert.deepEqual(selection.install, ["mt4-0123456789ab", "mt4-0f5715a276b2"]);
+});
+
+test("an unticked terminal shows unticked and is left out of Install, and a later refresh keeps it unticked", () => {
+  const unticked = setTicked(new Set(), CMC.terminalId!, false);
+  const selection = setupSelection([CMC, EASY_FOREX, MT5], unticked);
+  assert.equal(selection.checked(CMC), false);
+  assert.deepEqual(selection.install, ["mt4-0f5715a276b2"]);
+  // A poll brings new objects in another order, with a newly found terminal (pre-ticked).
+  const added = terminal({ key: "mt4-222222222222", terminalId: "mt4-222222222222", name: "New Broker MetaTrader 4", managed: false, offered: true });
+  const refreshed = setupSelection([{ ...EASY_FOREX }, added, { ...MT5 }, { ...CMC }], unticked);
+  assert.equal(refreshed.checked({ ...CMC }), false);
+  assert.deepEqual(refreshed.install, ["mt4-0f5715a276b2", "mt4-222222222222"]);
+  // Ticked again, it is sent again.
+  assert.deepEqual(setupSelection([CMC, EASY_FOREX], setTicked(unticked, CMC.terminalId!, true)).install, ["mt4-0123456789ab", "mt4-0f5715a276b2"]);
+});
+
+test("a terminal without a Terminal ID yet (portable mode not confirmed) is neither ticked nor sent", () => {
+  const unconfirmed = terminal({ key: "folder:C:\Portable MT4", terminalId: null, needsConfirmation: true, managed: false });
+  const selection = setupSelection([unconfirmed, EASY_FOREX], new Set());
+  assert.equal(selection.checked(unconfirmed), false);
+  assert.deepEqual(selection.install, ["mt4-0f5715a276b2"]);
 });
