@@ -21,6 +21,11 @@ export interface InstalledBridge {
   terminalId: string;
   dllName: string;
   installedAt: string;
+  /**
+   * The install run that wrote these files. Writing the record is the run's commit point: a run whose
+   * id is recorded here finished copying and verifying, so recovery keeps it instead of rolling it back.
+   */
+  runId?: string;
   /** Every file this app owns in the data folder, older DLL versions included. */
   files: RecordedFile[];
 }

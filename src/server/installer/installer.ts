@@ -274,7 +274,8 @@ export class BridgeInstaller {
         return { ok: false, terminalId, failure, rollback };
       }
 
-      // 4. Record the install.
+      // 4. Record the install. The record is the commit point: from here on a crash or a failed clean-up
+      // leaves a finished install, which recovery keeps (it rolls back only runs the record does not name).
       const installedTargets = new Set(manifest.files.filter((file) => file.action !== "keep-existing-dll").map((file) => file.target));
       const recorded: RecordedFile[] = manifest.files.filter((file) => installedTargets.has(file.target)).map((file) => ({ target: file.target, sha256: file.sha256 }));
       // Older DLL versions stay (MetaTrader may still have them loaded) and stay ours to remove.
@@ -294,16 +295,12 @@ export class BridgeInstaller {
           terminalId,
           dllName: bundle.dllName,
           installedAt: this.now().toISOString(),
+          runId,
           files: recorded,
         },
         lastFailure: null,
       });
-      manifest.state = "done";
-      // Backups of the app's own earlier files are not needed once the install succeeded; backups
-      // of anything else (legacy or user files) are kept with their manifest.
-      const keepRun = manifest.files.some((file) => file.action === "replace" && !file.appOwned);
-      if (keepRun) await this.writeManifest(runFolder, manifest);
-      else await this.fs.removeFolder(runFolder);
+      const keepRun = await this.finishRun(runFolder, manifest);
 
       return {
         ok: true,
@@ -316,6 +313,24 @@ export class BridgeInstaller {
     } finally {
       await this.fs.removeFolder(stage);
     }
+  }
+
+  /**
+   * After the install was recorded: marks the run done. Backups of the app's own earlier files are not
+   * needed once the install succeeded; backups of anything else (legacy or user files) are kept with
+   * their manifest. Returns whether the run folder is kept. A failure here (e.g. EBUSY from an indexer)
+   * does not undo the install: recovery finds the run recorded and finishes it on the next start.
+   */
+  private async finishRun(runFolder: string, manifest: RestorationManifest): Promise<boolean> {
+    manifest.state = "done";
+    const keepRun = manifest.files.some((file) => file.action === "replace" && !file.appOwned);
+    try {
+      if (keepRun) await this.writeManifest(runFolder, manifest);
+      else await this.fs.removeFolder(runFolder);
+    } catch (error) {
+      console.error(`[QuoteBridge] cleaning up install run ${runFolder} failed (retried on the next start): ${errorMessage(error)}`);
+    }
+    return keepRun;
   }
 
   /** The MetaEditor log of the terminal's latest compile, as MetaEditor wrote it; undefined when none was kept. */
@@ -352,12 +367,18 @@ export class BridgeInstaller {
     await this.fs.removeFolder(join(this.options.appDataFolder, "staging"));
     for (const terminalId of await this.records.terminalIds()) {
       const runs = join(this.records.folderFor(terminalId), "runs");
+      const committedRun = (await this.records.read(terminalId).catch(() => undefined))?.installed?.runId;
       for (const run of await this.fs.listFolder(runs)) {
         if (run.isFile) continue;
         const bytes = await readIfPresent(this.fs, join(runs, run.name, "manifest.json"));
         if (!bytes) continue;
         const manifest = JSON.parse(bytes.toString("utf8")) as RestorationManifest;
         if (manifest.state !== "in-progress") continue;
+        if (manifest.runId === committedRun) {
+          // Recorded, so copied and verified: the run died only while cleaning up.
+          await this.finishRun(join(runs, run.name), manifest);
+          continue;
+        }
         await this.rollback(join(runs, run.name), manifest);
         report.rolledBack.push(`${terminalId}/${run.name}`);
       }

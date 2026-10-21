@@ -392,3 +392,56 @@ test("an install interrupted by a crash is rolled back from its restoration mani
   assert.equal((await nextStart.status(terminal)).state, "installed-legacy");
   assert.deepEqual((await nextStart.recover()).rolledBack, []);
 });
+
+test("an install that dies after recording itself is kept on the next start, not rolled back under a record that says installed", async (t) => {
+  const fixture = await InstallerFixture.create();
+  t.after(() => fixture.cleanup());
+  const terminal = await fixture.terminal();
+  const bundle = await fixture.bundle();
+  // The app dies while cleaning up after the install was recorded.
+  let recorded!: () => void;
+  const died = new Promise<void>((resolve) => (recorded = resolve));
+  const dying: InstallerFileSystem = {
+    ...nodeInstallerFileSystem,
+    removeFolder(path) {
+      if (path.includes(`${join("installs", terminalIdFor(terminal.dataFolder), "runs")}`)) {
+        recorded();
+        return new Promise(() => {});
+      }
+      return nodeInstallerFileSystem.removeFolder(path);
+    },
+  };
+  void new BridgeInstaller({ appDataFolder: fixture.appData, bundle, metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE), fs: dying }).install(terminal, { eaPort: 5555 });
+  await died;
+
+  const nextStart = new BridgeInstaller({ appDataFolder: fixture.appData, bundle });
+  const recovered = await nextStart.recover();
+
+  assert.deepEqual(recovered.rolledBack, []);
+  assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
+  assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Libraries", "libzmq-mt-4_3_5.dll")), DLL_4_3_5);
+  assert.equal((await nextStart.status(terminal)).state, "installed");
+});
+
+test("an install whose run folder cannot be cleaned up (EBUSY) still succeeds and is not rolled back on the next start", async (t) => {
+  const fixture = await InstallerFixture.create();
+  t.after(() => fixture.cleanup());
+  const terminal = await fixture.terminal();
+  const bundle = await fixture.bundle();
+  const busy: InstallerFileSystem = {
+    ...nodeInstallerFileSystem,
+    async removeFolder(path) {
+      if (path.includes(join("installs", terminalIdFor(terminal.dataFolder), "runs"))) throw Object.assign(new Error(`EBUSY: injected, '${path}'`), { code: "EBUSY" });
+      return nodeInstallerFileSystem.removeFolder(path);
+    },
+  };
+  const installer = new BridgeInstaller({ appDataFolder: fixture.appData, bundle, metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE), fs: busy });
+
+  const result = await installer.install(terminal, { eaPort: 5555 });
+
+  assert.equal(result.ok, true);
+  const nextStart = new BridgeInstaller({ appDataFolder: fixture.appData, bundle });
+  assert.deepEqual((await nextStart.recover()).rolledBack, []);
+  assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
+  assert.equal((await nextStart.status(terminal)).state, "installed");
+});
