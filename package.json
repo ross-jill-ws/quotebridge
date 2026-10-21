@@ -8,18 +8,20 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/dashboard', 'dist/dashboard', { recursive: true })\"",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"tests/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
     "electron": "44.9.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "ws": "8.22.0",
     "zeromq": "6.8.0"
   }
 }

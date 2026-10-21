@@ -86,8 +86,8 @@ export class FakeEA {
 }
 
 /** A free high TCP port on 127.0.0.1 (never the legacy 5555). */
-export async function freeEndpoint(): Promise<string> {
-  const port = await new Promise<number>((resolve, reject) => {
+export function freePort(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
@@ -95,7 +95,11 @@ export async function freeEndpoint(): Promise<string> {
       server.close(() => (typeof address === "object" && address ? resolve(address.port) : reject(Error("no port"))));
     });
   });
-  return `tcp://127.0.0.1:${port}`;
+}
+
+/** A ZeroMQ endpoint on a free high port. */
+export async function freeEndpoint(): Promise<string> {
+  return `tcp://127.0.0.1:${await freePort()}`;
 }
 
 /** A clock the test moves by hand. */

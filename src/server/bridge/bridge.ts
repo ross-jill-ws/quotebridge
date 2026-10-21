@@ -1,6 +1,7 @@
 // Bridge server core: ZeroMQ ROUTER for QuoteBridge EAs, feed registry and terminal presence.
 // Ported from the legacy Bridge without trading or recording (milestone 1).
 import { Router } from "zeromq";
+import { asPortInUse } from "../port-in-use.js";
 import { feedKey, MAX_MESSAGE_BYTES, parseMessage, type Hello, type Sample } from "./protocol.js";
 
 /** A feed is online while its last message is younger than this. EAs re-send hello every 2 s. */
@@ -88,15 +89,40 @@ export class BridgeServer {
   private stopped = false;
   private invalidMessages = 0;
   private operations: Promise<unknown> = Promise.resolve();
+  private readonly listeners = new Set<() => void>();
 
   constructor(options: BridgeServerOptions = {}) {
     this.now = options.now ?? Date.now;
   }
 
   async start(endpoint: string) {
-    if (!/^tcp:\/\/127\.0\.0\.1:\d+$/.test(endpoint)) throw Error("ZeroMQ must bind to 127.0.0.1");
-    await this.socket.bind(endpoint);
+    const port = /^tcp:\/\/127\.0\.0\.1:(\d+)$/.exec(endpoint)?.[1];
+    if (!port) throw Error("ZeroMQ must bind to 127.0.0.1");
+    try {
+      await this.socket.bind(endpoint);
+    } catch (e) {
+      throw asPortInUse(e, "ea", Number(port));
+    }
     this.running = this.loop();
+  }
+
+  /**
+   * Calls `listener` after every EA message is handled and after a feed is removed; returns an unsubscribe function.
+   * Time-based changes (online to offline, stale) raise no signal: read the snapshot to see them.
+   */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed() {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch (e) {
+        console.error("Bridge change listener failed", e);
+      }
+    }
   }
 
   private serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -107,7 +133,10 @@ export class BridgeServer {
 
   private async loop() {
     try {
-      for await (const frames of this.socket) await this.serial(() => this.handle(frames));
+      for await (const frames of this.socket) {
+        await this.serial(() => this.handle(frames));
+        this.changed();
+      }
     } catch (e) {
       if (!this.stopped) console.error("Bridge stopped unexpectedly", e);
     }
@@ -222,6 +251,7 @@ export class BridgeServer {
       if (known.online) throw Error("Feed is online; detach its EAs before removing it");
       this.owners.delete(feed);
       for (const [session, p] of this.peers) if (p.feed === feed) this.peers.delete(session);
+      this.changed();
     });
   }
 
