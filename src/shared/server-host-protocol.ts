@@ -22,6 +22,11 @@ export type ServerStartConfig = {
   dataFolder: string;
   /** Overrides the bundled dashboard folder. */
   dashboardFolder?: string;
+  /**
+   * The bridge files the app installs into managed terminals: the EA sources folder (`mt4/`) and
+   * the folder with the ZeroMQ DLL and its notices. Omitted, the server does not manage terminals.
+   */
+  bridgeBundle?: { sourceFolder: string; dllFolder: string };
 };
 
 /** Host → server. */
@@ -55,10 +60,15 @@ export type ServerError = {
 
 export type TerminalPresenceStatus = { terminalId: string; lastHello: number; eaVersion: string | null };
 
+/** A managed terminal that needs the user's attention (compile failed, no MetaEditor, failed copy). */
+export type TerminalAttentionStatus = { terminalId: string; name: string; message: string };
+
 /** What the host needs to supervise and to drive the tray warning; the app window gets full detail over HTTP. */
 export type ServerStatus = {
   feeds: { total: number; online: number; offline: number; stale: number; noQuote: number; duplicateCharts: number; dropped: number };
   terminals: TerminalPresenceStatus[];
+  /** Managed terminals needing attention; the tray shows a warning while this is not empty. */
+  terminalsNeedingAttention: TerminalAttentionStatus[];
   /** EA messages the server could not parse since start. */
   invalidMessages: number;
 };

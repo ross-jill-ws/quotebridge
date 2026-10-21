@@ -138,6 +138,7 @@ test("status reflects feeds and terminal presence as EAs say hello", { timeout: 
   assert.deepEqual(empty.status, {
     feeds: { total: 0, online: 0, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 },
     terminals: [],
+    terminalsNeedingAttention: [],
     invalidMessages: 0,
   });
 

@@ -318,7 +318,7 @@ test("a window token cannot be issued while no server is running, and a pending 
 test("the server's status pushes are passed on", () => {
   const { supervisor, launcher, events } = setup();
   supervisor.start();
-  const status = { feeds: { total: 1, online: 1, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 }, terminals: [], invalidMessages: 0 };
+  const status = { feeds: { total: 1, online: 1, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 }, terminals: [], terminalsNeedingAttention: [], invalidMessages: 0 };
   launcher.last.reply({ type: "status", status });
   assert.deepEqual(events.at(-1), { type: "server-status", status });
   assert.deepEqual(supervisor.status().serverStatus, status);

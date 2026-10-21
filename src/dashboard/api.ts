@@ -1,18 +1,41 @@
 // Calls to the app's HTTP API from the dashboard. The window session cookie goes along automatically.
 
-/** Sends a JSON body; resolves on success, rejects with the server's message otherwise. */
-export async function post(path: string, body: unknown): Promise<void> {
+/** Sends a JSON body; resolves with the parsed answer (undefined when empty), rejects with the server's message otherwise. */
+export async function post<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (res.ok) return;
-  const message = await res
-    .json()
-    .then((b: { error?: unknown }) => (typeof b.error === "string" ? b.error : undefined))
-    .catch(() => undefined);
-  throw Error(message ?? `The app answered ${res.status}.`);
+  return answer<T>(res);
+}
+
+/** GETs JSON; rejects with the server's message on an error status. */
+export async function get<T>(path: string): Promise<T> {
+  return answer<T>(await fetch(path, { cache: "no-store" }));
+}
+
+/** Thrown for an error answer; `status` is the HTTP status. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function answer<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = text ? JSON.parse(text) : undefined;
+  } catch {
+    body = undefined;
+  }
+  if (res.ok) return body as T;
+  const error = (body as { error?: unknown } | undefined)?.error;
+  throw new ApiError(typeof error === "string" ? error : `The app answered ${res.status}.`, res.status);
 }
 
 /** Whether this page's window session still works. Rejects when the server cannot be reached. */

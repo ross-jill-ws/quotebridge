@@ -8,6 +8,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { asPortInUse } from "../port-in-use.js";
+import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
 import { SESSION_COOKIE, type WindowSessions } from "./window-session.js";
 
@@ -19,6 +20,8 @@ export type HttpServerOptions = {
   bridge: BridgeServer;
   sessions: WindowSessions;
   dashboardFolder?: string;
+  /** The terminal manager, when the server manages terminals. */
+  terminals?: () => TerminalManager | undefined;
 };
 
 export type HttpServer = {
@@ -119,9 +122,65 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       res.writeHead(204).end();
       return;
     }
+    const terminals = options.terminals?.();
+    if (terminals) {
+      const handled = await handleTerminals(terminals, url, req, res);
+      if (handled) return;
+    }
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Unknown endpoint" });
     if (req.method === "GET" || req.method === "HEAD") return serveStatic(url.pathname, req, res);
     json(res, 405, { error: "Method not allowed" });
+  }
+
+  /** Terminals view and setup screen endpoints. Returns false when the route is not one of them. */
+  async function handleTerminals(terminals: TerminalManager, url: URL, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const route = `${req.method} ${url.pathname}`;
+    const body = async () => {
+      try {
+        return await readJson(req);
+      } catch {
+        throw new TerminalRequestError(400, "Expected a JSON body.");
+      }
+    };
+    try {
+      switch (route) {
+        case "GET /api/terminals":
+          json(res, 200, await terminals.state());
+          return true;
+        case "POST /api/terminals/rescan":
+          json(res, 200, await terminals.rescan());
+          return true;
+        case "POST /api/terminals/add-folder":
+          json(res, 200, { terminal: await terminals.addFolder(((await body()) as { folder?: unknown } | null)?.folder) });
+          return true;
+        case "POST /api/terminals/install":
+          await terminals.install(await body());
+          json(res, 202, await terminals.state());
+          return true;
+        case "POST /api/terminals/remove":
+          json(res, 200, await terminals.remove(await body()));
+          return true;
+        case "POST /api/terminals/decline":
+          await terminals.decline(await body());
+          json(res, 200, await terminals.state());
+          return true;
+        case "GET /api/terminals/compile-log":
+          json(res, 200, await terminals.compileLog(url.searchParams.get("terminalId") ?? undefined));
+          return true;
+        case "POST /api/setup":
+          await terminals.completeSetup(await body());
+          json(res, 202, await terminals.state());
+          return true;
+        default:
+          return false;
+      }
+    } catch (e) {
+      if (e instanceof TerminalRequestError) {
+        json(res, e.status, { error: e.message });
+        return true;
+      }
+      throw e;
+    }
   }
 
   async function serveStatic(pathname: string, req: IncomingMessage, res: ServerResponse) {

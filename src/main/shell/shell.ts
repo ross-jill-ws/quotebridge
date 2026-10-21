@@ -57,6 +57,9 @@ export class Shell {
   /** Shown this run (the saved flag may still be on its way to the server). */
   private closeNotificationShown: boolean;
   private quitting: Promise<void> | null = null;
+  /** The tray warning has two sources: the supervisor (server failing) and managed terminals needing attention. */
+  private serverWarning: string | null = null;
+  private terminalWarning: string | null = null;
 
   constructor(
     private readonly ports: ShellPorts,
@@ -133,6 +136,10 @@ export class Shell {
     this.ports.setLoginItem?.(loginItemFor(settings));
   }
 
+  private showWarning() {
+    this.ports.tray.setWarning(this.serverWarning ?? this.terminalWarning);
+  }
+
   private reveal() {
     const { window } = this.ports;
     if (window.isMinimized()) window.restore();
@@ -145,7 +152,18 @@ export class Shell {
       case "window-url":
         return this.ports.window.loadURL(event.url);
       case "state":
-        return this.ports.tray.setWarning(event.status.warning?.message ?? null);
+        this.serverWarning = event.status.warning?.message ?? null;
+        return this.showWarning();
+      case "server-status": {
+        const attention = event.status.terminalsNeedingAttention ?? [];
+        this.terminalWarning =
+          attention.length === 0
+            ? null
+            : attention.length === 1
+              ? `${attention[0].name} needs attention: ${attention[0].message}`
+              : `${attention.length} terminals need attention. Open the Terminals view.`;
+        return this.showWarning();
+      }
       case "settings":
         return this.applySettings(event.settings);
     }

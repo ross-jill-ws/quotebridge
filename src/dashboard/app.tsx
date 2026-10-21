@@ -1,7 +1,9 @@
 // The dashboard shell: header with navigation and connection state, and the current view.
 import { useEffect, useState } from "preact/hooks";
 import { FeedsView } from "./feeds/feeds-view.js";
+import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
+import { useTerminals } from "./terminals/use-terminals.js";
 import { useLive, type Live } from "./use-live.js";
 
 const VIEWS = [
@@ -24,11 +26,24 @@ export function App() {
     return () => removeEventListener("hashchange", onHash);
   }, []);
   const live = useLive();
+  // The setup screen opens on first run and stays (with its progress) until the user moves on.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const terminals = useTerminals(view === "terminals" || setupOpen);
+  const firstRun = terminals.state ? !terminals.state.setupCompleted : false;
+  useEffect(() => {
+    if (firstRun) setSetupOpen(true);
+  }, [firstRun]);
+  const finishSetup = () => {
+    setSetupOpen(false);
+    location.hash = "#/terminals";
+    terminals.refresh();
+  };
 
   return (
     <>
       <header class="app-header">
         <div class="brand">QuoteBridge</div>
+        {!setupOpen && (
         <nav class="tabs" aria-label="Views">
           {VIEWS.map((v) => (
             <a key={v.id} href={`#/${v.id}`} class="tab" aria-current={view === v.id ? "page" : undefined}>
@@ -36,10 +51,13 @@ export function App() {
             </a>
           ))}
         </nav>
+        )}
         <ConnectionBadge status={live.status} />
       </header>
       <ConnectionNotice live={live} />
-      <main class="content">{view === "feeds" ? <FeedsView live={live} /> : <TerminalsView />}</main>
+      <main class="content">
+        {setupOpen ? <SetupView terminals={terminals} onDone={finishSetup} /> : view === "feeds" ? <FeedsView live={live} /> : <TerminalsView terminals={terminals} />}
+      </main>
     </>
   );
 }

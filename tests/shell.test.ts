@@ -230,3 +230,29 @@ test("a crashed window renderer gets a fresh one-time token and reloads", async 
   assert.equal(supervisor.tokenRequests, 1);
   assert.equal(window.url, "http://127.0.0.1:6580/session?token=reissued-1");
 });
+
+test("the tray warns while a managed terminal needs attention; a server warning takes precedence", () => {
+  const { shell, supervisor, tray } = setup();
+  shell.start();
+  const serverStatus = (attention: { terminalId: string; name: string; message: string }[]) => ({
+    feeds: { total: 0, online: 0, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 },
+    terminals: [],
+    terminalsNeedingAttention: attention,
+    invalidMessages: 0,
+  });
+  const failed = { terminalId: "mt4-0123456789ab", name: "CMC Markets MetaTrader 4", message: "MetaEditor reported errors." };
+
+  supervisor.emit({ type: "server-status", status: serverStatus([failed]) });
+  assert.equal(tray.warning, "CMC Markets MetaTrader 4 needs attention: MetaEditor reported errors.");
+
+  supervisor.emit({ type: "state", status: status({ reason: "repeated-failures", failures: 3, message: "The server keeps stopping." }) });
+  assert.equal(tray.warning, "The server keeps stopping.");
+  supervisor.emit({ type: "state", status: status(null) });
+  assert.equal(tray.warning, "CMC Markets MetaTrader 4 needs attention: MetaEditor reported errors.");
+
+  supervisor.emit({ type: "server-status", status: serverStatus([failed, { ...failed, terminalId: "mt4-ba9876543210", name: "Other MT4" }]) });
+  assert.equal(tray.warning, "2 terminals need attention. Open the Terminals view.");
+
+  supervisor.emit({ type: "server-status", status: serverStatus([]) });
+  assert.equal(tray.warning, null);
+});

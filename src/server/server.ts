@@ -2,6 +2,7 @@
 import { BridgeServer } from "./bridge/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { WindowSessions } from "./http/window-session.js";
+import { TerminalManager, type TerminalManagerOptions } from "./terminals/index.js";
 
 export type ServerConfig = {
   /** ZeroMQ port QuoteBridge EAs connect to (default setting 5555). */
@@ -14,10 +15,13 @@ export type ServerConfig = {
   dashboardFolder?: string;
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
+  /** Terminal management (Terminals view, setup screen, tray attention); omitted, those endpoints answer 404. */
+  terminals?: TerminalManagerOptions;
 };
 
 export type RunningServer = {
   bridge: BridgeServer;
+  terminals: TerminalManager | undefined;
   /** e.g. "http://127.0.0.1:43123". */
   httpOrigin: string;
   /** Accepts another one-time window token, e.g. for an app window recreated after a renderer crash. Throws if too short. */
@@ -33,16 +37,20 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, sessions, dashboardFolder: config.dashboardFolder });
+    http = await startHttpServer({ port: config.httpPort, bridge, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals });
   } catch (e) {
     await bridge.close();
     throw e;
   }
+  // Only after both ports are bound: a failed start must not have begun recovery or detection.
+  const terminals = config.terminals ? new TerminalManager(config.terminals, { bridge, eaPort: config.eaPort, now: config.now ?? Date.now }) : undefined;
   return {
     bridge,
+    terminals,
     httpOrigin: http.origin,
     addWindowToken: (token) => sessions.addToken(token),
     async close() {
+      await terminals?.close();
       await http.close();
       await bridge.close();
     },

@@ -51,3 +51,16 @@ export function effectivePorts(ports: Settings["ports"], overrides: DevOverrides
   if (effective.ea === effective.http) throw Error(`The EA port and the HTTP port must differ (both are ${effective.ea}).`);
   return effective;
 }
+
+/**
+ * Where the bridge files the app installs into terminals live. Packaged: `resources\bridge\mt4` and
+ * `resources\bridge\native` (the packaging ticket puts them there). Dev run: the repo's `mt4/` and
+ * the folder in `QUOTEBRIDGE_DLL_FOLDER` (the CI-built DLL with its notices), else `native/libzmq/out`.
+ */
+export function bridgeBundleFolders(
+  where: { isPackaged: boolean; appPath: string; resourcesPath: string },
+  env: Record<string, string | undefined>,
+): { sourceFolder: string; dllFolder: string } {
+  if (where.isPackaged) return { sourceFolder: join(where.resourcesPath, "bridge", "mt4"), dllFolder: join(where.resourcesPath, "bridge", "native") };
+  return { sourceFolder: join(where.appPath, "mt4"), dllFolder: env.QUOTEBRIDGE_DLL_FOLDER?.trim() || join(where.appPath, "native", "libzmq", "out") };
+}

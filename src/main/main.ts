@@ -1,15 +1,20 @@
 // Main process: thin Electron wiring for the shell (src/main/shell) and the supervisor (ADR 10).
 // The rules live in `Shell` and `Supervisor` and are tested there; this file only connects Electron.
-import { app, BrowserWindow, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
-import { appDataFolder, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
+import { appDataFolder, bridgeBundleFolders, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 
 const SERVER_ENTRY = fileURLToPath(new URL("../server/entry.js", import.meta.url));
+const PRELOAD = fileURLToPath(new URL("./preload.cjs", import.meta.url));
+/** Must match src/main/preload.cts. */
+const PICK_FOLDER_CHANNEL = "quotebridge:pick-folder";
+/** Windows cuts tray tooltips at 127 characters. */
+const TOOLTIP_MAX = 127;
 const STARTING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
   `<!doctype html><title>${APP_NAME}</title><body style="font-family:Segoe UI,sans-serif;margin:2rem;color:#444">Starting ${APP_NAME}…</body>`,
 )}`;
@@ -42,11 +47,12 @@ async function boot() {
     console.log(`[QuoteBridge] dev overrides: data folder ${dataFolder}, ports ${JSON.stringify(effectivePorts(settings.ports, overrides))}`);
   }
 
+  const bridgeBundle = bridgeBundleFolders({ isPackaged: app.isPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath }, process.env);
   const supervisor = new Supervisor({
     launch: utilityProcessLauncher(utilityProcess.fork, SERVER_ENTRY),
     config: () => {
       const ports = effectivePorts(settings.ports, overrides);
-      return { eaPort: ports.ea, httpPort: ports.http, dataFolder };
+      return { eaPort: ports.ea, httpPort: ports.http, dataFolder, bridgeBundle };
     },
   });
   supervisor.onEvent((event) => {
@@ -59,7 +65,16 @@ async function boot() {
     height: 800,
     show: false,
     title: APP_NAME,
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: PRELOAD },
+  });
+  // The dashboard's Add folder (ADR 2: Electron-only, with a typed-path fallback in the page).
+  ipcMain.handle(PICK_FOLDER_CHANNEL, async (event, title: unknown) => {
+    if (event.sender !== window.webContents) return null;
+    const result = await dialog.showOpenDialog(window, {
+      title: typeof title === "string" ? title.slice(0, 200) : "Choose the MetaTrader folder",
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
   });
   window.removeMenu();
   void window.loadURL(STARTING_PAGE);
@@ -99,7 +114,7 @@ async function boot() {
     tray: {
       setWarning: (message) => {
         tray.setImage(message ? icons.warning : icons.normal);
-        tray.setToolTip(message ? `${APP_NAME}: ${message}` : APP_NAME);
+        tray.setToolTip(message ? `${APP_NAME}: ${message}`.slice(0, TOOLTIP_MAX) : APP_NAME);
       },
       setStartWithWindows: (on) => {
         startWithWindows = on;

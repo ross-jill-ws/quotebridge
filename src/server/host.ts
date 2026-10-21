@@ -1,7 +1,7 @@
 // The server side of the server host protocol (ADR 10): runs the bridge server and the database
 // on the host's `start`, and takes them down through the one stop path on `stop`.
 import type { HostTransport } from "../shared/host-transport.js";
-import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus } from "../shared/server-host-protocol.js";
+import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type TerminalAttentionStatus } from "../shared/server-host-protocol.js";
 import { SettingsStore } from "../shared/settings-store.js";
 import type { BridgeSnapshot } from "./bridge/index.js";
 import { openDatabase, type AppDatabase } from "./database.js";
@@ -34,14 +34,26 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     let database: AppDatabase | undefined;
     try {
       database = await openDatabase(config.dataFolder);
+      const settings = new SettingsStore(config.dataFolder);
       const server = await startServer({
         eaPort: config.eaPort,
         httpPort: config.httpPort,
         windowToken: config.windowToken,
         dashboardFolder: config.dashboardFolder,
         now: options.now,
+        ...(config.bridgeBundle
+          ? {
+              terminals: {
+                appDataFolder: config.dataFolder,
+                settings,
+                bundle: config.bridgeBundle,
+                // Setup and Remove change settings; main applies Start with Windows from them.
+                onSettingsSaved: (saved) => send({ type: "settings", settings: saved }),
+              },
+            }
+          : {}),
       });
-      running = { server, database, settings: new SettingsStore(config.dataFolder), stopStatus: pushStatusOnChange(server) };
+      running = { server, database, settings, stopStatus: pushStatusOnChange(server) };
       settle("running");
       send({ type: "ready", eaPort: config.eaPort, httpPort: config.httpPort, httpOrigin: server.httpOrigin, databaseFile: database.file, schemaVersion: database.schemaVersion });
     } catch (e) {
@@ -77,11 +89,12 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   /** Sends a status whenever the summary changes (ignoring lastHello heartbeats), throttled. */
   function pushStatusOnChange(server: RunningServer) {
     const interval = options.statusIntervalMs ?? 1000;
-    let lastKey = statusKey(summarise(server.bridge.snapshot()));
+    const current = () => summarise(server.bridge.snapshot(), server.terminals?.attention() ?? []);
+    let lastKey = statusKey(current());
     let lastSent = 0;
     let trailing: NodeJS.Timeout | undefined;
     const check = () => {
-      const status = summarise(server.bridge.snapshot());
+      const status = current();
       const key = statusKey(status);
       if (key === lastKey) return;
       const wait = lastSent + interval - Date.now();
@@ -97,9 +110,11 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       send({ type: "status", status });
     };
     const unsubscribe = server.bridge.onChange(check);
+    const unsubscribeTerminals = server.terminals?.onChange(check);
     const sweep = setInterval(check, interval);
     return () => {
       unsubscribe();
+      unsubscribeTerminals?.();
       clearInterval(sweep);
       clearTimeout(trailing);
     };
@@ -117,7 +132,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         return enqueue(() => start(message.config));
       case "get-status":
         if (!running) return rejectMessage(`"get-status" needs a running server (it is ${phase}).`);
-        return send({ type: "status", status: summarise(running.server.bridge.snapshot()) });
+        return send({ type: "status", status: summarise(running.server.bridge.snapshot(), running.server.terminals?.attention() ?? []) });
       case "issue-window-token":
         if (!running) return rejectMessage(`"issue-window-token" needs a running server (it is ${phase}); pass the token with "start" instead.`);
         if (typeof message.token !== "string" || message.token.length < 16) return rejectMessage("A window token must be a string of at least 16 characters.");
@@ -169,7 +184,7 @@ function toServerError(e: unknown): ServerError {
   return { code: "internal", message: String(error?.message ?? e) };
 }
 
-export function summarise(snapshot: BridgeSnapshot): ServerStatus {
+export function summarise(snapshot: BridgeSnapshot, terminalsNeedingAttention: TerminalAttentionStatus[] = []): ServerStatus {
   const feeds = snapshot.feeds;
   const online = feeds.filter((f) => f.online).length;
   return {
@@ -183,6 +198,7 @@ export function summarise(snapshot: BridgeSnapshot): ServerStatus {
       dropped: feeds.reduce((sum, f) => sum + f.dropped, 0),
     },
     terminals: snapshot.terminals.map((t) => ({ terminalId: t.terminalId, lastHello: t.lastHello, eaVersion: t.eaVersion })),
+    terminalsNeedingAttention: terminalsNeedingAttention.map(({ terminalId, name, message }) => ({ terminalId, name, message })),
     invalidMessages: snapshot.invalidMessages,
   };
 }

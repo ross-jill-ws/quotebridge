@@ -2,6 +2,11 @@
 //
 //   npm run dev:dashboard                 # server + dashboard watch build
 //   npm run dev:dashboard -- --fake-ea    # plus synthetic feeds (no MetaTrader needed)
+//   npm run dev:dashboard -- --fake-terminals [--fake-ea]
+//       # plus the Terminals view and first-run setup on fake terminals in a temp folder, with a
+//       # fake MetaEditor (one broker fails to compile, one has MetaEditor open). After an install, a
+//       # fake EA says hello from each terminal (except "Quiet Broker") so the checklist ticks.
+//       # Nothing touches real terminals, MetaEditor or %APPDATA%; the temp folder is deleted on exit.
 //
 // Ports come from QUOTEBRIDGE_EA_PORT / QUOTEBRIDGE_HTTP_PORT (defaults 6655 / 6680, away from the
 // app's own 5555 / 5580). Open the printed sign-in link in a browser; press Enter for a new one.
@@ -11,18 +16,22 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { startServer } from "../src/server/index.js";
 import { FakeEA } from "../tests/fake-ea.js";
+import { fakeTerminals } from "./dev-fake-terminals.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const eaPort = Number(process.env.QUOTEBRIDGE_EA_PORT ?? 6655);
 const httpPort = Number(process.env.QUOTEBRIDGE_HTTP_PORT ?? 6680);
 const withFakeEA = process.argv.includes("--fake-ea");
+const withFakeTerminals = process.argv.includes("--fake-terminals");
 
 const token = () => randomBytes(24).toString("base64url");
 
 const build = spawn(process.execPath, [`${root}scripts/build-dashboard.mjs`, "--watch"], { stdio: "inherit" });
 
 const firstToken = token();
-const server = await startServer({ eaPort, httpPort, windowToken: firstToken, dashboardFolder: `${root}dist/dashboard` });
+const terminals = withFakeTerminals ? await fakeTerminals() : undefined;
+const server = await startServer({ eaPort, httpPort, windowToken: firstToken, dashboardFolder: `${root}dist/dashboard`, terminals: terminals?.options });
+const stopFakeTerminalEAs = terminals ? terminals.connectEAs(server, `tcp://127.0.0.1:${eaPort}`) : () => {};
 const signIn = (t: string) => console.log(`\nDashboard: ${server.httpOrigin}/session?token=${t}\n(one-time link; press Enter for another, Ctrl+C to stop)\n`);
 signIn(firstToken);
 
@@ -41,8 +50,10 @@ async function stop() {
   stopping = true;
   input.close();
   stopFeeds();
+  stopFakeTerminalEAs();
   build.kill();
   await server.close();
+  await terminals?.cleanup();
   process.exit(0);
 }
 process.on("SIGINT", stop);
