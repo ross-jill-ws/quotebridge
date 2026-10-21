@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Windows desktop app that bridges MetaTrader quotes to a dashboard.",
+  "author": "Ross Zhu",
   "license": "MIT",
   "type": "module",
   "main": "dist/main/main.js",
@@ -12,12 +13,15 @@
     "start": "npm run build && electron .",
     "dev:dashboard": "tsx scripts/dev-dashboard.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"tests/**/*.test.ts\""
+    "test": "tsx --test \"tests/**/*.test.ts\"",
+    "package": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && electron-builder --win nsis --x64 --publish never",
+    "verify:package": "tsx scripts/release/verify-package.ts release/win-unpacked"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
     "@types/ws": "8.18.2",
     "electron": "44.9.2",
+    "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"

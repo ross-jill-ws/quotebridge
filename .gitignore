@@ -5,3 +5,7 @@ CLAUDE.local.md
 # Build output and dependencies
 /node_modules/
 /dist/
+
+# Packaging output; the CI-built DLL bundle (dev default for the DLL folder)
+/release/
+/native/libzmq/out/

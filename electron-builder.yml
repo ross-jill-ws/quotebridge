@@ -1,0 +1,54 @@
+# Windows x64 NSIS installer, per user, no administrator rights (spec "Packaging and release", ADR 8).
+# Build with `npm run package`; the release workflow does the same on a v* tag.
+appId: QuoteBridge # = APP_USER_MODEL_ID in src/shared/app-identity.ts (notifications, taskbar)
+# productName "QuoteBridge for MetaTrader" comes from package.json and is only the display name;
+# the executable carries no MetaQuotes trademark (ADR 1).
+executableName: QuoteBridge
+copyright: Copyright (c) 2026 Ross Zhu
+directories:
+  output: release
+  buildResources: packaging
+
+files:
+  - dist/**/*
+  - package.json
+  # Prebuilt addons for other systems and the C++ sources are not needed on Windows x64.
+  - "!node_modules/zeromq/build/{darwin,linux}/**"
+  - "!node_modules/zeromq/build/win32/{arm64,ia32}/**"
+  - "!node_modules/zeromq/{src,script}/**"
+# Native modules load from real files beside the asar archive.
+asarUnpack:
+  - node_modules/zeromq/**
+  - node_modules/@duckdb/**
+# Both addons are Node-API prebuilds; rebuilding zeromq would need CMake and a compiler.
+npmRebuild: false
+
+# The bridge files the app installs into terminals: resources\bridge\{mt4,native}
+# (bridgeBundleFolders in src/main/shell/environment.ts). EA sources only, never an .ex4 (ADR 3).
+extraResources:
+  - from: mt4
+    to: bridge/mt4
+    filter: ["Experts/*.mq4", "Include/*.mqh", "Templates/*.tpl"]
+  # The CI-built x86 DLL with its MPL-2.0/wepoll notices and source pointer (native-libzmq.yml artifact).
+  - from: native/libzmq/out
+    to: bridge/native
+    filter: ["*.dll", "*.txt"]
+  - from: LICENSE
+    to: LICENSE.txt
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  legalTrademarks: MetaTrader is the registered trademark of MetaQuotes Ltd.
+
+nsis:
+  oneClick: false
+  perMachine: false # with packaging/installer.nsh: always the current user, no install-mode page
+  allowElevation: false
+  allowToChangeInstallationDirectory: false
+  license: packaging/installer-license.txt
+  artifactName: QuoteBridge-Setup-${version}-x64.${ext}
+  uninstallDisplayName: ${productName}
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true

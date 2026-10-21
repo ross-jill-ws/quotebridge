@@ -3,7 +3,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
+import { aboutText, APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
 import { appDataFolder, bridgeBundleFolders, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
@@ -97,10 +97,17 @@ async function boot() {
       Menu.buildFromTemplate([
         { label: "Open", click: () => shell.openFromTray() },
         { label: "Start with Windows", type: "checkbox", checked: startWithWindows, click: (item) => shell.setStartWithWindows(item.checked) },
+        { label: "About", click: () => showAbout() },
         { type: "separator" },
         { label: "Quit", click: () => void shell.quit("quit") },
       ]),
     );
+
+  const showAbout = () => {
+    const about = aboutText(app.getVersion());
+    const options = { type: "info" as const, buttons: ["OK"], ...about };
+    void (window.isVisible() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+  };
 
   const ports: ShellPorts = {
     window: {

@@ -1,0 +1,97 @@
+name: Release
+
+# A v* tag builds the DLL, the app and the installer, checks the package against the tagged commit
+# and attaches the installer to a GitHub release (unsigned until SignPath, ADR 8).
+# Run it by hand (workflow_dispatch) to get the installer as a workflow artifact, without a release.
+# Before tagging, compile the EA locally with MetaEditor: 0 errors, 0 warnings (ADR 3).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    uses: ./.github/workflows/native-libzmq.yml
+
+  installer:
+    needs: native
+    runs-on: windows-2025
+    permissions:
+      contents: write # create the release
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Set the app version
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') { throw "Tag $env:GITHUB_REF_NAME is not v<semver>" }
+            $version = $Matches[1]
+          } else {
+            $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $version = "$base-ci.$env:GITHUB_RUN_NUMBER"
+          }
+          npm version $version --no-git-tag-version --allow-same-version
+          if ($LASTEXITCODE -ne 0) { throw 'npm version failed' }
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: libzmq-x86-bundle
+          path: native/libzmq/out
+
+      - name: Build the app and the installer
+        run: npm run package
+
+      - name: Check the package against this commit (EA sources, DLL and notices, no .ex4, native modules)
+        run: npx tsx scripts/release/verify-package.ts release/win-unpacked $env:GITHUB_SHA
+
+      - name: Installer checksum
+        run: |
+          $installer = "release/QuoteBridge-Setup-$env:APP_VERSION-x64.exe"
+          if (-not (Test-Path $installer)) { Get-ChildItem release; throw "Installer $installer not found" }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash
+          "$hash  QuoteBridge-Setup-$env:APP_VERSION-x64.exe" | Set-Content -Encoding ascii "$installer.sha256"
+          "INSTALLER=$installer" >> $env:GITHUB_ENV
+          "SHA-256 $hash"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: QuoteBridge-Setup-${{ env.APP_VERSION }}-x64
+          path: |
+            ${{ env.INSTALLER }}
+            ${{ env.INSTALLER }}.sha256
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          QuoteBridge for MetaTrader $env:APP_VERSION for Windows x64. Installs for the current user; no administrator rights needed.
+
+          The installer is not code-signed yet (SignPath application pending), so Windows SmartScreen may warn before it runs.
+
+          MetaTrader is the registered trademark of MetaQuotes Ltd. QuoteBridge for MetaTrader is an independent project, not affiliated with or endorsed by MetaQuotes Ltd.
+          "@
+          $flags = @()
+          if ($env:APP_VERSION -like '*-*') { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME $env:INSTALLER "$env:INSTALLER.sha256" --verify-tag --title "QuoteBridge for MetaTrader $env:APP_VERSION" --notes $notes @flags
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
