@@ -74,7 +74,9 @@ Uses the MetaTrader terminals on this computer and their own MetaEditor, so you 
 
   So before using it: Quit the installed QuoteBridge from the tray, and stop any other server on those ports.
 - **EA changes:** the dev app installs the EA sources from the repo's `mt4/` folder. After editing them, click **Recompile** on the terminal's card in the Terminals view. The terminal's MetaEditor compiles the EA, and MetaTrader reloads it on its charts.
-- **Your terminals are real:** installing, recompiling and removing in a `--real` run change the bridge files in those terminals, just as the installed app does. The setup screen appears on the first `--real` run because the dev data folder starts empty.
+- **Nothing is installed until you ask:** the first `--real` run creates the dev settings with setup already done and no managed terminals, so there is no setup screen and every detected terminal is only offered. The bridge files go into a terminal only when you click **Install** on its card; from then on that terminal is managed by the dev run, and later `--real` runs update it on start when the repo's bridge files differ (as the installed app does after an update). Terminals you never installed into are never touched on start.
+- **Your terminals are real:** the Terminals view shows a banner saying so. Installing, recompiling and removing change the bridge files in those terminals, just as the installed app does. A terminal the installed app also manages then has two install records, one per data folder, and Remove in the dev run takes out the files the installed app's EA uses too.
+- **Existing dev settings are kept:** a `%APPDATA%\QuoteBridge-dev\settings.json` from an earlier run is used as it is, including its managed terminals. To start clean, quit the dev run and delete `%APPDATA%\QuoteBridge-dev`.
 
 When you are done, Quit the dev run and start the installed QuoteBridge again so your EAs have their server back.
 

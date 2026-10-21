@@ -55,6 +55,8 @@ export interface TerminalManagerOptions {
   hintAfterMs?: number;
   /** MetaEditor timeout (default: the runner's 120 s). */
   compileTimeoutMs?: number;
+  /** A warning the Terminals view and the setup screen show above everything (`npm run dev -- --real`). */
+  warning?: string;
 }
 
 export interface TerminalManagerRuntime {
@@ -125,6 +127,8 @@ export interface TerminalsState {
   /** The EA version this app installs; null when the bundle cannot be read. */
   bundledEaVersion: string | null;
   bundleProblem: string | null;
+  /** Shown above the views when set (a development run on real terminals); null in the app. */
+  warning: string | null;
   /** A scan or install is in progress. */
   busy: boolean;
   terminals: TerminalView[];
@@ -244,6 +248,7 @@ export class TerminalManager {
       startWithWindows: settings.startWithWindows,
       bundledEaVersion,
       bundleProblem,
+      warning: this.options.warning ?? null,
       busy: operations.size > 0,
       terminals,
     };

@@ -79,6 +79,11 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
           <AddFolder onAdded={() => refresh()} onError={setError} />
         </div>
       </div>
+      {state.warning && (
+        <div class="notice warn" role="note">
+          {state.warning}
+        </div>
+      )}
       {state.bundleProblem && <div class="notice bad">{state.bundleProblem}</div>}
       {error && (
         <div class="notice bad" role="alert">

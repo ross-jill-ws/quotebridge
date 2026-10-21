@@ -21,6 +21,7 @@ import { copyStatic, DASHBOARD_OUT, DASHBOARD_SOURCE, dashboardBuildOptions, STA
 import { planDevRun, type DevPlan } from "./dev-plan.js";
 import { fakeFeeds } from "./fake-feeds.js";
 import { realPortsRefusal } from "./port-check.js";
+import { seedRealRunSettings } from "./real-run.js";
 import { startReloadServer } from "./reload-server.js";
 import { RestartScheduler } from "./restart-scheduler.js";
 
@@ -39,6 +40,8 @@ try {
 }
 const { app, real, dataFolder, reloadPort } = plan;
 mkdirSync(dataFolder, { recursive: true });
+// A fresh --real data folder skips setup with no managed terminals: nothing is installed until Install is clicked.
+if (real && (await seedRealRunSettings(dataFolder))) log(`new dev settings in ${dataFolder}: setup done, no managed terminals`);
 const settingsPorts = (await new SettingsStore(dataFolder).read()).ports;
 const ports = { ea: plan.ports?.ea ?? settingsPorts.ea, http: plan.ports?.http ?? settingsPorts.http };
 if (real) {
@@ -54,6 +57,7 @@ const reload = await startReloadServer(reloadPort);
 const serverEnv = {
   QUOTEBRIDGE_DEV_DASHBOARD_FOLDER: DASHBOARD_OUT,
   QUOTEBRIDGE_DEV_FAKES: real ? "0" : "1",
+  QUOTEBRIDGE_DEV_REAL: real ? "1" : "0",
 };
 
 /** Calls `first` after the first successful build and `again` after each later one. */

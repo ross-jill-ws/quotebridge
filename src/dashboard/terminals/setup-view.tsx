@@ -61,6 +61,11 @@ export function SetupView({ terminals, onDone }: { terminals: Terminals; onDone:
           ? "No MetaTrader terminals were found on this computer."
           : `Found ${candidates.length} MetaTrader ${candidates.length === 1 ? "terminal" : "terminals"}. Install compiles the QuoteBridge EA with each terminal's own MetaEditor and adds the EA, the ZeroMQ DLL and the QuoteBridge template. It never changes MetaTrader's settings.`}
       </p>
+      {state.warning && (
+        <div class="notice warn" role="note">
+          {state.warning}
+        </div>
+      )}
       {state.bundleProblem && <div class="notice bad">{state.bundleProblem}</div>}
       {error && (
         <div class="notice bad" role="alert">
