@@ -1,7 +1,7 @@
 // Main process: thin Electron wiring for the shell (src/main/shell) and the supervisor (ADR 10).
 // The rules live in `Shell` and `Supervisor` and are tested there; this file only connects Electron.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { aboutText, APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
@@ -111,7 +111,8 @@ async function boot() {
     );
 
   const showAbout = () => {
-    const about = aboutText(app.getVersion());
+    // The installer lets the user choose the folder; a development build has none to show.
+    const about = aboutText(app.getVersion(), app.isPackaged ? dirname(app.getPath("exe")) : undefined);
     const options = { type: "info" as const, buttons: ["OK"], ...about };
     void (window.isVisible() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
   };

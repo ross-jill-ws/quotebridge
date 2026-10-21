@@ -10,13 +10,14 @@ export const TRADEMARK_NOTICE = "MetaTrader is the registered trademark of MetaQ
 /** Where the source code lives (MIT; the bundled libzmq source pointer refers to it too). */
 export const SOURCE_URL = "https://github.com/ross-jill-ws/quotebridge";
 
-/** The About box text for the given app version. */
-export function aboutText(version: string): { title: string; message: string; detail: string } {
+/** The About box text for the given app version and, for an installed app, the folder it runs from. */
+export function aboutText(version: string, installFolder?: string): { title: string; message: string; detail: string } {
   return {
     title: `About ${APP_NAME}`,
     message: APP_NAME,
     detail: [
       `Version ${version}`,
+      ...(installFolder ? [`Installed in ${installFolder}`] : []),
       "",
       `Open source under the MIT License: ${SOURCE_URL}`,
       "Bundles libzmq (MPL-2.0, built from unmodified upstream source) for the QuoteBridge EA.",

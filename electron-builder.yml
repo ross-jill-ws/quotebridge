@@ -46,7 +46,7 @@ nsis:
   oneClick: false
   perMachine: false # with packaging/installer.nsh: always the current user, no install-mode page
   allowElevation: false
-  allowToChangeInstallationDirectory: false
+  allowToChangeInstallationDirectory: true # Choose Install Location page; packaging/installer.nsh checks the folder
   license: packaging/installer-license.txt
   artifactName: QuoteBridge-Setup-${version}-x64.${ext}
   uninstallDisplayName: ${productName}

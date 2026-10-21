@@ -57,8 +57,10 @@ jobs:
           name: libzmq-x86-bundle
           path: native/libzmq/out
 
+      # The run number fills the fourth part of the exe and installer product versions (x.y.z.<run>),
+      # which Windows otherwise shows as x.y.z.0; the FileVersion string stays the app version.
       - name: Build the app and the installer
-        run: npm run package
+        run: npm run package -- "-c.buildNumber=$env:GITHUB_RUN_NUMBER" "-c.buildVersion=$env:APP_VERSION"
 
       - name: Check the package against this commit (EA sources, DLL and notices, no .ex4, native modules)
         run: npx tsx scripts/release/verify-package.ts release/win-unpacked $env:GITHUB_SHA

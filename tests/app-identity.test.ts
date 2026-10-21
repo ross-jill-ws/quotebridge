@@ -15,3 +15,10 @@ test("the About box names the version, carries the MetaQuotes trademark notice a
   assert.match(about.detail, /MIT/);
   assert.match(about.detail, /libzmq.*MPL-2\.0/);
 });
+
+test("the About box shows where the app is installed, when it is installed", () => {
+  const installed = aboutText("1.2.3", "D:\Apps\QuoteBridge");
+  assert.match(installed.detail, /^Installed in D:\Apps\QuoteBridge$/m);
+  // Run from a development build: no install folder to show.
+  assert.doesNotMatch(aboutText("1.2.3").detail, /Installed in/);
+});
