@@ -133,9 +133,15 @@ export class BridgeInstaller {
     this.now = options.now ?? (() => new Date());
   }
 
-  /** The bundled EA version and source hash this app installs. */
+  /** The bundled EA version and source hash this app installs. A failed read is not kept: the next call reads again. */
   loadBundle(): Promise<BridgeBundle> {
-    this.bundle ??= loadBridgeBundle(this.options.bundle, this.fs);
+    if (!this.bundle) {
+      const loading = loadBridgeBundle(this.options.bundle, this.fs);
+      this.bundle = loading;
+      loading.catch(() => {
+        if (this.bundle === loading) this.bundle = undefined;
+      });
+    }
     return this.bundle;
   }
 
@@ -465,8 +471,8 @@ export class BridgeInstaller {
 
   private async hasMetaEditor(target: InstallTarget): Promise<boolean> {
     if (!target.installationFolder) return false;
-    const bytes = await readIfPresent(this.fs, join(target.installationFolder, "metaeditor.exe")).catch(() => undefined);
-    return !!bytes && bytes.length > 0;
+    const size = await this.fs.fileSize(join(target.installationFolder, "metaeditor.exe")).catch(() => undefined);
+    return !!size;
   }
 
   private async hasLegacyFiles(dataFolder: string): Promise<boolean> {

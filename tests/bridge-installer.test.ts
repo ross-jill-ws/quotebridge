@@ -445,3 +445,51 @@ test("an install whose run folder cannot be cleaned up (EBUSY) still succeeds an
   assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
   assert.equal((await nextStart.status(terminal)).state, "installed");
 });
+
+test("a bundle that could not be read once is read again on the next install, not given up on until restart", async (t) => {
+  const fixture = await InstallerFixture.create();
+  t.after(() => fixture.cleanup());
+  const terminal = await fixture.terminal();
+  const bundle = await fixture.bundle();
+  let failNextBundleRead = true;
+  const flaky: InstallerFileSystem = {
+    ...nodeInstallerFileSystem,
+    async readFile(path) {
+      if (failNextBundleRead && path.startsWith(bundle.sourceFolder)) {
+        failNextBundleRead = false;
+        throw Object.assign(new Error(`EIO: injected, '${path}'`), { code: "EIO" });
+      }
+      return nodeInstallerFileSystem.readFile(path);
+    },
+  };
+  const installer = new BridgeInstaller({ appDataFolder: fixture.appData, bundle, metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE), fs: flaky });
+
+  await assert.rejects(installer.install(terminal, { eaPort: 5555 }), /EIO/);
+  const retry = await installer.install(terminal, { eaPort: 5555 });
+
+  assert.equal(retry.ok, true);
+  assert.equal((await installer.status(terminal)).state, "installed");
+});
+
+test("the install state checks that metaeditor.exe exists without reading the whole program", async (t) => {
+  const fixture = await InstallerFixture.create();
+  t.after(() => fixture.cleanup());
+  const withEditor = await fixture.terminal();
+  const withoutEditor = await fixture.terminal("Broker Without Editor", { metaEditor: false });
+  const emptyEditor = await fixture.terminal("Broker With Empty Editor");
+  await writeFile(join(emptyEditor.installationFolder, "metaeditor.exe"), "");
+  const reads: string[] = [];
+  const counting: InstallerFileSystem = {
+    ...nodeInstallerFileSystem,
+    readFile(path) {
+      reads.push(path);
+      return nodeInstallerFileSystem.readFile(path);
+    },
+  };
+  const installer = new BridgeInstaller({ appDataFolder: fixture.appData, bundle: await fixture.bundle(), metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE), fs: counting });
+
+  assert.equal((await installer.status(withEditor)).state, "not-installed");
+  assert.equal((await installer.status(withoutEditor)).state, "no-metaeditor");
+  assert.equal((await installer.status(emptyEditor)).state, "no-metaeditor");
+  assert.deepEqual(reads.filter((path) => /metaeditor\.exe$/i.test(path)), []);
+});

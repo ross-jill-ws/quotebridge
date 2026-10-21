@@ -1,6 +1,6 @@
 // Filesystem port of the bridge installer. Every read and write of the installer (terminal data
 // folder and app data folder) goes through it, so tests can inject faults.
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface InstallerFileSystem {
@@ -14,6 +14,8 @@ export interface InstallerFileSystem {
   removeFile(path: string): Promise<void>;
   /** Removes a folder the app owns (staging, run folders) with everything in it. */
   removeFolder(path: string): Promise<void>;
+  /** The size of a file in bytes; undefined when there is no such file. */
+  fileSize(path: string): Promise<number | undefined>;
   /** Names of the entries of a folder; empty when it does not exist. */
   listFolder(path: string): Promise<{ name: string; isFile: boolean }[]>;
 }
@@ -27,6 +29,14 @@ export const nodeInstallerFileSystem: InstallerFileSystem = {
   rename: (from, to) => rename(from, to),
   removeFile: (path) => rm(path, { force: true }),
   removeFolder: (path) => rm(path, { recursive: true, force: true, maxRetries: 3 }),
+  async fileSize(path) {
+    try {
+      const info = await stat(path);
+      return info.isFile() ? info.size : undefined;
+    } catch {
+      return undefined;
+    }
+  },
   async listFolder(path) {
     try {
       const entries = await readdir(path, { withFileTypes: true });
