@@ -262,6 +262,9 @@ test("stopping the server mid-install ends MetaEditor and finishes well inside t
   await app.post("/api/setup", { install: ids, startWithWindows: true });
   await app.until(CMC, (x) => x.operation === "installing");
   const compiling = app.metaEditor.current;
+  // Stop while MetaEditor is compiling (a stop before it starts is cancelled before launching it).
+  for (let i = 0; i < 200 && compiling.starts.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(compiling.starts.length, 1, "MetaEditor started");
 
   const began = Date.now();
   await app.server.close();
