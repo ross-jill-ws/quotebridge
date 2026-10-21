@@ -280,13 +280,13 @@ export class TerminalManager {
       throw new TerminalRequestError(400, "Expected { install: Terminal IDs, startWithWindows: true or false }.");
     }
     await this.scanning;
-    const current = await this.options.settings.read();
-    if (current.setupCompleted) throw new TerminalRequestError(409, "Setup is already complete. Use the Terminals view.");
     const entries = this.supportedEntries(body.install);
     const startWithWindows = body.startWithWindows;
     const ticked = new Set(body.install);
     const declined = this.entries.filter((e) => isSupported(e) && !ticked.has(e.terminalId!));
     await this.saveSettings((s) => {
+      // Checked inside the update, so two setup requests at once cannot both complete it.
+      if (s.setupCompleted) throw new TerminalRequestError(409, "Setup is already complete. Use the Terminals view.");
       for (const entry of entries) manage(s, entry);
       for (const entry of declined) decline(s, entry);
       s.startWithWindows = startWithWindows;
@@ -305,7 +305,15 @@ export class TerminalManager {
     for (const entry of entries) {
       if (this.operations.has(entry.terminalId!)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
     }
-    await this.saveSettings((s) => entries.forEach((entry) => manage(s, entry)));
+    // Claimed before the first await, so a second request (a double click) finds them taken.
+    for (const entry of entries) this.setOperation(entry.terminalId!, "queued");
+    try {
+      await this.saveSettings((s) => entries.forEach((entry) => manage(s, entry)));
+    } catch (e) {
+      for (const entry of entries) this.setOperation(entry.terminalId!, null);
+      this.emit();
+      throw e;
+    }
     this.enqueueInstalls(entries);
   }
 

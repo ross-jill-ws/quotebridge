@@ -276,6 +276,29 @@ test("stopping the server mid-install ends MetaEditor and finishes well inside t
   assert.ok(!record || JSON.parse(record.toString()).installed === null, "no install was recorded");
 });
 
+test("two Install requests for one terminal at once (a double click) run one install and refuse the other", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const cmcId = await setUpCmc(app);
+  app.metaEditor.set(SUCCESSFUL_COMPILE);
+
+  const statuses = (await Promise.all([1, 2].map(() => app.post("/api/terminals/install", { terminalIds: [cmcId] })))).map((r) => r.status);
+
+  assert.deepEqual(statuses.sort(), [202, 409]);
+  await app.until(CMC, (x) => x.operation === null);
+  assert.equal(app.metaEditor.current.starts.length, 1);
+});
+
+test("two setup requests at once complete setup once", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const cmcId = (await app.state()).terminals.find((x) => x.name === CMC)!.terminalId!;
+
+  const statuses = (await Promise.all([1, 2].map(() => app.post("/api/setup", { install: [cmcId], startWithWindows: true })))).map((r) => r.status);
+
+  assert.deepEqual(statuses.sort(), [202, 409]);
+  await app.until(CMC, (x) => x.operation === null && x.state === "installed");
+  assert.equal(app.metaEditor.current.starts.length, 1);
+});
+
 test("Remove takes the bridge files out and stops managing the terminal", { timeout: 15000 }, async (t) => {
   const app = await start(t);
   const cmcId = await setUpCmc(app);
