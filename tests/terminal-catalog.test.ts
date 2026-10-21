@@ -198,3 +198,22 @@ test("origin.txt in UTF-8 or without a byte-order mark is tolerated", async (t) 
 
   assert.deepEqual(terminals.map((terminal) => terminal.installationFolder), [bomless, utf8]);
 });
+
+test("Terminal ID and data-folder name do not depend on the slash style of a typed path", () => {
+  assert.equal(terminalIdFor(cmcDataFolder.split("\\").join("/")), "mt4-42a75ef93d82");
+  assert.equal(dataFolderNameFor(win`C:/Program Files (x86)/CMC Markets MetaTrader 4/`), dataFolderNameFor(win`C:\Program Files (x86)\CMC Markets MetaTrader 4`));
+});
+
+test("a UTF-16BE origin.txt with an odd byte count does not stop the scan; the other terminals are still found", async (t) => {
+  const fixture = await MachineFixture.create();
+  t.after(() => fixture.dispose());
+  const good = await fixture.installationFolder("Good Broker", "mt4");
+  const odd = await fixture.installationFolder("Odd Broker", "mt4");
+  await fixture.dataFolder(good, { mql: "MQL4" });
+  const bigEndian = Buffer.from(odd, "utf16le").swap16();
+  await fixture.dataFolder(odd, { mql: "MQL4", origin: Buffer.concat([Buffer.from([0xfe, 0xff]), bigEndian, Buffer.from([0x00])]) });
+
+  const terminals = await detectTerminals({ dataRoot: fixture.dataRoot });
+
+  assert.ok(terminals.some((terminal) => terminal.installationFolder === good));
+});

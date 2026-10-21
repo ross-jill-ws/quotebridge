@@ -8,7 +8,9 @@ export function decodeOriginText(bytes: Uint8Array): string {
   if (buffer[0] === 0xff && buffer[1] === 0xfe) {
     text = buffer.subarray(2).toString("utf16le");
   } else if (buffer[0] === 0xfe && buffer[1] === 0xff) {
-    text = Buffer.from(buffer.subarray(2)).swap16().toString("utf16le");
+    // swap16 needs whole code units: a stray last byte (a truncated file) is dropped.
+    const units = buffer.subarray(2, buffer.length - (buffer.length % 2));
+    text = Buffer.from(units).swap16().toString("utf16le");
   } else if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
     text = buffer.subarray(3).toString("utf8");
   } else if (buffer.length >= 2 && buffer.length % 2 === 0 && buffer[1] === 0 && buffer[0] !== 0) {

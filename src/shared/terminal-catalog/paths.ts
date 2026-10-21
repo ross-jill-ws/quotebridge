@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 
-/** Upper-cases a folder path and drops any trailing separator, as MetaTrader does. */
+/**
+ * Upper-cases a folder path and drops any trailing separator, as MetaTrader does. Forward slashes (a typed
+ * path) become backslashes first, so one folder always gets one Terminal ID and one data-folder name.
+ */
 export function normaliseFolderPath(folder: string): string {
-  return folder.replace(/[\\/]+$/, "").toUpperCase();
+  return folder.replace(/\//g, "\\").replace(/\\+$/, "").toUpperCase();
 }
 
 /**
