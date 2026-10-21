@@ -4,7 +4,7 @@ A Windows desktop app that bridges MetaTrader 4 quotes to a dashboard.
 
 ## Development
 
-Requires Node.js 24 on Windows. Install the dependencies with `npm ci`.
+Requires Node.js 24 on Windows. Install the dependencies with `npm ci`. See [docs/development.md](docs/development.md) for the full guide to `npm run dev` and its `--app` and `--real` options.
 
 | Command | What it does |
 | --- | --- |
