@@ -1,10 +1,11 @@
 // The app's DuckDB database in the data folder: the schema-version table, then each migration in order.
 // Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and their recorded
-// samples; version 4 saved history. The WAL is never deleted or rewritten:
+// samples; version 4 saved history; version 5 API keys. The WAL is never deleted or rewritten:
 // if CHECKPOINT does not happen, DuckDB replays the WAL on the next open.
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { ApiKeyStore } from "./auth/index.js";
 import { duckDbClockRuleStore, type ClockRuleStore } from "./clock/index.js";
 import { SavedBarStore } from "./history/saved-store.js";
 import { RecordingStore } from "./recording/index.js";
@@ -59,6 +60,18 @@ const MIGRATIONS: string[][] = [
       PRIMARY KEY (market_id, period, broker_seconds)
     )`,
   ],
+  [
+    `CREATE TABLE api_keys (
+      id VARCHAR PRIMARY KEY,
+      name VARCHAR NOT NULL,
+      scope VARCHAR NOT NULL,
+      prefix VARCHAR NOT NULL,
+      hash VARCHAR NOT NULL UNIQUE,
+      created_at BIGINT NOT NULL,
+      last_used_at BIGINT,
+      revoked_at BIGINT
+    )`,
+  ],
 ];
 
 export const SCHEMA_VERSION = 1 + MIGRATIONS.length;
@@ -80,6 +93,8 @@ export type AppDatabase = {
   recordings: RecordingStore;
   /** Saved history, on a connection of its own. */
   savedBars: SavedBarStore;
+  /** API keys, on a connection of their own. */
+  apiKeys: ApiKeyStore;
   /** CHECKPOINT, then close. Closes even when CHECKPOINT fails (the WAL then stays for replay) and rethrows. */
   checkpointAndClose(): Promise<void>;
 };
@@ -115,18 +130,22 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
     const conn = connection;
     const inst = instance;
     const savedBars = new SavedBarStore(await inst.connect());
+    const apiKeys = new ApiKeyStore(await inst.connect());
     return {
       file,
       schemaVersion,
       clockRules: duckDbClockRuleStore(conn),
       recordings: new RecordingStore(conn),
       savedBars,
+      apiKeys,
       async checkpointAndClose() {
         try {
+          await apiKeys.settled();
           await conn.run("CHECKPOINT");
         } catch (e) {
           throw new DatabaseError(`The database could not be checkpointed: ${(e as Error).message}`, { cause: e });
         } finally {
+          apiKeys.close();
           savedBars.close();
           conn.closeSync();
           inst.closeSync();

@@ -1,4 +1,5 @@
 // Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
+import { ApiKeys } from "./auth/index.js";
 import { BridgeServer, marketKey } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
@@ -49,6 +50,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   let clockRules: ClockRules | undefined;
   let recorder: Recorder | undefined;
   let saver: HistorySaver | undefined;
+  let apiKeys: ApiKeys | undefined;
   const bridge = new BridgeServer({
     now: config.now,
     marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: recorder?.isRecording(market) ?? false }),
@@ -71,6 +73,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       rules.onRuleChange((brokerServer, rule) => recording.ruleChanged(brokerServer, rule));
       rules.onRuleChange((brokerServer, rule) => saved.recomputeUtc(brokerServer, rule));
     }
+    if (config.database) apiKeys = await ApiKeys.open(config.database.apiKeys, config.now);
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
   } catch (e) {
     await recorder?.close();
@@ -113,7 +116,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await saver?.close();

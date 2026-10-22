@@ -2,7 +2,7 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deleteRecording, parsePort, portChange, portsNote, recordingRows } from "../src/dashboard/settings/settings-model.js";
+import { apiKeyRows, deleteRecording, parsePort, portChange, portsNote, recordingRows, revokeApiKey } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
@@ -94,4 +94,25 @@ test("Delete data… asks first, naming the market and how many samples go", () 
   assert.match(confirm.body, /Recording goes on/);
   assert.doesNotMatch(deleteRecording({ ...RECORDED, recording: false }).body, /Recording goes on/);
   assert.equal(confirm.confirm, "Delete 1,234,567 samples");
+});
+
+test("Settings › API keys lists each key with its scope, when it was made and last used, on this computer's clock", () => {
+  // 15 January 2027 08:00 UTC; this computer is on UTC+1.
+  const made = Date.UTC(2027, 0, 15, 8);
+  const keys = [
+    { id: "a1", name: "Laptop CLI", scope: "read" as const, prefix: "qbk_1a2b3c4d", createdAt: made, lastUsedAt: made + 90 * 60_000 },
+    { id: "b2", name: "Bot", scope: "trade" as const, prefix: "qbk_9f8e7d6c", createdAt: made, lastUsedAt: null },
+  ];
+  const [laptop, bot] = apiKeyRows(keys, "broker", () => 60);
+  assert.deepEqual(laptop, { id: "a1", name: "Laptop CLI", prefix: "qbk_1a2b3c4d…", scope: "Read", created: "Created 2027-01-15 09:00", lastUsed: "Last used 2027-01-15 10:30" });
+  assert.deepEqual(bot, { id: "b2", name: "Bot", prefix: "qbk_9f8e7d6c…", scope: "Read and trade", created: "Created 2027-01-15 09:00", lastUsed: "Never used" });
+  assert.equal(apiKeyRows(keys, "utc", () => 60)[0].created, "Created 2027-01-15 08:00", "UTC when times are shown in UTC; else this computer's time");
+});
+
+test("Revoke asks first: the key stops working at once", () => {
+  assert.deepEqual(revokeApiKey({ name: "Laptop CLI" }), {
+    title: "Revoke the API key “Laptop CLI”?",
+    body: "Anything using it is refused from now on. This cannot be undone: make a new key to give access again.",
+    confirm: "Revoke key",
+  });
 });

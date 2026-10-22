@@ -1,11 +1,14 @@
 // HTTP server for the app window: dashboard, state endpoint and live WebSocket, on 127.0.0.1 only.
-// Every request needs the window session (ADR 5) except the one-time token exchange at /session.
+// Every request needs the window session (ADR 5) except the one-time token exchange at /session, and /api/v1 and
+// /api/auth/session, which also take an API key (`Authorization: Bearer qbk_…`). A key reaches nothing else.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { userInfo } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ApiKeyRequestError, type ApiKeys, type ApiKeyView } from "../auth/index.js";
 import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
@@ -32,6 +35,8 @@ export type HttpServerOptions = {
   clockRules: ClockRules;
   /** Recording, when the server has a database. */
   recorder?: Recorder;
+  /** API keys, when the server has a database. */
+  apiKeys?: ApiKeys;
   sessions: WindowSessions;
   dashboardFolder?: string;
   /** The terminal manager, when the server manages terminals. */
@@ -122,11 +127,29 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return;
     }
 
-    if (!sessions.authenticated(req.headers, cookie)) return json(res, 401, { error: "Open the dashboard from the app window." });
+    const api = url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/") || url.pathname === "/api/auth/session";
+    const authorization = req.headers.authorization?.trim();
+    if (authorization !== undefined) {
+      // The CLI and scripts. The app window never sends one, so a key cannot reach the key endpoints (ADR 5). No
+      // cookie is involved, so there is no cross-site request to guard against with the Origin check.
+      const scheme = authorization.split(" ")[0];
+      if (scheme.toLowerCase() !== "bearer") return json(res, 401, { error: "Send an API key: Authorization: Bearer qbk_…. HTTP Basic is not accepted." });
+      if (!api) return json(res, 403, { error: "An API key reaches only /api/v1 and /api/auth/session." });
+      const writes = req.method !== "GET" && req.method !== "HEAD";
+      const check = options.apiKeys?.check(authorization.slice(scheme.length).trim(), writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
+      if (!check.ok) return json(res, check.status, { error: check.error });
+      return handleApi(url, res, check.key);
+    }
+
+    if (!sessions.authenticated(req.headers, cookie)) {
+      return json(res, 401, { error: api ? "Send an API key: Authorization: Bearer qbk_…. Create one in Settings › API keys." : "Open the dashboard from the app window." });
+    }
 
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });
 
+    if (api) return handleApi(url, res, null);
+    if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) return handleApiKeys(options.apiKeys, url, req, res);
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
     if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
     if (url.pathname === "/api/feeds/remove" && req.method === "POST") {
@@ -153,6 +176,39 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Unknown endpoint" });
     if (req.method === "GET" || req.method === "HEAD") return serveStatic(url.pathname, req, res);
     json(res, 405, { error: "Method not allowed" });
+  }
+
+  /**
+   * The REST API, past the key or window session check: GET /api/auth/session tells the CLI whose key it holds. The
+   * /api/v1 reads are milestone 3's REST ticket.
+   */
+  function handleApi(url: URL, res: ServerResponse, key: ApiKeyView | null) {
+    if (url.pathname !== "/api/auth/session") return json(res, 404, { error: "Unknown endpoint" });
+    if (!key) return json(res, 401, { error: "Send an API key: Authorization: Bearer qbk_…." });
+    json(res, 200, { username: windowsUser(), key: { name: key.name, prefix: key.prefix, scope: key.scope }, expires: null });
+  }
+
+  /**
+   * Settings › API keys, from the app window only: GET /api/api-keys lists them, POST /api/api-keys { name, scope }
+   * makes one (201; the key is in this answer only), POST /api/api-keys/revoke { id } revokes one.
+   */
+  async function handleApiKeys(apiKeys: ApiKeys, url: URL, req: IncomingMessage, res: ServerResponse) {
+    const route = `${req.method} ${url.pathname}`;
+    if (route === "GET /api/api-keys") return json(res, 200, { keys: apiKeys.list() });
+    if (route !== "POST /api/api-keys" && route !== "POST /api/api-keys/revoke") return json(res, 405, { error: "Method not allowed" });
+    let body: unknown;
+    try {
+      body = await readJson(req);
+    } catch {
+      return json(res, 400, { error: "Expected a JSON body." });
+    }
+    try {
+      if (route === "POST /api/api-keys") return json(res, 201, await apiKeys.create(body));
+      json(res, 200, { keys: await apiKeys.revoke(body) });
+    } catch (e) {
+      if (!(e instanceof ApiKeyRequestError)) throw e;
+      json(res, e.status, { error: e.message });
+    }
   }
 
   /** Broker clocks for the Terminals panel: GET lists every broker server's rule, POST sets one as the trader chose. */
@@ -379,6 +435,15 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
         for (const socket of connections) socket.destroy();
       }),
   };
+}
+
+/** The Windows user the app runs as: the CLI says it is signed in as them. */
+function windowsUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "owner";
+  }
 }
 
 /** A market key, `["<broker server>","<symbol>"]`, or null when it is not one. */

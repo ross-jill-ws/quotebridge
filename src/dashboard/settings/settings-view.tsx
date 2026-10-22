@@ -1,7 +1,8 @@
-// The Settings view: Startup, Appearance, Recording, Connection and About. A change applies at once (the server
+// The Settings view: Startup, Appearance, Recording, API keys, Connection and About. A change applies at once (the server
 // saves it and main applies it); only a port change asks first, because it restarts the app.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import type { ApiKeyScope, ApiKeyView } from "../../server/auth/index.js";
 import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
@@ -10,7 +11,10 @@ import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
-import { deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, type PortRole } from "./settings-model.js";
+import { apiKeyRows, deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, revokeApiKey, type PortRole } from "./settings-model.js";
+
+/** As the server checks it; a constant here, so the dashboard bundle takes nothing of the server's code. */
+const MAX_KEY_NAME = 60;
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
 const CHART_COLOUR_LABELS: Record<ChartColours, string> = { default: "Default", "green-on-black": "Green on black" };
@@ -157,6 +161,8 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
 
       <RecordingGroup timeShown={settings.timeShown} />
 
+      <ApiKeysGroup timeShown={settings.timeShown} />
+
       <SettingsGroup
         title="Connection"
         after={
@@ -300,6 +306,168 @@ function RecordingGroup({ timeShown }: { timeShown: TimeShown }) {
     </SettingsGroup>
   );
 }
+
+/** Settings › API keys: each key with Revoke…, and Create… (the new key is shown this once, with Copy). */
+function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
+  const [keys, setKeys] = useState<ApiKeyView[]>();
+  const [error, setError] = useState("");
+  const [confirming, setConfirming] = useState<string>();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState<ApiKeyScope>("read");
+  const [made, setMade] = useState<{ key: string; name: string }>();
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    get<{ keys: ApiKeyView[] }>("/api/api-keys").then((answer) => setKeys(answer.keys), (e: Error) => setError(e.message));
+  }, []);
+
+  const act = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await work();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const create = () =>
+    act(async () => {
+      const answer = await post<{ key: string; apiKey: ApiKeyView }>("/api/api-keys", { name, scope });
+      setKeys((list) => [...(list ?? []), answer.apiKey]);
+      setMade({ key: answer.key, name: answer.apiKey.name });
+      setCopied(false);
+      setCreating(false);
+      setName("");
+      setScope("read");
+    });
+  const revoke = (id: string) =>
+    act(async () => {
+      setKeys((await post<{ keys: ApiKeyView[] }>("/api/api-keys/revoke", { id })).keys);
+      setConfirming(undefined);
+    });
+  const copy = (key: string) =>
+    navigator.clipboard.writeText(key).then(
+      () => setCopied(true),
+      () => setError("The key could not be copied. Select it and copy it by hand."),
+    );
+
+  const rows = keys ? apiKeyRows(keys, timeShown) : [];
+  return (
+    <SettingsGroup
+      title="API keys"
+      after={
+        error && (
+          <div class="notice bad" role="alert">
+            {error}
+          </div>
+        )
+      }
+    >
+      <p class="setting-row setting-hint">The CLI and your scripts send a key to read from this app. Make one key per computer or script, so you can revoke each on its own.</p>
+      {made && (
+        <div class="setting-row key-made" role="status">
+          <div class="setting-text">
+            <span class="setting-label">Your new key “{made.name}”</span>
+            <code class="key-secret">{made.key}</code>
+            <span class="setting-hint">Copy it now: it is not shown again.</span>
+          </div>
+          <div class="recording-actions">
+            <button class="button" onClick={() => copy(made.key)}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button class="button quiet" onClick={() => setMade(undefined)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+      {!keys ? (
+        <p class="setting-row setting-hint">Loading…</p>
+      ) : (
+        rows.map((row) => {
+          const consequence = confirming === row.id ? revokeApiKey(row) : undefined;
+          return (
+            <div key={row.id} class="setting-row recording-row">
+              <div class="setting-text">
+                <span class="setting-label">
+                  {row.name} <span class="mono">{row.prefix}</span>
+                </span>
+                <span class="setting-hint">
+                  <span class="nowrap">{row.scope}</span> · <span class="nowrap">{row.created}</span> · <span class="nowrap">{row.lastUsed}</span>
+                </span>
+                {consequence && (
+                  <div class="confirm" role="alertdialog" aria-label={consequence.title} onKeyDown={(e) => e.key === "Escape" && setConfirming(undefined)}>
+                    <strong>{consequence.title}</strong>
+                    <p>{consequence.body}</p>
+                    <div class="confirm-actions">
+                      <button class="button danger" autoFocus disabled={busy} onClick={() => revoke(row.id)}>
+                        {consequence.confirm}
+                      </button>
+                      <button class="button quiet" disabled={busy} onClick={() => setConfirming(undefined)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!consequence && (
+                <div class="recording-actions">
+                  <button class="button quiet" disabled={busy} onClick={() => setConfirming(row.id)}>
+                    Revoke…
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+      {keys &&
+        (creating ? (
+          <form
+            class="setting-row key-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void create();
+            }}
+            onKeyDown={(e) => e.key === "Escape" && setCreating(false)}
+          >
+            <label class="key-field">
+              <span class="setting-label">Name</span>
+              <input class="input" value={name} maxLength={MAX_KEY_NAME} placeholder="e.g. Laptop CLI" autoFocus required onInput={(e) => setName(e.currentTarget.value)} />
+            </label>
+            <fieldset class="key-field key-scope">
+              <legend class="setting-label">Scope</legend>
+              {(["read", "trade"] as const).map((s) => (
+                <label key={s}>
+                  <input type="radio" name="api-key-scope" checked={scope === s} onChange={() => setScope(s)} /> {SCOPE_LABELS[s]}
+                </label>
+              ))}
+            </fieldset>
+            <div class="confirm-actions">
+              <button class="button" type="submit" disabled={busy || !name.trim()}>
+                Create key
+              </button>
+              <button class="button quiet" type="button" disabled={busy} onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div class="setting-row">
+            <button class="button" onClick={() => setCreating(true)}>
+              Create…
+            </button>
+          </div>
+        ))}
+    </SettingsGroup>
+  );
+}
+
+const SCOPE_LABELS: Record<ApiKeyScope, string> = { read: "Read", trade: "Read and trade" };
 
 /** A group of setting rows on one panel; `after` is a note under the panel. */
 function SettingsGroup({ title, children, after }: { title: string; children: ComponentChildren; after?: ComponentChildren }) {

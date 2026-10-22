@@ -1,5 +1,6 @@
 // The Settings view's model: reading a typed port, what a port change will do, the note shown when the server
-// runs on other ports than the saved ones (a development run's overrides), and the Recording list.
+// runs on other ports than the saved ones (a development run's overrides), the Recording list and the API keys.
+import type { ApiKeyView } from "../../server/auth/index.js";
 import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView } from "../../server/settings/index.js";
 import type { TimeShown } from "../../shared/settings-store.js";
@@ -103,4 +104,43 @@ function bytes(n: number): string {
     unit++;
   }
   return `${value < 100 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+/** One key of Settings › API keys, as shown. */
+export type ApiKeyRow = {
+  id: string;
+  name: string;
+  /** "qbk_1a2b3c4d…": enough to tell keys apart, never the key. */
+  prefix: string;
+  /** "Read" or "Read and trade". */
+  scope: string;
+  /** "Created 2027-01-15 09:00". */
+  created: string;
+  /** "Last used 2027-01-15 10:30", or "Never used". */
+  lastUsed: string;
+};
+
+/**
+ * Keys are the app's own, not a broker's: their times are on this computer's clock, or in UTC when times are shown in
+ * UTC. `localOffsetMinutes` is this computer's offset from UTC (injectable for tests).
+ */
+export function apiKeyRows(keys: readonly ApiKeyView[], shown: TimeShown, localOffsetMinutes = browserOffsetMinutes): ApiKeyRow[] {
+  const when = (utcMs: number) => minuteStamp(displaySeconds({ shown: shown === "utc" ? "utc" : "local", rule: null, localOffsetMinutes }, utcMs / 1000));
+  return keys.map((k) => ({
+    id: k.id,
+    name: k.name,
+    prefix: `${k.prefix}…`,
+    scope: k.scope === "trade" ? "Read and trade" : "Read",
+    created: `Created ${when(k.createdAt)}`,
+    lastUsed: k.lastUsedAt === null ? "Never used" : `Last used ${when(k.lastUsedAt)}`,
+  }));
+}
+
+/** The confirmation for Revoke. */
+export function revokeApiKey(k: Pick<ApiKeyView, "name">): { title: string; body: string; confirm: string } {
+  return {
+    title: `Revoke the API key “${k.name}”?`,
+    body: "Anything using it is refused from now on. This cannot be undone: make a new key to give access again.",
+    confirm: "Revoke key",
+  };
 }

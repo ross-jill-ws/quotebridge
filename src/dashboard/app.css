@@ -1537,6 +1537,52 @@ label.setting-row {
   gap: 8px;
 }
 
+/* API keys */
+.key-secret {
+  margin: 4px 0 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+  color: var(--ink);
+}
+
+.key-made {
+  align-items: flex-start;
+  background: var(--caution-bg);
+}
+
+.setting-row.key-form {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 24px;
+}
+
+.key-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.key-field .input {
+  min-width: 240px;
+}
+
+.key-scope {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.key-scope legend {
+  width: 100%;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
 .confirm {
   margin-top: 10px;
   padding: 12px 14px;
