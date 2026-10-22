@@ -161,17 +161,17 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
             </button>
           )}
           {card.actions.decline && (
-            <button class="button" disabled={card.busy} onClick={() => act(() => post("/api/terminals/decline", { terminalId: t.terminalId }))}>
+            <button class="button quiet" disabled={card.busy} onClick={() => act(() => post("/api/terminals/decline", { terminalId: t.terminalId }))}>
               Not now
             </button>
           )}
           {card.actions.recompile && (
-            <button class="button" disabled={card.busy} onClick={install} title="Compile the QuoteBridge EA again and reinstall the bridge files">
+            <button class="button quiet" disabled={card.busy} onClick={install} title="Compile the QuoteBridge EA again and reinstall the bridge files">
               Recompile
             </button>
           )}
           {card.actions.compileLog && (
-            <button class="button" onClick={showLog}>
+            <button class="button quiet" onClick={showLog}>
               Compile log
             </button>
           )}

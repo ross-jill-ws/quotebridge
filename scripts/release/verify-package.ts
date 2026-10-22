@@ -4,12 +4,14 @@
 //   files (ADR 3: CI cannot compile the EA, so it proves the shipped sources are the tagged ones);
 // - no `.ex4` ships anywhere (ADR 3: compiled EAs contain MetaQuotes code);
 // - `resources\bridge\native` holds the x86 DLL the EA imports, with its license notices (ADR 8);
-// - the native Node modules (ZeroMQ, DuckDB) are unpacked from the asar archive.
+// - the native Node modules (ZeroMQ, DuckDB) are unpacked from the asar archive;
+// - the dashboard in the asar archive holds the Archivo font and every file its stylesheet uses, and
+//   neither its page nor its stylesheet loads anything from the network.
 //
 // Usage: tsx scripts/release/verify-package.ts <win-unpacked folder> [git ref, default HEAD]
 import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PE_MACHINE_X86, peMachineType } from "../../src/shared/terminal-catalog/pe-machine.js";
@@ -85,6 +87,8 @@ export async function verifyPackage(options: VerifyOptions): Promise<string[]> {
     }
   }
 
+  problems.push(...(await checkDashboard(join(resources, "app.asar"))));
+
   // ADR 3: no compiled EA anywhere in the package.
   const ex4 = (await filesUnder(options.appFolder))
     .filter((file) => file.toLowerCase().endsWith(".ex4"))
@@ -93,6 +97,64 @@ export async function verifyPackage(options: VerifyOptions): Promise<string[]> {
   for (const file of ex4) problems.push(`A compiled EA must not ship: ${file}`);
 
   return problems;
+}
+
+const DASHBOARD = "dist/dashboard/";
+/** A remote reference: an absolute or protocol-relative URL. */
+const REMOTE = /(?:https?:)?\/\/[^\s"')]+/gi;
+
+async function checkDashboard(asarFile: string): Promise<string[]> {
+  let archive: AsarArchive;
+  try {
+    archive = await readAsar(asarFile);
+  } catch {
+    return ["The app archive is missing or unreadable: resources/app.asar"];
+  }
+  const problems: string[] = [];
+  const text = (path: string) => archive.file(DASHBOARD + path)?.toString("utf8") ?? "";
+  for (const path of ["index.html", "app.css"]) {
+    for (const url of text(path).match(REMOTE) ?? []) problems.push(`The dashboard loads from the network: ${DASHBOARD}${path} (${url})`);
+  }
+  let font = false;
+  for (const match of text("app.css").matchAll(/url\(\s*(["']?)([^"')]+)\1\s*\)/g)) {
+    const url = match[2]!;
+    if (/^(?:[a-z]+:|\/\/)/i.test(url)) continue; // data: URIs are inline; remote ones are reported above.
+    const path = posix.normalize(DASHBOARD + url.replace(/[?#].*$/, ""));
+    const bytes = archive.file(path);
+    if (!bytes) problems.push(`The dashboard stylesheet uses a file the package does not hold: ${path}`);
+    else if (path.endsWith(".woff2") && bytes.subarray(0, 4).toString("latin1") === "wOF2") font = true;
+  }
+  if (!font) problems.push("No woff2 font is bundled with the dashboard (the Archivo font, never loaded from the network).");
+  return problems;
+}
+
+interface AsarArchive {
+  /** A packed file's bytes; undefined when the archive does not hold it (or holds it unpacked). */
+  file(path: string): Buffer | undefined;
+}
+
+interface AsarEntry {
+  files?: Record<string, AsarEntry>;
+  size?: number;
+  offset?: string;
+}
+
+/** Reads the archive electron-builder writes: a pickled JSON header (file sizes and offsets), then the file bytes. */
+async function readAsar(file: string): Promise<AsarArchive> {
+  const bytes = await readFile(file);
+  const headerSize = bytes.readUInt32LE(4);
+  const jsonSize = bytes.readUInt32LE(12);
+  const root = JSON.parse(bytes.subarray(16, 16 + jsonSize).toString("utf8")) as AsarEntry;
+  const base = 8 + headerSize;
+  return {
+    file(path) {
+      let entry: AsarEntry | undefined = root;
+      for (const part of path.split("/")) entry = entry?.files?.[part];
+      if (entry?.offset === undefined || entry.size === undefined) return undefined;
+      const start = base + Number(entry.offset);
+      return bytes.subarray(start, start + entry.size);
+    },
+  };
 }
 
 /** The PE machine type of a file: undefined when it is missing, -1 when it is not a PE file. */
@@ -135,5 +197,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const problem of problems) console.error(`✖ ${problem}`);
     process.exit(1);
   }
-  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked.`);
+  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked, dashboard font bundled.`);
 }

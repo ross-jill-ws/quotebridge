@@ -1,10 +1,13 @@
 // The dashboard shell: header with navigation and connection state, and the current view.
 import { useEffect, useState } from "preact/hooks";
+import type { SettingsView as Settings } from "../server/settings/index.js";
+import { get } from "./api.js";
 import { FeedsView } from "./feeds/feeds-view.js";
 import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
 import { useTerminals } from "./terminals/use-terminals.js";
+import { applyTheme } from "./theme.js";
 import { useLive, type Live } from "./use-live.js";
 
 const VIEWS = [
@@ -27,6 +30,7 @@ export function App() {
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+  useSavedTheme();
   const live = useLive();
   // The setup screen opens on first run and stays (with its progress) until the user moves on.
   const [setupOpen, setSetupOpen] = useState(false);
@@ -70,6 +74,16 @@ export function App() {
       </main>
     </>
   );
+}
+
+/** The page takes the saved theme at start and when the window comes back (it may have changed elsewhere). */
+function useSavedTheme() {
+  useEffect(() => {
+    const load = () => get<Settings>("/api/settings").then((settings) => applyTheme(settings.theme), () => {});
+    load();
+    addEventListener("focus", load);
+    return () => removeEventListener("focus", load);
+  }, []);
 }
 
 const BADGES: Record<Live["status"], { text: string; tone: string }> = {

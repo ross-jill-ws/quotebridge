@@ -128,7 +128,7 @@ export function FeedsView({ live }: { live: Live }) {
                   <td class="actions">
                     {row.removable && (
                       <button
-                        class="button small"
+                        class="button quiet small"
                         disabled={!connected || busy === feed.feed}
                         aria-label={`Remove offline ${feed.symbol} (${feed.broker}, ${feed.terminal})`}
                         title="Remove from the list. It comes back if its EA connects again."

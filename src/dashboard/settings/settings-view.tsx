@@ -7,6 +7,7 @@ import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identit
 import type { Theme } from "../../shared/settings-store.js";
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
+import { applyTheme } from "../theme.js";
 import { parsePort, PORT_LABELS, portChange, portsNote, type PortRole } from "./settings-model.js";
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
@@ -23,6 +24,11 @@ export function SettingsView({ managedTerminals }: { managedTerminals: number })
     addEventListener("focus", load);
     return () => removeEventListener("focus", load);
   }, []);
+
+  // A theme change shows at once, in this page as in the window.
+  useEffect(() => {
+    if (settings) applyTheme(settings.theme);
+  }, [settings?.theme]);
 
   const change = async (body: Partial<Settings>) => {
     setError("");
@@ -94,18 +100,22 @@ export function SettingsView({ managedTerminals }: { managedTerminals: number })
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="Connection">
-        {restarting ? (
-          <div class="notice warn" role="status">
-            Restarting QuoteBridge on the new port. This window reconnects by itself.
-          </div>
-        ) : (
-          note && (
-            <div class="notice warn" role="note">
-              {note}
+      <SettingsGroup
+        title="Connection"
+        after={
+          restarting ? (
+            <div class="notice warn" role="status">
+              Restarting QuoteBridge on the new port. This window reconnects by itself.
             </div>
+          ) : (
+            note && (
+              <div class="notice warn" role="note">
+                {note}
+              </div>
+            )
           )
-        )}
+        }
+      >
         {(["ea", "http"] as const).map((role) => (
           <PortRow
             key={role}
@@ -126,11 +136,13 @@ export function SettingsView({ managedTerminals }: { managedTerminals: number })
   );
 }
 
-function SettingsGroup({ title, children }: { title: string; children: ComponentChildren }) {
+/** A group of setting rows on one panel; `after` is a note under the panel. */
+function SettingsGroup({ title, children, after }: { title: string; children: ComponentChildren; after?: ComponentChildren }) {
   return (
     <section class="settings-group" aria-label={title}>
       <h2>{title}</h2>
       <div class="settings-panel">{children}</div>
+      {after}
     </section>
   );
 }
@@ -206,7 +218,7 @@ function PortRow({ role, settings, managedTerminals, disabled, onChange }: { rol
             <button class="button" type="submit">
               Continue
             </button>
-            <button class="button" type="button" onClick={close}>
+            <button class="button quiet" type="button" onClick={close}>
               Cancel
             </button>
             {problem && (
@@ -224,7 +236,7 @@ function PortRow({ role, settings, managedTerminals, disabled, onChange }: { rol
               <button class="button primary" disabled={busy} onClick={apply}>
                 {consequence.confirm}
               </button>
-              <button class="button" disabled={busy} onClick={close}>
+              <button class="button quiet" disabled={busy} onClick={close}>
                 Cancel
               </button>
             </div>
@@ -259,30 +271,36 @@ function About() {
 
   return (
     <SettingsGroup title="About">
-      <dl class="about">
-        <dt>Version</dt>
-        <dd>{about ? about.version : bridge ? "…" : "Open the app window to see the version."}</dd>
-        {about?.installFolder && (
-          <>
-            <dt>Installed in</dt>
-            <dd class="mono path">{about.installFolder}</dd>
-          </>
-        )}
-        {about && (
-          <>
-            <dt>Data folder</dt>
-            <dd class="about-folder">
-              <span class="mono path">{about.dataFolder}</span>
-              <button class="button small" onClick={() => void bridge?.openDataFolder()}>
-                Open data folder
-              </button>
-            </dd>
-          </>
-        )}
-        <dt>Source</dt>
-        <dd class="mono path">{SOURCE_URL}</dd>
-      </dl>
-      <details class="licences">
+      <div class="setting-row">
+        <div class="setting-text">
+          <span class="setting-label">
+            {APP_NAME} {about ? about.version : bridge ? "…" : ""}
+          </span>
+          {about?.installFolder ? (
+            <span class="mono path">{about.installFolder}</span>
+          ) : (
+            !bridge && <span class="setting-hint">Open the app window to see the version.</span>
+          )}
+        </div>
+      </div>
+      {about && (
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-label">Data folder</span>
+            <span class="mono path">{about.dataFolder}</span>
+          </div>
+          <button class="button" onClick={() => void bridge?.openDataFolder()}>
+            Open data folder
+          </button>
+        </div>
+      )}
+      <div class="setting-row">
+        <div class="setting-text">
+          <span class="setting-label">Source</span>
+          <span class="mono path">{SOURCE_URL}</span>
+        </div>
+      </div>
+      <details class="setting-row licences">
         <summary>Licences</summary>
         <ul>
           <li>
@@ -294,9 +312,12 @@ function About() {
           <li>
             <strong>Preact</strong>: MIT License.
           </li>
+          <li>
+            <strong>Archivo</strong> typeface, © 2020 The Archivo Project Authors: SIL Open Font License 1.1.
+          </li>
         </ul>
       </details>
-      <p class="setting-hint about-notice">
+      <p class="setting-row setting-hint">
         {TRADEMARK_NOTICE} {APP_NAME} is an independent project, not affiliated with or endorsed by MetaQuotes Ltd.
       </p>
     </SettingsGroup>

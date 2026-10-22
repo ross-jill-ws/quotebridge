@@ -1,8 +1,9 @@
 // The Settings view's model: reading a typed port, what a port change will do, and the note when a
-// development run's port overrides win over the saved ports.
+// development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parsePort, portChange, portsNote } from "../src/dashboard/settings/settings-model.js";
+import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
 const VIEW: SettingsView = { startWithWindows: true, openWindowAtStartup: false, theme: "system", ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
@@ -42,4 +43,10 @@ test("no note while the server runs on the saved ports; a note naming the ports 
     portsNote({ ...VIEW, portsInUse: { ea: 6655, http: 6680 } }),
     "This run listens on EA port 6655 and dashboard port 6680: a development run's port overrides win over the saved ports.",
   );
+});
+
+test("the page's data-theme follows the Theme setting; System leaves it to the colour-scheme media query", () => {
+  assert.equal(themeAttribute("light"), "light");
+  assert.equal(themeAttribute("dark"), "dark");
+  assert.equal(themeAttribute("system"), undefined);
 });

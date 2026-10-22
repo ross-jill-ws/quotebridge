@@ -18,6 +18,7 @@
     "verify:package": "tsx scripts/release/verify-package.ts release/win-unpacked"
   },
   "devDependencies": {
+    "@fontsource-variable/archivo": "5.3.0",
     "@types/node": "24.19.2",
     "@types/ws": "8.18.2",
     "electron": "44.9.2",

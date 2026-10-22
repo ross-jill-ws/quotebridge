@@ -10,9 +10,19 @@ export const DASHBOARD_SOURCE = `${root}src/dashboard/`;
 export const DASHBOARD_OUT = `${root}dist/dashboard/`;
 export const STATIC_FILES = ["index.html", "app.css"];
 
+/** Archivo, bundled so the dashboard never loads a font from the network: the variable font with its
+ *  width axis (Latin and Latin Extended, picked by unicode-range in app.css) and its SIL OFL 1.1 licence. */
+const ARCHIVO = `${root}node_modules/@fontsource-variable/archivo/`;
+const FONT_FILES: Record<string, string> = {
+  "fonts/archivo-latin-wdth-normal.woff2": `${ARCHIVO}files/archivo-latin-wdth-normal.woff2`,
+  "fonts/archivo-latin-ext-wdth-normal.woff2": `${ARCHIVO}files/archivo-latin-ext-wdth-normal.woff2`,
+  "fonts/Archivo-OFL.txt": `${ARCHIVO}LICENSE`,
+};
+
 export function copyStatic() {
-  mkdirSync(DASHBOARD_OUT, { recursive: true });
+  mkdirSync(`${DASHBOARD_OUT}fonts`, { recursive: true });
   for (const file of STATIC_FILES) cpSync(DASHBOARD_SOURCE + file, DASHBOARD_OUT + file);
+  for (const [file, source] of Object.entries(FONT_FILES)) cpSync(source, DASHBOARD_OUT + file);
 }
 
 const copyStaticPlugin: Plugin = {
