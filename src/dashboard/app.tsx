@@ -2,6 +2,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { SettingsView as Settings } from "../server/settings/index.js";
+import type { TerminalsState } from "../server/terminals/index.js";
 import { get } from "./api.js";
 import { FeedsView } from "./feeds/feeds-view.js";
 import { SettingsView } from "./settings/settings-view.js";
@@ -49,8 +50,9 @@ const VIEWS = [
 
 type ViewId = (typeof VIEWS)[number]["id"];
 
+/** `#/feeds`, or with the view's own state after it: `#/charts?feed=…`. */
 function viewFromHash(): ViewId {
-  const id = location.hash.replace(/^#\/?/, "");
+  const id = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
   return VIEWS.find((v) => v.id === id)?.id ?? "feeds";
 }
 
@@ -62,7 +64,7 @@ export function App() {
     return () => removeEventListener("hashchange", onHash);
   }, []);
   const live = useLive();
-  const settings = useSavedSettings(live.status);
+  const [settings, setSettings] = useSavedSettings(live.status);
   // The setup screen opens on first run and stays (with its progress) until the user moves on.
   const [setupOpen, setSetupOpen] = useState(false);
   const terminals = useTerminals(view === "terminals" || setupOpen);
@@ -108,11 +110,11 @@ export function App() {
         {setupOpen ? (
           <SetupView terminals={terminals} onDone={finishSetup} />
         ) : view === "feeds" ? (
-          <FeedsView live={live} />
+          <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} />
         ) : view === "charts" ? (
           <ChartsPlaceholder />
         ) : view === "settings" ? (
-          <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} />
+          <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} onSaved={setSettings} />
         ) : (
           <TerminalsView terminals={terminals} />
         )}
@@ -151,7 +153,12 @@ function useSavedSettings(status: Live["status"]) {
     addEventListener("focus", load);
     return () => removeEventListener("focus", load);
   }, [status]);
-  return settings;
+  return [settings, setSettings] as const;
+}
+
+/** Terminal IDs to the names the Terminals view shows, for the Feeds view's groups. */
+function terminalNames(state: TerminalsState | undefined): Map<string, string> {
+  return new Map(state?.terminals.flatMap((t) => (t.terminalId ? [[t.terminalId, t.name] as const] : [])));
 }
 
 const BRIDGE_STATUS: Record<Live["status"], { text: string; tone: string }> = {

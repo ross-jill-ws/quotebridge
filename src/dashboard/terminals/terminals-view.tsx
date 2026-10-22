@@ -6,7 +6,7 @@ import { post } from "../api.js";
 import { useTicker } from "../use-live.js";
 import { AddFolder } from "./add-folder.js";
 import { CompileLogDialog } from "./compile-log.js";
-import { CHECKLIST_STEPS, describeTerminal } from "./terminal-card.js";
+import { describeTerminal } from "./terminal-card.js";
 import type { Terminals } from "./use-terminals.js";
 
 export function TerminalsView({ terminals }: { terminals: Terminals }) {
@@ -58,20 +58,31 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
   const others = state.terminals.filter((t) => !t.managed && (t.supported || t.needsConfirmation));
   const unsupported = state.terminals.filter((t) => !t.managed && !t.supported && !t.needsConfirmation);
   const offered = others.filter((t) => t.offered).length;
+  const settingUp = managed.filter((t) => describeTerminal(t, Date.now()).shape === "setup").length;
+  const needAttention = managed.filter((t) => t.attention).length;
 
   return (
     <section class="view" aria-labelledby="terminals-title">
       <div class="view-heading">
-        <h1 id="terminals-title">Terminals</h1>
-        <p class="summary">
-          {managed.length} managed
-          {offered > 0 && (
-            <>
-              {" · "}
-              <span class="warn-text">{offered} new</span>
-            </>
-          )}
-        </p>
+        <div>
+          <h1 id="terminals-title">Terminals</h1>
+          <p class="summary">
+            {managed.length} managed
+            {settingUp > 0 && `, ${settingUp} still being set up in MetaTrader`}.
+            {needAttention > 0 && (
+              <span class="attention-text fault">
+                {" "}
+                {needAttention} {needAttention === 1 ? "needs" : "need"} attention.
+              </span>
+            )}
+            {offered > 0 && (
+              <span class="attention-text">
+                {" "}
+                {offered} new {offered === 1 ? "terminal" : "terminals"} found.
+              </span>
+            )}
+          </p>
+        </div>
         <div class="heading-actions">
           <button class="button" onClick={rescan} disabled={scanning}>
             {scanning ? "Scanning…" : "Rescan"}
@@ -108,7 +119,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
 
       {others.length > 0 && (
         <>
-          <h2 class="section-title">Not managed</h2>
+          <h2 class="section-title">Found on this computer, not managed</h2>
           <div class="cards">
             {others.map((t) => (
               <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} />
@@ -118,7 +129,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
       )}
       {unsupported.length > 0 && (
         <>
-          <h2 class="section-title">Not supported</h2>
+          <h2 class="section-title">Not supported yet</h2>
           <div class="cards">
             {unsupported.map((t) => (
               <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} />
@@ -131,6 +142,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
   );
 }
 
+/** One terminal; the panel's shape shows its state (terminal-card.ts). */
 function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: () => Promise<unknown>) => Promise<void>; showLog: () => void }) {
   useTicker(1000); // "Last heard 3 min ago" keeps counting
   const card = describeTerminal(t, Date.now());
@@ -139,25 +151,34 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
     if (!confirm(`Remove the QuoteBridge bridge files from ${t.name}? The app stops managing this terminal. Charts with the QuoteBridge EA stop sending quotes.`)) return;
     return act(() => post("/api/terminals/remove", { terminalId: t.terminalId }));
   };
-  const showChecklist = t.managed && (t.state === "installed" || t.state === "outdated");
+  const found = card.shape === "found";
+  // In a Fault panel, Retry (with the fix) stands in for Recompile.
+  const recompile = card.actions.recompile && !card.fault?.retry;
+  const folder = found ? (t.installationFolder ?? t.dataFolder) : (t.dataFolder ?? t.installationFolder);
 
   return (
-    <article class={`card${t.attention ? " attention" : ""}`} aria-label={t.name}>
-      <header class="card-head">
-        <div class="card-title">
-          <h3>{t.name}</h3>
-          <span class={`tag ${card.state.tone}`}>{card.state.text}</span>
+    <article class={`term ${card.shape}`} aria-label={t.name}>
+      <header class="term-head">
+        <h3>{t.name}</h3>
+        <div class="facts">
           {t.supported && t.state !== "not-installed" && (
-            <span class={`connection-tag ${card.connection.tone}`}>
-              <span class="dot" aria-hidden="true" />
+            <span class={`connection ${card.connection.tone}`}>
+              <span class={`dot${card.connection.tone === "good" ? " good" : " off"}`} aria-hidden="true" />
               {card.connection.text}
             </span>
           )}
+          {/* A found terminal's "Not installed" goes without saying. */}
+          {(!found || t.operation || !t.supported) && <span class={`state ${card.state.tone}`}>{card.state.text}</span>}
+          {found && folder && <span class="mono path">{folder}</span>}
         </div>
-        <div class="card-actions">
-          {card.actions.install && (
-            <button class="button primary" disabled={card.busy} onClick={install}>
-              Install
+        <div class="term-actions">
+          {t.needsConfirmation && t.installationFolder && (
+            <button
+              class="button quiet"
+              onClick={() => act(() => post("/api/terminals/add-folder", { folder: t.installationFolder }))}
+              title="This terminal keeps its data beside terminal.exe (portable mode)"
+            >
+              Confirm portable folder
             </button>
           )}
           {card.actions.decline && (
@@ -165,7 +186,7 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
               Not now
             </button>
           )}
-          {card.actions.recompile && (
+          {recompile && (
             <button class="button quiet" disabled={card.busy} onClick={install} title="Compile the QuoteBridge EA again and reinstall the bridge files">
               Recompile
             </button>
@@ -180,96 +201,89 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
               Remove
             </button>
           )}
-          {t.needsConfirmation && t.installationFolder && (
-            <button
-              class="button"
-              onClick={() => act(() => post("/api/terminals/add-folder", { folder: t.installationFolder }))}
-              title="This terminal keeps its data beside terminal.exe (portable mode)"
-            >
-              Confirm portable folder
+          {card.actions.install && (
+            <button class="button primary" disabled={card.busy} onClick={install}>
+              Install
             </button>
           )}
         </div>
       </header>
 
-      <dl class="card-meta">
-        {t.terminalId && t.supported && (
-          <>
-            <dt>Terminal ID</dt>
-            <dd class="mono">{t.terminalId}</dd>
-          </>
-        )}
-        <dt>{t.portable ? "Folder (portable)" : "Data folder"}</dt>
-        <dd class="mono path">{t.dataFolder ?? t.installationFolder ?? "—"}</dd>
-        {card.eaVersion && (
-          <>
-            <dt>Running EA</dt>
-            <dd>{card.eaVersion}</dd>
-          </>
-        )}
-        {t.legacyTerminalId && (
-          <>
-            <dt>Legacy setup</dt>
-            <dd>
-              TerminalId <span class="mono">{t.legacyTerminalId}</span>; installing replaces these files (backed up first).
-            </dd>
-          </>
-        )}
-      </dl>
+      {!found && (
+        <dl class="term-meta">
+          {t.terminalId && (
+            <>
+              <dt>Terminal ID</dt>
+              <dd class="mono">{t.terminalId}</dd>
+            </>
+          )}
+          <dt>{t.portable ? "Folder (portable)" : "Data folder"}</dt>
+          <dd class="mono path">{folder ?? "—"}</dd>
+          {card.eaVersion && (
+            <>
+              <dt>Running EA</dt>
+              <dd>{card.eaVersion}</dd>
+            </>
+          )}
+          {t.legacyTerminalId && (
+            <>
+              <dt>Legacy setup</dt>
+              <dd>
+                TerminalId <span class="mono">{t.legacyTerminalId}</span>; installing replaces these files (backed up first).
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
 
-      {!t.supported && t.unsupportedReason && <p class="muted card-note">{t.unsupportedReason}</p>}
-      {!t.detected && <p class="warn-text card-note">This terminal was not found in the last scan. Its folder may have moved or been uninstalled.</p>}
-
-      {card.closeMetaEditor ? (
-        <div class="notice warn card-notice" role="alert">
-          <span>
-            MetaEditor of this terminal is open. Close MetaEditor (File › Exit), then retry, so the compile is not sent to your open editor.
-          </span>
-          <button class="button" disabled={card.busy} onClick={install}>
-            Retry
-          </button>
+      {(t.unsupportedReason && !t.supported) || !t.detected || t.pendingRemoval.length > 0 || (found && t.legacyTerminalId) ? (
+        <div class="term-notes">
+          {!t.supported && t.unsupportedReason && <p class="muted">{t.unsupportedReason}</p>}
+          {found && t.legacyTerminalId && <p class="muted">Has bridge files from the manual setup; installing backs them up and replaces them.</p>}
+          {!t.detected && <p class="warn-text">This terminal was not found in the last scan. Its folder may have moved or been uninstalled.</p>}
+          {t.pendingRemoval.length > 0 && <p class="muted">{t.pendingRemoval.length} file(s) are in use by MetaTrader; the app removes them the next time it starts.</p>}
         </div>
-      ) : (
-        t.lastFailure && (
-          <div class="notice bad card-notice">
-            <div>
-              <div>{t.lastFailure.message}</div>
-              {t.lastFailure.errors && t.lastFailure.errors.length > 0 && (
-                <ul class="errors">
-                  {t.lastFailure.errors.slice(0, 3).map((e, i) => (
-                    <li key={i} class="mono">
-                      {fileName(e.file)}({e.line},{e.column}): error {e.code}: {e.text}
-                    </li>
-                  ))}
-                  {t.lastFailure.errors.length > 3 && <li>…and {t.lastFailure.errors.length - 3} more in the compile log.</li>}
-                </ul>
-              )}
-            </div>
-          </div>
-        )
-      )}
-      {t.managed && t.state === "no-metaeditor" && !t.lastFailure && (
-        <div class="notice bad card-notice">This terminal has no MetaEditor (metaeditor.exe), so the app cannot compile the QuoteBridge EA for it.</div>
-      )}
-      {t.pendingRemoval.length > 0 && (
-        <p class="muted card-note">{t.pendingRemoval.length} file(s) are in use by MetaTrader; the app removes them the next time it starts.</p>
-      )}
-      {t.hint && <div class="notice warn card-notice">{t.hint}</div>}
+      ) : null}
 
-      {showChecklist && (
-        <ol class="checklist" aria-label="Steps in MetaTrader">
-          {CHECKLIST_STEPS.map((step) => {
-            const done = t.checklist[step.key];
-            return (
-              <li key={step.key} class={done ? "done" : undefined}>
-                <span class="check" aria-hidden="true">
-                  {done ? "✓" : ""}
-                </span>
-                <span>{step.text}</span>
-                <span class="visually-hidden">{done ? "(done)" : "(to do)"}</span>
-              </li>
-            );
-          })}
+      {card.fault && (
+        <div class="fault-box" role="alert">
+          <div class="fault-text">
+            <strong>{card.fault.reason}</strong>
+            {t.lastFailure?.errors && t.lastFailure.errors.length > 0 && (
+              <ul class="errors">
+                {t.lastFailure.errors.slice(0, 3).map((e, i) => (
+                  <li key={i} class="mono">
+                    {fileName(e.file)}({e.line},{e.column}): error {e.code}: {e.text}
+                  </li>
+                ))}
+                {t.lastFailure.errors.length > 3 && <li>…and {t.lastFailure.errors.length - 3} more in the compile log.</li>}
+              </ul>
+            )}
+            <span class="fix">{card.fault.fix}</span>
+          </div>
+          {/* Outlined, not filled: several terminals can fail at once, and a screen has one filled button at most. */}
+          {card.fault.retry && (
+            <button class="button" disabled={card.busy} onClick={install}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
+      {t.hint && card.shape !== "setup" && <div class="notice warn term-notice">{t.hint}</div>}
+
+      {card.steps && (
+        <ol class="steps" aria-label="Steps in MetaTrader">
+          {card.steps.map((step, i) => (
+            <li key={step.key} class={`step ${step.status}`} aria-current={step.status === "next" ? "step" : undefined}>
+              <span class="n" aria-hidden="true">
+                {step.status === "done" ? "✓" : i + 1}
+              </span>
+              <b>{step.title}</b>
+              {step.text}
+              <span class="visually-hidden">{step.status === "done" ? " (done)" : " (to do)"}</span>
+            </li>
+          ))}
         </ol>
       )}
     </article>

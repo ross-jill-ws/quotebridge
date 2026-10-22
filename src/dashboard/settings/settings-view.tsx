@@ -12,7 +12,8 @@ import { parsePort, PORT_LABELS, portChange, portsNote, type PortRole } from "./
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
 
-export function SettingsView({ managedTerminals }: { managedTerminals: number }) {
+/** `onSaved` hands each saved change to the shell (the Feeds view's Flash prices, the rail's port). */
+export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: number; onSaved?: (settings: Settings) => void }) {
   const [settings, setSettings] = useState<Settings>();
   const [error, setError] = useState("");
   const [restarting, setRestarting] = useState(false);
@@ -33,7 +34,9 @@ export function SettingsView({ managedTerminals }: { managedTerminals: number })
   const change = async (body: Partial<Settings>) => {
     setError("");
     try {
-      setSettings(await post<Settings>("/api/settings", body));
+      const saved = await post<Settings>("/api/settings", body);
+      setSettings(saved);
+      onSaved?.(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       throw e;
@@ -98,6 +101,12 @@ export function SettingsView({ managedTerminals }: { managedTerminals: number })
             ))}
           </div>
         </div>
+        <Toggle
+          label="Flash prices"
+          hint="The pips flash green or red on each tick, then settle back. Always off when Windows is set to reduce animations."
+          checked={settings.flashPrices}
+          onChange={(on) => change({ flashPrices: on }).catch(() => {})}
+        />
       </SettingsGroup>
 
       <SettingsGroup

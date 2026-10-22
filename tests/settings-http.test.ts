@@ -52,6 +52,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     startWithWindows: true,
     openWindowAtStartup: false,
     theme: "system",
+    flashPrices: true,
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
   });
@@ -112,7 +113,7 @@ test("a port that cannot work is refused with a plain reason and nothing is save
 test("only the Settings view's own settings can be changed, with values of the right kind", async (t) => {
   const { store, saved, post } = await start(t);
 
-  for (const change of [{ setupCompleted: false }, { managedTerminals: [] }, { theme: "purple" }, { startWithWindows: "yes" }, [], null]) {
+  for (const change of [{ setupCompleted: false }, { managedTerminals: [] }, { theme: "purple" }, { startWithWindows: "yes" }, { flashPrices: 1 }, [], null]) {
     const { status } = await post(change);
     assert.equal(status, 400, JSON.stringify(change));
   }
@@ -123,4 +124,16 @@ test("only the Settings view's own settings can be changed, with values of the r
 test("without a settings store the endpoints are not there", async (t) => {
   const { get } = await start(t, { withSettings: false });
   assert.equal((await get()).status, 404);
+});
+
+test("Flash prices can be turned off and on from the Settings view", async (t) => {
+  const { store, saved, post } = await start(t);
+
+  const { status, body } = await post({ flashPrices: false });
+
+  assert.equal(status, 200);
+  assert.equal(body.flashPrices, false);
+  assert.equal((await store.read()).flashPrices, false);
+  assert.equal(saved.at(-1)?.flashPrices, false);
+  assert.equal((await post({ flashPrices: true })).body.flashPrices, true);
 });

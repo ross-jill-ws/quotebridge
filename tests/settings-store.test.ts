@@ -158,3 +158,18 @@ test("a hand-edited theme or window-at-startup value that cannot work is read as
   assert.equal(settings.openWindowAtStartup, false);
   assert.equal(settings.startWithWindows, false);
 });
+
+test("prices flash by default; turning it off is saved", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  assert.equal((await store.read()).flashPrices, true);
+
+  await store.update((s) => void (s.flashPrices = false));
+
+  assert.equal((await new SettingsStore(store.folder).read()).flashPrices, false);
+});
+
+test("a hand-edited Flash prices value that cannot work is read as its default", async (t) => {
+  const folder = await appData(t);
+  await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, flashPrices: "off" }));
+  assert.equal((await new SettingsStore(folder).read()).flashPrices, true);
+});

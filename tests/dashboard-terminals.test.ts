@@ -83,6 +83,66 @@ test("queued and running installs show progress and make the card busy", () => {
   assert.equal(installing.busy, true);
 });
 
+
+// The panel shape: compact when ready, the four-step strip while being set up, dashed when found but not managed, Fault when it needs attention.
+const DONE = { refreshNavigator: true, applyTemplate: true, allowDllImports: true, eaConnected: true };
+const CONNECTED = { lastHello: NOW - 1000, eaVersion: "1.08", online: true };
+
+test("an installed terminal whose EA has connected is a compact panel without the steps", () => {
+  const card = describeTerminal(terminal({ checklist: DONE, presence: CONNECTED }), NOW);
+  assert.equal(card.shape, "compact");
+  assert.equal(card.steps, null);
+});
+
+test("an installed terminal whose EA has not connected yet shows the four MetaTrader steps, the first one not done next", () => {
+  const card = describeTerminal(terminal(), NOW);
+  assert.equal(card.shape, "setup");
+  assert.deepEqual(
+    card.steps?.map((s) => [s.title, s.status]),
+    [
+      ["Refresh the Navigator", "next"],
+      ["Apply the template", "todo"],
+      ["Allow DLL imports", "todo"],
+      ["EA connects", "todo"],
+    ],
+  );
+  const later = describeTerminal(terminal({ checklist: { ...NOT_YET, refreshNavigator: true, applyTemplate: true } }), NOW);
+  assert.deepEqual(later.steps?.map((s) => s.status), ["done", "done", "next", "todo"]);
+});
+
+test("a terminal found but not managed is dashed, offered or declined, and so is one the app cannot manage", () => {
+  assert.equal(describeTerminal(terminal({ managed: false, offered: true, state: "not-installed", installedEaVersion: null }), NOW).shape, "found");
+  assert.equal(describeTerminal(terminal({ managed: false, declined: true, state: "not-installed", installedEaVersion: null }), NOW).shape, "found");
+  assert.equal(describeTerminal(terminal({ kind: "mt5", supported: false, managed: false, state: null }), NOW).shape, "found");
+});
+
+test("a terminal that needs attention is in Fault style with the reason and its fix", () => {
+  const failure = { stage: "compile" as const, at: "2026-10-21T10:00:00Z", sourceHash: "x" };
+  const open = terminal({
+    state: "compile-failed",
+    lastFailure: { ...failure, reason: "metaeditor-running", message: "MetaEditor of this terminal is open. Close it, then install again." },
+    attention: "MetaEditor of this terminal is open. Close it, then install again.",
+  });
+  const card = describeTerminal(open, NOW);
+  assert.equal(card.shape, "attention");
+  assert.deepEqual(card.fault, {
+    reason: "MetaEditor of this terminal is open. Close it, then install again.",
+    fix: "Close MetaEditor (File › Exit), then retry, so the compile is not sent to your open editor.",
+    retry: true,
+  });
+
+  const errors = describeTerminal(terminal({ state: "compile-failed", lastFailure: { ...failure, reason: "compile-errors", message: "errors", compileLog: "C:\log" }, attention: "errors" }), NOW);
+  assert.equal(errors.fault?.fix, "Open the compile log to see what MetaEditor reported, then retry.");
+  const copy = describeTerminal(terminal({ lastFailure: { ...failure, stage: "copy", reason: "copy-failed", message: "Copying failed" }, attention: "Copying failed" }), NOW);
+  assert.equal(copy.fault?.fix, "Close MetaTrader if it is running, so it lets go of the bridge files, then retry.");
+  const none = describeTerminal(terminal({ state: "no-metaeditor", attention: "no MetaEditor" }), NOW);
+  assert.deepEqual(none.fault, { reason: "no MetaEditor", fix: "Repair or reinstall this MetaTrader terminal so its folder has metaeditor.exe, then rescan.", retry: false });
+});
+
+test("a healthy terminal has no fault", () => {
+  assert.equal(describeTerminal(terminal({ checklist: DONE, presence: CONNECTED }), NOW).fault, null);
+});
+
 // The setup screen: the ticks it shows are exactly what Install sends.
 const CMC = terminal({ managed: false, offered: true, state: "not-installed", installedEaVersion: null });
 const EASY_FOREX = terminal({ key: "mt4-0f5715a276b2", terminalId: "mt4-0f5715a276b2", name: "MT4 at easy-forex", managed: false, offered: true, state: "not-installed", installedEaVersion: null });

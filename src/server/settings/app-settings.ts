@@ -11,7 +11,7 @@ export type AppSettingsOptions = {
 };
 
 /** What GET and POST /api/settings answer. */
-export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "ports"> & {
+export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "ports"> & {
   /** The ports this server is bound to. They differ from `ports` after a change until main restarts the server, or in a dev run with port overrides. */
   portsInUse: Settings["ports"];
 };
@@ -27,7 +27,7 @@ export class SettingsRequestError extends Error {
 
 /** Ports below 1024 are left to system services. */
 const LOWEST_PORT = 1024;
-const BOOLEAN_KEYS = ["startWithWindows", "openWindowAtStartup"] as const;
+const BOOLEAN_KEYS = ["startWithWindows", "openWindowAtStartup", "flashPrices"] as const;
 const PORT_NAMES: Record<PortRole, string> = { ea: "EA port", http: "dashboard port" };
 
 export class AppSettings {
@@ -87,8 +87,8 @@ export class AppSettings {
   }
 
   private toView(settings: Settings): SettingsView {
-    const { startWithWindows, openWindowAtStartup, theme, ports } = settings;
-    return { startWithWindows, openWindowAtStartup, theme, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
+    const { startWithWindows, openWindowAtStartup, theme, flashPrices, ports } = settings;
+    return { startWithWindows, openWindowAtStartup, theme, flashPrices, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
   }
 }
 

@@ -610,21 +610,72 @@ input[type="checkbox"]:focus-visible {
   padding-left: 0;
 }
 
-/* Feeds table */
-.table-wrap {
-  overflow-x: auto;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+/* Feeds: one panel per terminal, the terminal's own state in its head. */
+.attention-text {
+  color: var(--caution);
+  font-weight: 600;
 }
 
-.table-wrap.paused {
+.attention-text.fault {
+  color: var(--fault);
+}
+
+.feed-groups.paused {
   opacity: 0.6;
 }
 
+.feed-group {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.group-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.group-head .tid {
+  color: var(--ink-3);
+}
+
+.group-state {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.group-state .dot,
+.connection .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Fixed columns, so prices line up from one terminal's group to the next. */
 .feeds {
   width: 100%;
+  min-width: 820px;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .feeds th,
@@ -650,16 +701,40 @@ input[type="checkbox"]:focus-visible {
   text-align: right;
 }
 
-.feeds .price {
-  font-size: 14px;
-  font-weight: 600;
-  font-stretch: 92%;
+.feeds .symbol-col {
+  width: 20%;
 }
 
-.symbol {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.feeds .price-col {
+  width: 14%;
+}
+
+.feeds .spread-col {
+  width: 9%;
+}
+
+.feeds .time-col {
+  width: 12%;
+}
+
+.feeds .action-col {
+  width: 96px;
+}
+
+.feeds .status-col {
+  white-space: normal;
+}
+
+.symbol-link {
+  color: inherit;
+  text-decoration: none;
+  border-radius: 3px;
+}
+
+.symbol-link:hover .symbol-name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .symbol-name {
@@ -669,28 +744,113 @@ input[type="checkbox"]:focus-visible {
   letter-spacing: 0.005em;
 }
 
-.feed-source {
-  margin-left: 16px;
+.symbol-col .chip {
+  margin-left: 8px;
+  vertical-align: 2px;
+}
+
+/* The one bold thing: prices set the way a dealing ticket sets them. */
+.px {
+  white-space: nowrap;
+  font-stretch: 92%;
+}
+
+.px .big {
+  font-size: 14px;
+  font-weight: 450;
+  color: var(--ink-2);
+}
+
+.px .pips {
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.px .pipette {
+  margin-left: 1px;
   font-size: 12px;
+  font-weight: 600;
+  vertical-align: 9px;
+  color: var(--ink-2);
+}
+
+.px.none {
   color: var(--ink-3);
+}
+
+/* On a tick the pips flash Uptick or Downtick and settle back to ink over 1.2 s. */
+.flashing .moving.up > * {
+  animation: flash-up 1.2s ease-out;
+}
+
+.flashing .moving.down > * {
+  animation: flash-down 1.2s ease-out;
+}
+
+@keyframes flash-up {
+  from {
+    color: var(--uptick);
+  }
+}
+
+@keyframes flash-down {
+  from {
+    color: var(--downtick);
+  }
+}
+
+.spread {
+  font-weight: 550;
+}
+
+.quote-time {
+  font-size: 13px;
+  color: var(--ink-2);
 }
 
 .offline td,
 .offline .symbol-name,
-.offline .price {
+.offline .px .big,
+.offline .px .pips,
+.offline .px .pipette {
   color: var(--ink-3);
 }
 
-.feeds td.warnings {
-  white-space: normal;
-  min-width: 180px;
+.offline .px .pips {
+  font-weight: 500;
+}
+
+.flag {
+  display: inline-block;
+  margin: 1px 4px 1px 0;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.flag.caution {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+
+.flag.fault {
+  background: var(--fault-bg);
+  color: var(--fault);
+}
+
+.flag.plain {
+  padding-left: 0;
+  color: var(--ink-3);
 }
 
 .actions {
   text-align: right;
 }
 
-/* Terminals view */
+/* Terminals: the panel's shape shows the state. */
 .heading-actions {
   margin-left: auto;
   display: flex;
@@ -716,126 +876,209 @@ input[type="checkbox"]:focus-visible {
   gap: 14px;
 }
 
-.card {
+.term {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 18px;
+  overflow: hidden;
 }
 
-.card.attention {
+/* Found but not managed: an outline waiting to be filled in. */
+.term.found {
+  border-style: dashed;
+  background: transparent;
+}
+
+.term.attention {
   border-color: var(--fault);
 }
 
-.card-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.card-title {
+.term-head {
   display: flex;
   align-items: center;
-  gap: 10px;
   flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 14px 18px;
 }
 
-.card-title h3 {
+.term-head h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 650;
 }
 
-.card-title .tag {
-  margin: 0;
-}
-
-.connection-tag {
-  display: inline-flex;
+.facts {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 14px;
   font-size: 13px;
   color: var(--ink-2);
 }
 
-.card-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.card-meta {
+.connection.warn {
+  color: var(--caution);
+}
+
+.state.warn {
+  color: var(--caution);
+  font-weight: 550;
+}
+
+.state.bad {
+  color: var(--fault);
+  font-weight: 550;
+}
+
+.term-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.term-meta {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: 110px 1fr;
   gap: 3px 14px;
-  margin: 10px 0 0;
+  margin: 0;
+  padding: 0 18px 14px;
   font-size: 13px;
 }
 
-.card-meta dt {
+.term-meta dt {
   color: var(--ink-3);
 }
 
-.card-meta dd {
+.term-meta dd {
   margin: 0;
   color: var(--ink-2);
 }
 
-.card-note {
-  margin: 8px 0 0;
+.term-notes {
+  padding: 0 18px 12px;
   font-size: 13px;
 }
 
-.card .card-notice {
-  margin: 10px 0 0;
-  justify-content: space-between;
+.term-notes p {
+  margin: 0 0 4px;
+}
+
+.term .term-notice {
+  margin: 0 18px 14px;
+}
+
+/* Needs attention: the reason and its fix on the Fault ground. */
+.fault-box {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 18px 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-small);
+  background: var(--fault-bg);
+  color: var(--fault);
+  font-size: 13px;
+}
+
+.fault-text {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+
+.fault-text strong {
+  font-weight: 600;
+}
+
+.fault-text .fix {
+  color: var(--ink);
+}
+
+.fault-box .button {
+  flex: none;
 }
 
 .errors {
-  margin: 6px 0 0;
+  margin: 2px 0;
   padding-left: 18px;
 }
 
-.checklist {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 10px 12px;
-  background: var(--sunk);
-  border-radius: var(--radius-small);
+/* Being set up: the four MetaTrader steps, numbered because they are a sequence. */
+.steps {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line-soft);
+}
+
+.step {
+  padding: 12px 18px 14px;
   font-size: 13px;
+  color: var(--ink-2);
+  border-left: 1px solid var(--line-soft);
 }
 
-.checklist li {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
+.step:first-child {
+  border-left: 0;
 }
 
-.checklist .check {
-  flex: none;
+.step .n {
+  display: inline-grid;
+  place-items: center;
   width: 20px;
   height: 20px;
+  margin-bottom: 6px;
   border-radius: 50%;
   border: 1.5px solid var(--ink-3);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   font-size: 12px;
   font-weight: 700;
+  color: var(--ink-2);
+}
+
+.step b {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.step.done .n {
+  background: var(--uptick);
+  border-color: var(--uptick);
   color: var(--surface);
 }
 
-.checklist li.done .check {
-  background: var(--uptick);
-  border-color: var(--uptick);
+.step.next {
+  background: var(--sunk);
+  color: var(--ink);
 }
 
-.checklist li.done {
-  color: var(--ink-2);
+.step.next .n {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+@media (max-width: 760px) {
+  .steps {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .step:nth-child(3) {
+    border-left: 0;
+  }
+
+  .step:nth-child(n + 3) {
+    border-top: 1px solid var(--line-soft);
+  }
 }
 
 /* Compile log */
@@ -933,6 +1176,7 @@ input[type="checkbox"]:focus-visible {
 
 .setup-row-text .path {
   color: var(--ink-3);
+  font-size: 12px;
 }
 
 .setup-name {
@@ -951,10 +1195,21 @@ input[type="checkbox"]:focus-visible {
 
 .setup-option {
   display: flex;
-  gap: 10px;
+  gap: 9px;
   align-items: flex-start;
-  padding: 13px 16px;
   font-size: 13px;
+  color: var(--ink-2);
+}
+
+.setup-option strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.setup-kind {
+  flex: none;
+  font-size: 12px;
   color: var(--ink-2);
 }
 
@@ -964,10 +1219,16 @@ input[type="checkbox"]:focus-visible {
   height: 16px;
 }
 
+/* Start with Windows beside the one filled button. */
 .setup-actions {
   margin-top: 22px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+
+.setup-actions .button {
+  margin-left: auto;
 }
 
 .progress-icon {
@@ -1205,5 +1466,10 @@ p.setting-row {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Prices stay still: no flash at all, not even a frame of colour. */
+  .moving > * {
+    animation: none !important;
   }
 }

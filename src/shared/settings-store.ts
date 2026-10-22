@@ -40,6 +40,8 @@ export interface Settings {
   openWindowAtStartup: boolean;
   /** The window's colours: follow Windows, or always light or dark. */
   theme: Theme;
+  /** The pips flash Uptick or Downtick on a tick (never with reduced motion). */
+  flashPrices: boolean;
   firstCloseNotificationShown: boolean;
   /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
   setupCompleted: boolean;
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   startWithWindows: true,
   openWindowAtStartup: false,
   theme: "system",
+  flashPrices: true,
   firstCloseNotificationShown: false,
   setupCompleted: false,
 });
@@ -128,6 +131,7 @@ function withDefaults(stored: unknown): Settings {
     startWithWindows: typeof partial.startWithWindows === "boolean" ? partial.startWithWindows : defaults.startWithWindows,
     openWindowAtStartup: typeof partial.openWindowAtStartup === "boolean" ? partial.openWindowAtStartup : defaults.openWindowAtStartup,
     theme: (THEMES as readonly unknown[]).includes(partial.theme) ? partial.theme! : defaults.theme,
+    flashPrices: typeof partial.flashPrices === "boolean" ? partial.flashPrices : defaults.flashPrices,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };

@@ -84,15 +84,14 @@ export function SetupView({ terminals, onDone }: { terminals: Terminals; onDone:
         Missing a terminal? <AddFolder label="Add its folder…" onAdded={() => refresh()} onError={setError} />
       </p>
 
-      <label class="setup-option">
-        <input type="checkbox" checked={startWithWindows} onChange={(e) => setStartWithWindows((e.target as HTMLInputElement).checked)} />
-        <span>
-          <strong>Start with Windows</strong>
-          <span class="muted"> · The app starts in the tray when you sign in, ready before MetaTrader opens.</span>
-        </span>
-      </label>
-
       <div class="setup-actions">
+        <label class="setup-option">
+          <input type="checkbox" checked={startWithWindows} onChange={(e) => setStartWithWindows((e.target as HTMLInputElement).checked)} />
+          <span>
+            <strong>Start with Windows</strong>
+            The app waits in the tray, ready before MetaTrader opens.
+          </span>
+        </label>
         <button class="button primary large" onClick={install} disabled={submitting || (!!state.bundleProblem && ticked.length > 0)}>
           {ticked.length === 0 ? "Finish setup" : ticked.length === 1 ? "Install" : `Install into ${ticked.length} terminals`}
         </button>
@@ -112,7 +111,7 @@ function SetupRow({ t, checked, onToggle, onConfirm, onError }: { t: TerminalVie
         {!t.supported && <span class="muted">{t.unsupportedReason}</span>}
         {t.state === "installed-legacy" && <span class="muted">Has bridge files from the manual setup; they are backed up and replaced.</span>}
       </label>
-      <span class={`tag ${t.kind === "mt4" ? "neutral" : "warn"}`}>{t.kind === "mt4" ? "MT4" : t.kind === "mt5" ? "MT5 · not supported yet" : "Unknown"}</span>
+      <span class="setup-kind">{t.kind === "mt4" ? "MetaTrader 4" : t.kind === "mt5" ? "MetaTrader 5 isn't supported yet" : "Unknown terminal"}</span>
       {t.needsConfirmation && t.installationFolder && (
         <button
           class="button small"

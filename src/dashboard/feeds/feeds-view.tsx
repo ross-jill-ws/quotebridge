@@ -1,17 +1,26 @@
-// Feeds view: every feed the QuoteBridge EAs send, with its live quote and warnings.
-import { useState } from "preact/hooks";
+// Feeds view: every feed the QuoteBridge EAs send, grouped by terminal, with its live quote and warnings.
+import { useMemo, useRef, useState } from "preact/hooks";
 import type { FeedSnapshot } from "../../server/bridge/index.js";
 import { post } from "../api.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
-import { describeFeed, sortFeeds } from "./feed-row.js";
+import { describeFeed, groupFeeds, nextFlash, priceParts, type Flash, type FeedGroup } from "./feed-row.js";
 
-export function FeedsView({ live }: { live: Live }) {
+type Props = {
+  live: Live;
+  /** Terminal IDs to the names the Terminals view shows. */
+  terminalNames: ReadonlyMap<string, string>;
+  /** The Flash prices setting; reduced motion turns the flash off in CSS whatever it says. */
+  flashPrices: boolean;
+};
+
+export function FeedsView({ live, terminalNames, flashPrices }: Props) {
   const now = useTicker(1000);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
   const { snapshot } = live;
   const connected = live.status === "live";
+  const flashes = useFlashes(snapshot?.feeds, snapshot?.time ?? 0);
 
   async function remove(feed: FeedSnapshot) {
     setBusy(feed.feed);
@@ -39,28 +48,20 @@ export function FeedsView({ live }: { live: Live }) {
   // The server sends a snapshot only when something changes; let elapsed times keep counting in between
   // (but not while disconnected, when the values are no longer current).
   const time = connected ? snapshot.time + Math.max(0, now - live.receivedAt) : snapshot.time;
-  const feeds = sortFeeds(snapshot.feeds);
-  const rows = feeds.map((feed) => ({ feed, row: describeFeed(feed, time) }));
-  const online = feeds.filter((f) => f.online).length;
-  const warned = rows.filter((r) => r.row.warnings.length).length;
+  const { groups, summary, attention } = groupFeeds(snapshot, terminalNames, time);
 
   return (
     <section class="view" aria-labelledby="feeds-title">
       <div class="view-heading">
-        <h1 id="feeds-title">Feeds</h1>
-        {feeds.length > 0 && (
-          <p class="summary">
-            {feeds.length} {feeds.length === 1 ? "feed" : "feeds"} · {online} online
-            {warned > 0 && (
-              <>
-                {" · "}
-                <span class="warn-text">
-                  {warned} with {warned === 1 ? "a warning" : "warnings"}
-                </span>
-              </>
-            )}
-          </p>
-        )}
+        <div>
+          <h1 id="feeds-title">Feeds</h1>
+          {groups.length > 0 && (
+            <p class="summary">
+              {summary}
+              {attention && <span class="attention-text"> {attention}</span>}
+            </p>
+          )}
+        </div>
       </div>
       {error && (
         <div class="notice bad" role="alert">
@@ -70,57 +71,95 @@ export function FeedsView({ live }: { live: Live }) {
           </button>
         </div>
       )}
-      {feeds.length === 0 ? (
+      {groups.length === 0 ? (
         <div class="empty">
           <p>No feeds yet.</p>
           <p class="muted">A feed appears here as soon as a QuoteBridge EA on a MetaTrader chart connects to the app.</p>
         </div>
       ) : (
-        <div class={connected ? "table-wrap" : "table-wrap paused"}>
-          <table class="feeds">
-            <thead>
-              <tr>
-                <th class="symbol-col">Symbol</th>
-                <th>TF</th>
-                <th class="num">Bid</th>
-                <th class="num">Ask</th>
-                <th class="num" title="Spread in points">
-                  Spread
-                </th>
-                <th class="num" title="Broker server time of the latest quote">
-                  Quote time
-                </th>
-                <th>Warnings</th>
-                <th>
-                  <span class="visually-hidden">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ feed, row }) => (
+        <div class={`feed-groups${connected ? "" : " paused"}${flashPrices && connected ? " flashing" : ""}`}>
+          {groups.map((group) => (
+            <FeedGroupView key={group.terminal} group={group} time={time} flashes={flashes} connected={connected} busy={busy} onRemove={remove} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FeedGroupView({
+  group,
+  time,
+  flashes,
+  connected,
+  busy,
+  onRemove,
+}: {
+  group: FeedGroup;
+  time: number;
+  flashes: ReadonlyMap<string, Flash>;
+  connected: boolean;
+  busy?: string;
+  onRemove: (feed: FeedSnapshot) => void;
+}) {
+  const titleId = `group-${group.terminal}`;
+  return (
+    <section class="feed-group" aria-labelledby={titleId}>
+      <header class="group-head">
+        <h2 id={titleId}>{group.name}</h2>
+        <span class="mono tid">{group.terminal}</span>
+        <span class="group-state">
+          <span class={`dot ${group.state.online ? "good" : "off"}`} aria-hidden="true" />
+          {group.state.text}
+        </span>
+      </header>
+      <div class="table-scroll">
+        <table class="feeds">
+          <thead>
+            <tr>
+              <th class="symbol-col">Symbol</th>
+              <th class="num price-col">Bid</th>
+              <th class="num price-col">Ask</th>
+              <th class="num spread-col" title="Spread in points">
+                Spread
+              </th>
+              <th class="num time-col" title="Broker server time of the latest quote">
+                Quote time
+              </th>
+              <th class="status-col">Status</th>
+              <th class="action-col">
+                <span class="visually-hidden">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {group.feeds.map((feed) => {
+              const row = describeFeed(feed, time);
+              const flash = feed.online ? flashes.get(feed.feed) : undefined;
+              return (
                 <tr key={feed.feed} class={feed.online ? undefined : "offline"}>
                   <td class="symbol-col">
-                    <div class="symbol">
-                      <span class={`dot ${feed.online ? "good" : "off"}`} role="img" aria-label={row.status} title={row.status} />
+                    <a class="symbol-link" href={`#/charts?feed=${encodeURIComponent(feed.feed)}`} title={`Open the ${feed.symbol} chart (${feed.broker})`}>
                       <span class="symbol-name">{feed.symbol}</span>
-                    </div>
-                    <div class="feed-source">
-                      {feed.broker} · {feed.terminal}
-                    </div>
+                    </a>
+                    <span class="chip" title="Period of the chart the EA runs on">
+                      {row.timeframe}
+                    </span>
                   </td>
-                  <td>
-                    <span class="chip">{row.timeframe}</span>
+                  <td class="num">
+                    <Price value={feed.latest?.bid} digits={feed.digits} flash={flash} />
                   </td>
-                  <td class="num price">{row.bid}</td>
-                  <td class="num price">{row.ask}</td>
-                  <td class="num">{row.spread}</td>
-                  <td class="num" title={row.quoteDate || undefined}>
+                  <td class="num">
+                    <Price value={feed.latest?.ask} digits={feed.digits} flash={flash} />
+                  </td>
+                  <td class="num spread">{row.spread}</td>
+                  <td class="num quote-time" title={row.quoteDate || undefined}>
                     {row.quoteTime}
                   </td>
-                  <td class="warnings">
-                    {!feed.online && <span class="tag neutral">{row.status}</span>}
+                  <td class="status-col">
+                    {!feed.online && <span class="flag plain">{row.status}</span>}
                     {row.warnings.map((w) => (
-                      <span key={w.kind} class={`tag ${w.kind === "stale" ? "warn" : "bad"}`}>
+                      <span key={w.kind} class={`flag ${w.kind === "stale" ? "caution" : "fault"}`}>
                         {w.text}
                       </span>
                     ))}
@@ -132,18 +171,49 @@ export function FeedsView({ live }: { live: Live }) {
                         disabled={!connected || busy === feed.feed}
                         aria-label={`Remove offline ${feed.symbol} (${feed.broker}, ${feed.terminal})`}
                         title="Remove from the list. It comes back if its EA connects again."
-                        onClick={() => remove(feed)}
+                        onClick={() => onRemove(feed)}
                       >
                         Remove
                       </button>
                     )}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
+}
+
+/** A price set like a dealing ticket; on a tick the pips flash in its direction and fade back to ink. */
+function Price({ value, digits, flash }: { value: number | undefined; digits: number; flash?: Flash }) {
+  if (value === undefined) return <span class="px none">—</span>;
+  const { big, pips, pipette } = priceParts(value, digits);
+  const direction = flash?.direction ?? "none";
+  return (
+    <span class="px">
+      <span class="visually-hidden">{value.toFixed(digits)}</span>
+      <span class="big" aria-hidden="true">
+        {big}
+      </span>
+      {/* A new key restarts the fade on every tick. */}
+      <span key={`${direction}-${flash?.changedAt}`} class={direction === "none" ? "moving" : `moving ${direction}`} aria-hidden="true">
+        {pips && <span class="pips">{pips}</span>}
+        {pipette && <span class="pipette">{pipette}</span>}
+      </span>
+    </span>
+  );
+}
+
+/** Each feed's flash, carried from snapshot to snapshot. */
+function useFlashes(feeds: FeedSnapshot[] | undefined, time: number): ReadonlyMap<string, Flash> {
+  const previous = useRef<ReadonlyMap<string, Flash>>(new Map());
+  return useMemo(() => {
+    const next = new Map<string, Flash>();
+    for (const feed of feeds ?? []) next.set(feed.feed, nextFlash(previous.current.get(feed.feed), feed.latest?.bid, time));
+    previous.current = next;
+    return next;
+  }, [feeds, time]);
 }

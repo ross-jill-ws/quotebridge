@@ -1,8 +1,8 @@
 // The Feeds view model: what each feed row shows (formatted quote cells and warnings).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FeedSnapshot } from "../src/server/bridge/index.js";
-import { describeFeed, sortFeeds } from "../src/dashboard/feeds/feed-row.js";
+import type { FeedSnapshot, TerminalPresence } from "../src/server/bridge/index.js";
+import { describeFeed, groupFeeds, nextFlash, priceParts, sortFeeds } from "../src/dashboard/feeds/feed-row.js";
 
 const NOW = 1_800_000_000_000;
 
@@ -121,4 +121,103 @@ test("feeds are listed by symbol, then broker, then terminal, and keep their pla
     sortFeeds(feeds).map((f) => f.feed),
     ["d", "a", "c", "b"],
   );
+});
+
+test("prices are set like a dealing ticket: 3- and 5-digit symbols raise the last digit as the pipette after two pips", () => {
+  assert.deepEqual(priceParts(1.08421, 5), { big: "1.08", pips: "42", pipette: "1" });
+  assert.deepEqual(priceParts(151.832, 3), { big: "151.", pips: "83", pipette: "2" });
+  assert.deepEqual(priceParts(0.6543, 5), { big: "0.65", pips: "43", pipette: "0" }, "trailing zeros are kept");
+});
+
+test("2- and 4-digit symbols show their last two digits as pips, with no pipette", () => {
+  assert.deepEqual(priceParts(2651.37, 2), { big: "2651.", pips: "37", pipette: "" });
+  assert.deepEqual(priceParts(1.0842, 4), { big: "1.08", pips: "42", pipette: "" });
+});
+
+test("other digit counts show the plain price", () => {
+  assert.deepEqual(priceParts(12345, 0), { big: "12345", pips: "", pipette: "" });
+  assert.deepEqual(priceParts(42.5, 1), { big: "42.5", pips: "", pipette: "" });
+  assert.deepEqual(priceParts(0.123456, 6), { big: "0.123456", pips: "", pipette: "" });
+});
+
+test("a feed seen for the first time does not flash", () => {
+  assert.deepEqual(nextFlash(undefined, 1.08421, NOW), { bid: 1.08421, direction: "none", changedAt: NOW });
+});
+
+test("a higher bid flashes up and a lower one down, from the time it changed", () => {
+  const up = nextFlash({ bid: 1.08421, direction: "none", changedAt: NOW - 5000 }, 1.08425, NOW);
+  assert.deepEqual(up, { bid: 1.08425, direction: "up", changedAt: NOW });
+  const down = nextFlash(up, 1.0841, NOW + 300);
+  assert.deepEqual(down, { bid: 1.0841, direction: "down", changedAt: NOW + 300 });
+});
+
+test("an unchanged bid keeps the last flash, so it is not started again", () => {
+  const up = { bid: 1.08425, direction: "up" as const, changedAt: NOW };
+  assert.deepEqual(nextFlash(up, 1.08425, NOW + 900), up);
+});
+
+test("a feed that loses its quote stops flashing; its next quote does not flash", () => {
+  const lost = nextFlash({ bid: 1.08425, direction: "up", changedAt: NOW }, undefined, NOW + 100);
+  assert.deepEqual(lost, { bid: undefined, direction: "none", changedAt: NOW + 100 });
+  assert.equal(nextFlash(lost, 1.0843, NOW + 200).direction, "none");
+});
+
+function presence(terminalId: string, overrides: Partial<TerminalPresence> = {}): TerminalPresence {
+  return { terminalId, lastHello: NOW - 1000, eaVersion: "1.08", ...overrides };
+}
+
+test("feeds are grouped by terminal, each group named by its terminal and listing its feeds by symbol", () => {
+  const view = groupFeeds(
+    {
+      feeds: [
+        feed({ feed: "e-usdjpy", terminal: "mt4-e", broker: "Easy", symbol: "USDJPY" }),
+        feed({ feed: "c-gold", terminal: "mt4-c", broker: "CMC", symbol: "GOLD" }),
+        feed({ feed: "e-eurusd", terminal: "mt4-e", broker: "Easy", symbol: "EURUSD" }),
+        feed({ feed: "c-audusd", terminal: "mt4-c", broker: "CMC", symbol: "AUDUSD.a" }),
+      ],
+      terminals: [presence("mt4-c"), presence("mt4-e")],
+    },
+    new Map([
+      ["mt4-c", "CMC Markets MetaTrader 4"],
+      ["mt4-e", "MT4 at easy-forex"],
+    ]),
+    NOW,
+  );
+  assert.deepEqual(
+    view.groups.map((g) => [g.name, g.terminal, g.feeds.map((f) => f.symbol)]),
+    [
+      ["CMC Markets MetaTrader 4", "mt4-c", ["AUDUSD.a", "GOLD"]],
+      ["MT4 at easy-forex", "mt4-e", ["EURUSD", "USDJPY"]],
+    ],
+  );
+});
+
+test("a terminal the app does not manage is named by its broker", () => {
+  const view = groupFeeds({ feeds: [feed({ terminal: "mt4-main", broker: "Demo-Broker" })], terminals: [presence("mt4-main")] }, new Map(), NOW);
+  assert.equal(view.groups[0].name, "Demo-Broker");
+});
+
+test("a group's head shows the terminal's EA version while connected, and when it was last heard once offline", () => {
+  const head = (feeds: FeedSnapshot[], p: TerminalPresence) => groupFeeds({ feeds, terminals: [p] }, new Map(), NOW).groups[0].state;
+  assert.deepEqual(head([feed()], presence("mt4-0123456789ab")), { text: "EA 1.08 connected", online: true });
+  assert.deepEqual(head([feed()], presence("mt4-0123456789ab", { eaVersion: null })), { text: "EA connected", online: true });
+  const offline = [feed({ online: false, lastSeen: NOW - 2 * 3_600_000 }), feed({ feed: "x", symbol: "GOLD", online: false, lastSeen: NOW - 3 * 3_600_000 })];
+  assert.deepEqual(head(offline, presence("mt4-0123456789ab", { lastHello: NOW - 4 * 3_600_000 })), { text: "Offline, last heard 2 h ago", online: false });
+});
+
+test("the status sentence counts feeds and terminals, and feeds with warnings as needing attention", () => {
+  const status = (feeds: FeedSnapshot[]) => {
+    const { summary, attention } = groupFeeds({ feeds, terminals: [] }, new Map(), NOW);
+    return [summary, attention];
+  };
+  assert.deepEqual(status([feed()]), ["1 feed from 1 terminal.", ""]);
+  assert.deepEqual(
+    status([
+      feed({ feed: "a", terminal: "mt4-1" }),
+      feed({ feed: "b", terminal: "mt4-1", stale: true }),
+      feed({ feed: "c", terminal: "mt4-2", online: false }),
+    ]),
+    ["3 feeds from 2 terminals.", "1 needs attention."],
+  );
+  assert.deepEqual(status([feed({ feed: "a", dropped: 2 }), feed({ feed: "b", instances: 2 })]), ["2 feeds from 1 terminal.", "2 need attention."]);
 });

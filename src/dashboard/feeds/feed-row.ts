@@ -1,5 +1,5 @@
 // What one row of the Feeds view shows: formatted quote cells and warnings, from a feed snapshot.
-import type { FeedSnapshot } from "../../server/bridge/index.js";
+import type { BridgeSnapshot, FeedSnapshot, TerminalPresence } from "../../server/bridge/index.js";
 import { count, duration } from "../format.js";
 
 export type FeedWarning = { kind: "no-quote" | "stale" | "dropped" | "duplicate"; text: string };
@@ -71,6 +71,79 @@ function warnings(feed: FeedSnapshot, snapshotTime: number): FeedWarning[] {
     list.push({ kind: "dropped", text: `${count(feed.dropped)} ${feed.dropped === 1 ? "sample" : "samples"} dropped` });
   }
   return list;
+}
+
+/** A price as a dealing ticket sets it: the big figure small, the pips large, the pipette raised. */
+export type PriceParts = { big: string; pips: string; pipette: string };
+
+/**
+ * With 3 or 5 digits the last digit is the pipette and the two before it the pips; with 2 or 4 digits
+ * the last two digits are the pips. Other digit counts are the plain price (all in `big`).
+ */
+export function priceParts(price: number, digits: number): PriceParts {
+  const text = price.toFixed(digits);
+  if (digits === 3 || digits === 5) return { big: text.slice(0, -3), pips: text.slice(-3, -1), pipette: text.slice(-1) };
+  if (digits === 2 || digits === 4) return { big: text.slice(0, -2), pips: text.slice(-2), pipette: "" };
+  return { big: text, pips: "", pipette: "" };
+}
+
+/** Which way a feed's pips flash: the direction of the last bid change, and when it changed (restarts the fade). */
+export type Flash = { bid: number | undefined; direction: "up" | "down" | "none"; changedAt: number };
+
+/** The flash after a new snapshot of the feed's bid; the same object while the bid stays the same. */
+export function nextFlash(previous: Flash | undefined, bid: number | undefined, now: number): Flash {
+  if (previous && previous.bid === bid) return previous;
+  if (previous?.bid === undefined || bid === undefined) return { bid, direction: "none", changedAt: now };
+  return { bid, direction: bid > previous.bid ? "up" : "down", changedAt: now };
+}
+
+/** One terminal's feeds, with the terminal's state for the group's head. */
+export type FeedGroup = {
+  terminal: string;
+  /** The terminal's name from the Terminals view, or its broker when the app does not manage it. */
+  name: string;
+  /** "EA 1.08 connected", or "Offline, last heard 2 h ago". */
+  state: { text: string; online: boolean };
+  /** By symbol. */
+  feeds: FeedSnapshot[];
+};
+
+export type FeedGroups = {
+  groups: FeedGroup[];
+  /** "6 feeds from 2 terminals." */
+  summary: string;
+  /** "1 needs attention.": feeds with warnings; empty when none. */
+  attention: string;
+};
+
+/** The Feeds view by terminal: `names` maps Terminal IDs to the names the Terminals view shows. */
+export function groupFeeds(snapshot: Pick<BridgeSnapshot, "feeds" | "terminals">, names: ReadonlyMap<string, string>, snapshotTime: number): FeedGroups {
+  const byTerminal = new Map<string, FeedSnapshot[]>();
+  for (const feed of sortFeeds(snapshot.feeds)) {
+    const list = byTerminal.get(feed.terminal) ?? [];
+    list.push(feed);
+    byTerminal.set(feed.terminal, list);
+  }
+  const presence = new Map(snapshot.terminals.map((p) => [p.terminalId, p]));
+  const groups = [...byTerminal].map(([terminal, feeds]): FeedGroup => {
+    const brokers = [...new Set(feeds.map((f) => f.broker))].join(", ");
+    return { terminal, name: names.get(terminal) ?? brokers, state: terminalState(feeds, presence.get(terminal), snapshotTime), feeds };
+  });
+  groups.sort((a, b) => a.name.localeCompare(b.name) || (a.terminal < b.terminal ? -1 : 1));
+
+  const feeds = snapshot.feeds.length;
+  const warned = snapshot.feeds.filter((f) => warnings(f, snapshotTime).length > 0).length;
+  return {
+    groups,
+    summary: `${feeds} ${feeds === 1 ? "feed" : "feeds"} from ${groups.length} ${groups.length === 1 ? "terminal" : "terminals"}.`,
+    attention: warned === 0 ? "" : `${warned} ${warned === 1 ? "needs" : "need"} attention.`,
+  };
+}
+
+function terminalState(feeds: FeedSnapshot[], presence: TerminalPresence | undefined, snapshotTime: number): FeedGroup["state"] {
+  if (feeds.some((f) => f.online)) return { text: presence?.eaVersion ? `EA ${presence.eaVersion} connected` : "EA connected", online: true };
+  const lastHeard = Math.max(...feeds.map((f) => f.lastSeen));
+  return { text: `Offline, last heard ${duration(snapshotTime - lastHeard)} ago`, online: false };
 }
 
 /** Symbol, then broker, then terminal: a feed keeps its place when it goes offline or comes back. */
