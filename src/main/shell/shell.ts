@@ -6,6 +6,14 @@ import type { Settings, Theme } from "../../shared/settings-store.js";
 import { APP_NAME } from "../../shared/app-identity.js";
 import { HIDDEN_ARG } from "./environment.js";
 
+/** The title bar overlay takes the rail colour (dev/design/visual-design.md), with the caption symbols in rail ink. */
+export const TITLE_BAR_COLOURS = {
+  light: { color: "#172033", symbolColor: "#b9c3d3" },
+  dark: { color: "#08101d", symbolColor: "#8c99ae" },
+} as const;
+
+export type TitleBarColours = { color: string; symbolColor: string };
+
 export const CLOSE_NOTIFICATION_BODY = "The app is still running in the tray, so your quotes keep flowing. To stop it, choose Quit in the tray menu.";
 
 export interface ShellWindow {
@@ -15,6 +23,8 @@ export interface ShellWindow {
   restore(): void;
   isMinimized(): boolean;
   loadURL(url: string): void;
+  /** The hidden title bar's overlay (Electron `setTitleBarOverlay`). */
+  setTitleBarColours(colours: TitleBarColours): void;
 }
 
 export interface ShellTray {
@@ -47,6 +57,8 @@ export type ShellPorts = {
   exit(code: number): void;
   /** Electron's own colours (dialogs, title bar): `nativeTheme.themeSource`. */
   setTheme(theme: Theme): void;
+  /** Whether the colours in effect are dark (`nativeTheme.shouldUseDarkColors`); read only while the theme is System. */
+  systemUsesDarkColours(): boolean;
 };
 
 export type ShellOptions = {
@@ -132,12 +144,24 @@ export class Shell {
     }
   }
 
+  /** Windows switched between light and dark (`nativeTheme` updated): the System theme follows it. */
+  systemThemeChanged() {
+    this.applyTitleBar();
+  }
+
+  private applyTitleBar() {
+    const { theme } = this.settings;
+    const dark = theme === "dark" || (theme === "system" && this.ports.systemUsesDarkColours());
+    this.ports.window.setTitleBarColours(dark ? TITLE_BAR_COLOURS.dark : TITLE_BAR_COLOURS.light);
+  }
+
   /** Settings at boot and every time the server saved a change. */
   private applySettings(settings: Settings) {
     // The server binds its ports at start: new ones take a restart (the Settings view's Change…).
     const portsChanged = settings.ports.ea !== this.settings.ports.ea || settings.ports.http !== this.settings.ports.http;
     this.settings = structuredClone(settings);
     this.ports.setTheme(settings.theme);
+    this.applyTitleBar();
     if (portsChanged) void this.ports.supervisor.restart();
     if (settings.firstCloseNotificationShown) this.closeNotificationShown = true;
     this.ports.tray.setStartWithWindows(settings.startWithWindows);

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { aboutText, APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
-import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, type ShellPorts } from "./shell/index.js";
+import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, TITLE_BAR_COLOURS, type ShellPorts } from "./shell/index.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 
 const devRun = devRunControls(app.isPackaged, process.env);
@@ -18,10 +18,14 @@ const PRELOAD = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const PICK_FOLDER_CHANNEL = "quotebridge:pick-folder";
 const ABOUT_CHANNEL = "quotebridge:about";
 const OPEN_DATA_FOLDER_CHANNEL = "quotebridge:open-data-folder";
+/** The title bar overlay's height; the dashboard reserves it with the titlebar-area environment variables. */
+const TITLE_BAR_HEIGHT = 32;
+/** Space between the title bar and the starting page's text. */
+const STARTING_PAGE_MARGIN = 32;
 /** Windows cuts tray tooltips at 127 characters. */
 const TOOLTIP_MAX = 127;
 const STARTING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
-  `<!doctype html><title>${APP_NAME}</title><body style="font-family:Segoe UI,sans-serif;margin:2rem;color:#444">Starting ${APP_NAME}…</body>`,
+  `<!doctype html><title>${APP_NAME}</title><body style="font-family:Segoe UI,sans-serif;margin:0;padding:${TITLE_BAR_HEIGHT + STARTING_PAGE_MARGIN}px 2rem;color:#444;app-region:drag">Starting ${APP_NAME}…</body>`,
 )}`;
 
 const overrides = readDevOverrides(process.env);
@@ -77,6 +81,10 @@ async function boot() {
     height: 800,
     show: false,
     title: APP_NAME,
+    // Hidden title bar: the dashboard draws the rail colour up into it and Windows draws the caption buttons over it.
+    // The shell sets the overlay's colours from the theme before the window first shows.
+    titleBarStyle: "hidden",
+    titleBarOverlay: { ...TITLE_BAR_COLOURS.light, height: TITLE_BAR_HEIGHT },
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: PRELOAD },
   });
   // The dashboard's Add folder (ADR 2: Electron-only, with a typed-path fallback in the page).
@@ -139,6 +147,7 @@ async function boot() {
       restore: () => window.restore(),
       isMinimized: () => window.isMinimized(),
       loadURL: (url) => void window.loadURL(url).catch((e) => console.error(`[QuoteBridge] window load failed: ${e.message}`)),
+      setTitleBarColours: (colours) => window.setTitleBarOverlay({ ...colours, height: TITLE_BAR_HEIGHT }),
     },
     tray: {
       setWarning: (message) => {
@@ -171,10 +180,12 @@ async function boot() {
     setTheme: (theme) => {
       nativeTheme.themeSource = theme;
     },
+    systemUsesDarkColours: () => nativeTheme.shouldUseDarkColors,
   };
   const shell = new Shell(ports, { settings, argv: process.argv });
 
   tray.on("click", () => shell.openFromTray());
+  nativeTheme.on("updated", () => shell.systemThemeChanged());
   window.on("close", (event) => {
     if (shell.closeRequested() === "hide") event.preventDefault();
   });

@@ -47,7 +47,9 @@ class FakeSupervisor {
 
 function setup({ settings = AFTER_SETUP, argv = [] as string[], packaged = true } = {}) {
   const log: string[] = [];
-  const window = { visible: false, minimized: false, url: null as string | null };
+  const window = { visible: false, minimized: false, url: null as string | null, titleBar: null as { color: string; symbolColor: string } | null };
+  /** Windows' own colour mode, which the System theme follows. */
+  const system = { dark: false };
   const tray = { warning: null as string | null, startWithWindows: null as boolean | null };
   const notifications: { title: string; body: string }[] = [];
   const loginItems: LoginItem[] = [];
@@ -62,6 +64,7 @@ function setup({ settings = AFTER_SETUP, argv = [] as string[], packaged = true 
       restore: () => void ((window.minimized = false), log.push("restore")),
       isMinimized: () => window.minimized,
       loadURL: (url) => void (window.url = url),
+      setTitleBarColours: (colours) => void (window.titleBar = colours),
     },
     tray: {
       setWarning: (message) => void (tray.warning = message),
@@ -72,9 +75,10 @@ function setup({ settings = AFTER_SETUP, argv = [] as string[], packaged = true 
     setLoginItem: packaged ? (item) => void loginItems.push(item) : null,
     exit: (code) => void exits.push(code),
     setTheme: (theme) => void themes.push(theme),
+    systemUsesDarkColours: () => system.dark,
   };
   const shell = new Shell(ports, { settings, argv });
-  return { shell, window, tray, notifications, loginItems, exits, supervisor, log, themes };
+  return { shell, window, tray, notifications, loginItems, exits, supervisor, log, themes, system };
 }
 
 test("a normal start shows the window and starts the server; a login start stays hidden in the tray", () => {
@@ -284,6 +288,30 @@ test("the theme reaches Electron at start and whenever the server saved a new on
   assert.deepEqual(themes, ["dark"]);
   supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "light" } });
   assert.deepEqual(themes, ["dark", "light"]);
+});
+
+test("the title bar takes the rail colour of the theme at start, after a saved change and when Windows switches", () => {
+  const LIGHT = { color: "#172033", symbolColor: "#b9c3d3" };
+  const DARK = { color: "#08101d", symbolColor: "#8c99ae" };
+  const { shell, supervisor, window, system } = setup({ settings: { ...AFTER_SETUP, theme: "dark" } });
+  shell.start();
+  assert.deepEqual(window.titleBar, DARK);
+
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "light" } });
+  assert.deepEqual(window.titleBar, LIGHT);
+
+  // System follows Windows, at the saved change and whenever Windows switches.
+  system.dark = true;
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "system" } });
+  assert.deepEqual(window.titleBar, DARK);
+  system.dark = false;
+  shell.systemThemeChanged();
+  assert.deepEqual(window.titleBar, LIGHT);
+
+  // A forced theme ignores Windows switching.
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "dark" } });
+  shell.systemThemeChanged();
+  assert.deepEqual(window.titleBar, DARK);
 });
 
 test("a saved port change restarts the server through the stop path, so it binds the new ports; other changes do not", () => {

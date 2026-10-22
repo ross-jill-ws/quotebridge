@@ -38,6 +38,11 @@
   --rail: light-dark(#172033, #08101d);
   --rail-ink: light-dark(#b9c3d3, #8c99ae);
   --rail-ink-strong: #ffffff;
+  --rail-line: rgb(255 255 255 / 8%);
+  /* The rail is dark in both themes: its status colours are the dark theme's. */
+  --rail-live: #3cc98e;
+  --rail-caution: #f0b14a;
+  --rail-fault: #ff8a80;
 
   --uptick: light-dark(#0f7b53, #3cc98e);
   --downtick: light-dark(#c2412d, #ff7d69);
@@ -137,69 +142,233 @@ input[type="checkbox"] {
   color: var(--fault);
 }
 
-/* Header */
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 32px 0 20px;
-  height: 52px;
-  background: var(--rail);
-  color: var(--rail-ink);
-  position: sticky;
-  top: 0;
-  z-index: 1;
+/* Shell: a title bar band and the left rail in the rail colour, beside the current view. */
+.app {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
 }
 
-.brand {
-  font-size: 16px;
+/* The app window hides its title bar; Windows draws the caption buttons over this band (titleBarOverlay). */
+.title-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  height: env(titlebar-area-height, 0px);
+  /* The band spans the window in the rail colour; its text keeps clear of the caption buttons. */
+  padding-left: calc(env(titlebar-area-x, 0px) + 16px);
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--rail);
+  color: var(--rail-ink);
+  font-size: 12px;
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0 14px 12px;
+  background: var(--rail);
+  color: var(--rail-ink);
+}
+
+.wordmark {
+  padding: 4px 12px 22px 6px;
+  color: var(--rail-ink-strong);
+  font-size: 19px;
   font-weight: 750;
   font-stretch: 125%;
   letter-spacing: -0.01em;
-  color: var(--rail-ink-strong);
+  line-height: 1.05;
 }
 
-.tabs {
+.wordmark small {
+  display: block;
+  margin-top: 3px;
+  color: var(--rail-ink);
+  font-size: 12px;
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0;
+}
+
+.wordmark-short {
+  display: none;
+}
+
+.rail-nav {
   display: flex;
-  gap: 4px;
-  height: 100%;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.tab {
+.rail-item {
+  position: relative;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-small) 0 0 var(--radius-small);
   color: var(--rail-ink);
   font-weight: 500;
   text-decoration: none;
-  border-bottom: 2px solid transparent;
 }
 
-.tab:hover {
+.rail-item svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
+.rail-item:hover {
   color: var(--rail-ink-strong);
 }
 
-.tab[aria-current="page"] {
-  color: var(--rail-ink-strong);
-  border-bottom-color: var(--rail-ink-strong);
-  font-weight: 650;
-}
-
-.app-header :focus-visible {
+.rail :focus-visible {
   outline-color: var(--rail-ink-strong);
   outline-offset: -2px;
 }
 
-.connection {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
+/* The current view joins the page: its item takes the page's ground and runs into it, with curved corners. */
+.rail-item[aria-current="page"] {
+  background: var(--ground);
+  color: var(--ink);
+  font-weight: 650;
 }
 
-.connection .dot {
+.rail-item[aria-current="page"]:focus-visible {
+  outline-color: var(--ink);
+}
+
+.rail-item[aria-current="page"]::before,
+.rail-item[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.rail-item[aria-current="page"]::before {
+  top: -14px;
+  border-bottom-right-radius: var(--radius-small);
+  box-shadow: 4px 4px 0 4px var(--ground);
+}
+
+.rail-item[aria-current="page"]::after {
+  bottom: -14px;
+  border-top-right-radius: var(--radius-small);
+  box-shadow: 4px -4px 0 4px var(--ground);
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  /* Clears the current item's curved corner (14px) above the status rule. */
+  gap: 18px;
+  padding-top: 18px;
+}
+
+.bridge-status {
+  display: flex;
+  flex-direction: column;
+  margin-right: 12px;
+  padding: 12px 14px 0 6px;
+  border-top: 1px solid var(--rail-line);
+  font-size: 12px;
+}
+
+.bridge-status b {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--rail-ink-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
   background: var(--rail-ink);
+}
+
+.bridge-status.live .pulse {
+  background: var(--rail-live);
+  animation: pulse 2.4s infinite;
+}
+
+.bridge-status.warn .pulse {
+  background: var(--rail-caution);
+}
+
+.bridge-status.bad .pulse {
+  background: var(--rail-fault);
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--rail-live) 45%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* A narrow window: the rail collapses to icons; labels stay for screen readers and as tooltips. */
+@media (max-width: 960px) {
+  .app {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .rail {
+    padding-left: 8px;
+  }
+
+  .wordmark {
+    padding: 4px 8px 22px 6px;
+    font-size: 16px;
+  }
+
+  .wordmark-full {
+    display: none;
+  }
+
+  .wordmark-short {
+    display: inline;
+  }
+
+  .rail-item {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .rail .rail-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .bridge-status {
+    align-items: center;
+    margin-right: 8px;
+    padding: 12px 0 0;
+  }
 }
 
 /* Status dots */
@@ -212,7 +381,6 @@ input[type="checkbox"] {
   flex: none;
 }
 
-.connection.good > .dot,
 .good > .dot,
 .dot.good {
   background: var(--uptick);
@@ -236,10 +404,22 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 16px 32px 0;
   padding: 8px 12px;
   border-radius: var(--radius-small);
   font-size: 13px;
+}
+
+/* Disconnected and Reconnecting: above the view, and still in sight while it scrolls. */
+.connection-notice {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+}
+
+.connection-notice strong {
+  font-weight: 650;
 }
 
 .notice.warn {
@@ -346,6 +526,8 @@ input[type="checkbox"]:focus-visible {
 
 /* Views */
 .content {
+  min-height: 0;
+  overflow: auto;
   padding: 26px 32px 32px;
 }
 
