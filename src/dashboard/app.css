@@ -824,6 +824,7 @@ input[type="checkbox"]:focus-visible {
 
 .flag {
   display: inline-block;
+  white-space: nowrap;
   margin: 1px 4px 1px 0;
   padding: 1px 7px;
   border-radius: 4px;
@@ -884,12 +885,12 @@ input[type="checkbox"]:focus-visible {
 }
 
 /* Found but not managed: an outline waiting to be filled in. */
-.term.found {
+.term.shape-found {
   border-style: dashed;
   background: transparent;
 }
 
-.term.attention {
+.term.shape-attention {
   border-color: var(--fault);
 }
 

@@ -157,7 +157,7 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
   const folder = found ? (t.installationFolder ?? t.dataFolder) : (t.dataFolder ?? t.installationFolder);
 
   return (
-    <article class={`term ${card.shape}`} aria-label={t.name}>
+    <article class={`term shape-${card.shape}`} aria-label={t.name}>
       <header class="term-head">
         <h3>{t.name}</h3>
         <div class="facts">
@@ -167,8 +167,8 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
               {card.connection.text}
             </span>
           )}
-          {/* A found terminal's "Not installed" goes without saying. */}
-          {(!found || t.operation || !t.supported) && <span class={`state ${card.state.tone}`}>{card.state.text}</span>}
+          {/* A found terminal's "Not installed" goes without saying; an unsupported one's reason is shown below. */}
+          {(!found || t.operation) && <span class={`state ${card.state.tone}`}>{card.state.text}</span>}
           {found && folder && <span class="mono path">{folder}</span>}
         </div>
         <div class="term-actions">
