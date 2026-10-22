@@ -216,3 +216,20 @@ test("each feed keeps at most 7 days of M1 candles, oldest dropped, with many fe
     assert.equal(w1[0].open, 1 + n + 25 / 1e6, chart.symbol);
   }
 });
+
+test("a replayed or late quote changes no candle and no ask, even from another chart of the feed", { timeout: 10000 }, async (t) => {
+  const { ea, candles } = await start(t);
+  const chart = await ea({ session: "chart-first" });
+  await send(chart, [bid(MONDAY, 1.1), bid(MONDAY + MINUTE + 10, 1.2), { quoteTime: MONDAY + MINUTE + 20, bid: 1.15, ask: 1.1502 }]);
+
+  // The same EA back under a new session replays its buffer; then a quote older than the last arrives.
+  const again = await ea({ session: "chart-second" });
+  await send(again, [bid(MONDAY, 1.1), bid(MONDAY + MINUTE + 10, 1.2), bid(MONDAY + MINUTE + 15, 1.3)]);
+
+  const m1 = await candles(feedOf(chart));
+  assert.deepEqual(ohlc(m1), [
+    [MONDAY, 1.1, 1.1, 1.1, 1.1],
+    [MONDAY + MINUTE, 1.2, 1.2, 1.15, 1.15],
+  ]);
+  assert.equal(m1.ask, 1.1502);
+});

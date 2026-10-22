@@ -16,7 +16,7 @@ const PERIOD_SECONDS: Record<Exclude<Period, "W1" | "MN1">, number> = { M1: 60, 
  * The start of the period bucket holding `time` (seconds of broker server time, read as if it were UTC):
  * W1 starts on Monday 00:00, MN1 on the 1st of the calendar month.
  */
-function bucket(time: number, period: Period) {
+function bucketStart(time: number, period: Period) {
   if (period === "W1") {
     const day = time - (time % DAY);
     // 1 January 1970 was a Thursday: three days after a Monday.
@@ -29,11 +29,25 @@ function bucket(time: number, period: Period) {
   return time - (time % PERIOD_SECONDS[period]);
 }
 
+/** `time` is the bucket's start in seconds of broker server time. */
 export type Candle = { time: number; open: number; high: number; low: number; close: number };
 
 type M1Candle = Candle & { samples: number };
 
-type FeedCandles = { m1: M1Candle[]; ask?: number };
+/** `lastQuoteTime`: the newest quote time folded in; older quotes (replays, late arrivals) are left out. */
+type FeedCandles = { m1: M1Candle[]; ask?: number; lastQuoteTime: number };
+
+export type CandleBuilderOptions = {
+  /** Clock in epoch milliseconds; injectable for tests. */
+  now?: () => number;
+};
+
+/** Takes a later part of the same bucket into `candle`. */
+function extend(candle: Candle, high: number, low: number, close: number) {
+  candle.high = Math.max(candle.high, high);
+  candle.low = Math.min(candle.low, low);
+  candle.close = close;
+}
 
 export class CandleBuilder {
   private readonly feeds = new Map<string, FeedCandles>();
@@ -41,8 +55,8 @@ export class CandleBuilder {
   /** When this server began building candles, in epoch milliseconds. */
   readonly since: number;
 
-  constructor(bridge: BridgeServer, now: () => number = Date.now) {
-    this.since = now();
+  constructor(bridge: BridgeServer, options: CandleBuilderOptions = {}) {
+    this.since = (options.now ?? Date.now)();
     this.unsubscribe = bridge.onSamples((event) => this.handle(event));
   }
 
@@ -52,21 +66,20 @@ export class CandleBuilder {
       return;
     }
     let feed = this.feeds.get(event.feed);
-    if (!feed) this.feeds.set(event.feed, (feed = { m1: [] }));
-    for (const s of event.samples) {
-      const time = s.quoteTime - (s.quoteTime % 60);
+    if (!feed) this.feeds.set(event.feed, (feed = { m1: [], lastQuoteTime: 0 }));
+    for (const sample of event.samples) {
+      // A chart's replayed buffer (under a new session, or from another chart of the feed) or a late quote.
+      if (sample.quoteTime < feed.lastQuoteTime) continue;
+      feed.lastQuoteTime = sample.quoteTime;
+      feed.ask = sample.ask;
+      const time = bucketStart(sample.quoteTime, "M1");
       const last = feed.m1.at(-1);
-      feed.ask = s.ask;
-      // A quote older than the forming minute (rare clock steps) cannot reopen a closed candle.
-      if (last && time < last.time) continue;
       if (last?.time === time) {
-        last.high = Math.max(last.high, s.bid);
-        last.low = Math.min(last.low, s.bid);
-        last.close = s.bid;
+        extend(last, sample.bid, sample.bid, sample.bid);
         last.samples++;
         continue;
       }
-      feed.m1.push({ time, open: s.bid, high: s.bid, low: s.bid, close: s.bid, samples: 1 });
+      feed.m1.push({ time, open: sample.bid, high: sample.bid, low: sample.bid, close: sample.bid, samples: 1 });
       if (feed.m1.length > MAX_M1_CANDLES) feed.m1.shift();
     }
   }
@@ -74,14 +87,11 @@ export class CandleBuilder {
   /** A feed's candles of one period, oldest first; the latest `limit` when given. */
   candles(feed: string, period: Period, limit?: number): Candle[] {
     const out: Candle[] = [];
-    for (const k of this.feeds.get(feed)?.m1 ?? []) {
-      const time = bucket(k.time, period);
+    for (const m1 of this.feeds.get(feed)?.m1 ?? []) {
+      const time = bucketStart(m1.time, period);
       const last = out.at(-1);
-      if (last?.time === time) {
-        last.high = Math.max(last.high, k.high);
-        last.low = Math.min(last.low, k.low);
-        last.close = k.close;
-      } else out.push({ time, open: k.open, high: k.high, low: k.low, close: k.close });
+      if (last?.time === time) extend(last, m1.high, m1.low, m1.close);
+      else out.push({ time, open: m1.open, high: m1.high, low: m1.low, close: m1.close });
     }
     return limit === undefined ? out : out.slice(-limit);
   }

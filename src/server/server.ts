@@ -37,7 +37,7 @@ export type RunningServer = {
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
   const bridge = new BridgeServer({ now: config.now });
   await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
-  const candles = new CandleBuilder(bridge, config.now);
+  const candles = new CandleBuilder(bridge, { now: config.now });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);

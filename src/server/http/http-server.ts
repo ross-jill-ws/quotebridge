@@ -140,7 +140,10 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     json(res, 405, { error: "Method not allowed" });
   }
 
-  /** The Charts view's candles for one feed and period, with its latest ask: the latest `limit` (1–10,080), or all of them. */
+  /**
+   * The Charts view's candles for one feed and period, with its latest ask. Candle times are seconds of broker
+   * server time; `since` is this server's start in epoch milliseconds. The latest `limit` (1–10,080), or all of them.
+   */
   function handleCandles(url: URL, res: ServerResponse) {
     const feed = bridge.snapshot().feeds.find((f) => f.feed === url.searchParams.get("feed"));
     if (!feed) return json(res, 404, { error: "Unknown feed" });
