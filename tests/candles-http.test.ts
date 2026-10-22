@@ -10,7 +10,7 @@ const TOKEN = "window-token-0123456789";
 const MONDAY = 1792368000;
 const MINUTE = 60;
 
-type Candles = { feed: string; period: string; digits: number; since: number; ask: number | null; candles: { time: number; open: number; high: number; low: number; close: number }[] };
+type Candles = { feed: string; period: string; digits: number; since: number; ask: number | null; clockRule: unknown; candles: { time: number; open: number; high: number; low: number; close: number }[] };
 
 async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
   const cfg: ServerConfig = { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, ...overrides };
@@ -160,6 +160,9 @@ test("the answer says since when candles are built and the latest ask, and limit
   assert.equal(answer.since, 1_800_000_000_000);
   assert.equal(answer.digits, 3);
   assert.equal(answer.ask, 150.318);
+  // No live sample has shown the broker's offset yet: broker seconds are handed out as they are.
+  assert.equal(answer.clockRule, null);
+  assert.equal(answer.candles[0].time, MONDAY + MINUTE);
   assert.deepEqual(answer.candles.map((c) => c.close), [150.2, 150.3]);
   assert.deepEqual((await candles(feedOf(chart), "H1", 5)).candles.map((c) => c.close), [150.3]);
 });
@@ -199,7 +202,8 @@ test("a removed feed loses its candles; an EA that says hello again starts them 
 });
 
 test("each feed keeps at most 7 days of M1 candles, oldest dropped, with many feeds ticking", { timeout: 60000 }, async (t) => {
-  const { ea, candles } = await start(t);
+  // A server clock far from the quote times: no clock rule is inferred, so times are broker seconds as they are.
+  const { ea, candles } = await start(t, { now: new FakeClock().now });
   const charts = await Promise.all(["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCHF", "XAUUSD"].map((symbol) => ea({ symbol })));
   const minutes = 10080 + 25;
 

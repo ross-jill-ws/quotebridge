@@ -1,7 +1,9 @@
 // Feeds view: every feed the QuoteBridge EAs send, grouped by terminal, with its live quote and warnings.
 import { useMemo, useRef, useState } from "preact/hooks";
 import type { FeedSnapshot } from "../../server/bridge/index.js";
+import type { TimeShown } from "../../shared/settings-store.js";
 import { post } from "../api.js";
+import { clockLabel } from "../display-clock.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
 import { Price } from "../price.js";
@@ -13,9 +15,11 @@ type Props = {
   terminalNames: ReadonlyMap<string, string>;
   /** The Flash prices setting; reduced motion turns the flash off in CSS whatever it says. */
   flashPrices: boolean;
+  /** The clock quote times are shown in. */
+  timeShown: TimeShown;
 };
 
-export function FeedsView({ live, terminalNames, flashPrices }: Props) {
+export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props) {
   const now = useTicker(1000);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
@@ -80,7 +84,7 @@ export function FeedsView({ live, terminalNames, flashPrices }: Props) {
       ) : (
         <div class={`feed-groups${connected ? "" : " paused"}${flashPrices && connected ? " flashing" : ""}`}>
           {groups.map((group) => (
-            <FeedGroupView key={group.terminal} group={group} time={time} flashes={flashes} connected={connected} busy={busy} onRemove={remove} />
+            <FeedGroupView key={group.terminal} group={group} time={time} timeShown={timeShown} flashes={flashes} connected={connected} busy={busy} onRemove={remove} />
           ))}
         </div>
       )}
@@ -91,6 +95,7 @@ export function FeedsView({ live, terminalNames, flashPrices }: Props) {
 function FeedGroupView({
   group,
   time,
+  timeShown,
   flashes,
   connected,
   busy,
@@ -98,6 +103,7 @@ function FeedGroupView({
 }: {
   group: FeedGroup;
   time: number;
+  timeShown: TimeShown;
   flashes: ReadonlyMap<string, Flash>;
   connected: boolean;
   busy?: string;
@@ -124,7 +130,7 @@ function FeedGroupView({
               <th class="num spread-col" title="Spread in points">
                 Spread
               </th>
-              <th class="num time-col" title="Broker server time of the latest quote">
+              <th class="num time-col" title={`${clockLabel(timeShown)} of the latest quote`}>
                 Quote time
               </th>
               <th class="status-col">Status</th>
@@ -135,7 +141,7 @@ function FeedGroupView({
           </thead>
           <tbody>
             {group.feeds.map((feed) => {
-              const row = describeFeed(feed, time);
+              const row = describeFeed(feed, time, timeShown);
               const flash = feed.online ? flashes.get(feed.feed) : undefined;
               return (
                 <tr key={feed.feed} class={feed.online ? undefined : "offline"}>

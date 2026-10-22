@@ -163,9 +163,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   }
 
   /**
-   * The Charts view's candles for one feed and period, with its latest ask. Candle `time` is seconds of the broker
-   * clock and `utc` its UTC start (null while the clock rule is unknown); `since` is this server's start in epoch
-   * milliseconds. The latest `limit` (1–10,080), or all of them.
+   * The Charts view's candles for one feed and period, with its latest ask. Candle `time` is its start in UTC seconds
+   * (ADR 11); `clockRule` is the broker server's, null while unknown (times are then broker seconds as they are), and
+   * `since` is this server's start in epoch milliseconds. The latest `limit` (1–10,080), or all of them.
    */
   function handleCandles(url: URL, res: ServerResponse) {
     const feed = bridge.snapshot().feeds.find((f) => f.feed === url.searchParams.get("feed"));
@@ -178,7 +178,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return json(res, 400, { error: `Expected a limit from 1 to ${MAX_M1_CANDLES}` });
     }
     const candles = options.candles.candles(feed.feed, period as Period, limit);
-    json(res, 200, { feed: feed.feed, market: feed.market, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), candles });
+    json(res, 200, { feed: feed.feed, market: feed.market, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), clockRule: feed.clockRule, candles });
   }
 
   /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */

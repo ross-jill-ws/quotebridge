@@ -1,5 +1,7 @@
 // What one row of the Feeds view shows: formatted quote cells and warnings, from a feed snapshot.
 import type { BridgeSnapshot, FeedSnapshot, TerminalPresence } from "../../server/bridge/index.js";
+import type { TimeShown } from "../../shared/settings-store.js";
+import { browserOffsetMinutes, displaySeconds } from "../display-clock.js";
 import { count, duration } from "../format.js";
 
 export type FeedWarning = { kind: "no-quote" | "stale" | "dropped" | "duplicate"; text: string };
@@ -15,7 +17,7 @@ export type FeedRow = {
   ask: string;
   /** In points, as MetaTrader's Market Watch shows it. */
   spread: string;
-  /** The broker's server time of the quote (as sent by the EA, no time-zone conversion): "08:00:00". */
+  /** The quote's time on the clock Time shown chooses: "08:00:00". */
   quoteTime: string;
   /** Its date, "2027-01-15"; empty without a quote. */
   quoteDate: string;
@@ -42,10 +44,12 @@ export function timeframeLabel(minutes: number | null): string {
   return PERIOD_NAMES[minutes] ?? `M${minutes}`;
 }
 
-export function describeFeed(feed: FeedSnapshot, snapshotTime: number): FeedRow {
+/** `shown` is the Time shown setting; `localOffsetMinutes` this computer's offset from UTC (injectable for tests). */
+export function describeFeed(feed: FeedSnapshot, snapshotTime: number, shown: TimeShown = "broker", localOffsetMinutes = browserOffsetMinutes): FeedRow {
   const { latest, digits } = feed;
-  // MT4 quote times are the broker's server time in epoch seconds; read the fields as UTC so nothing shifts them.
-  const stamp = latest ? new Date(latest.quoteTime * 1000).toISOString() : "";
+  // Seconds on the display clock, read as UTC fields so nothing shifts them again.
+  const time = feed.quoteTimeUtc === null ? undefined : displaySeconds({ shown, rule: feed.clockRule, localOffsetMinutes }, feed.quoteTimeUtc / 1000);
+  const stamp = latest && time !== undefined ? new Date(time * 1000).toISOString() : "";
   return {
     status: feed.online ? "Online" : `Offline, last heard ${duration(snapshotTime - feed.lastSeen)} ago`,
     removable: !feed.online,
@@ -53,7 +57,7 @@ export function describeFeed(feed: FeedSnapshot, snapshotTime: number): FeedRow 
     bid: latest ? latest.bid.toFixed(digits) : NONE,
     ask: latest ? latest.ask.toFixed(digits) : NONE,
     spread: latest ? String(Math.round((latest.ask - latest.bid) * 10 ** digits)) : NONE,
-    quoteTime: latest ? stamp.slice(11, 19) : NONE,
+    quoteTime: stamp ? stamp.slice(11, 19) : NONE,
     quoteDate: stamp.slice(0, 10),
     warnings: warnings(feed, snapshotTime),
   };

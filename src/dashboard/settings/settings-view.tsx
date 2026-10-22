@@ -5,7 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
 import { BUNDLED_WORKS } from "../../shared/licences.js";
-import type { ChartColours, Theme } from "../../shared/settings-store.js";
+import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store.js";
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
@@ -13,6 +13,7 @@ import { parsePort, PORT_LABELS, portChange, portsNote, type PortRole } from "./
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
 const CHART_COLOUR_LABELS: Record<ChartColours, string> = { default: "Default", "green-on-black": "Green on black" };
+const TIME_SHOWN_LABELS: Record<TimeShown, string> = { broker: "Broker", local: "Local", utc: "UTC" };
 
 /** `onSaved` hands each saved change to the shell (the Feeds view's Flash prices, the rail's port). */
 export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: number; onSaved?: (settings: Settings) => void }) {
@@ -120,6 +121,27 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
                 onClick={() => settings.chartColours !== chartColours && change({ chartColours }).catch(() => {})}
               >
                 {CHART_COLOUR_LABELS[chartColours]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-label" id="time-shown-label">
+              Time shown
+            </span>
+            <span class="setting-hint">Broker is the broker server's clock, as MetaTrader shows it. Local is this computer's. Candles still break on the broker clock.</span>
+          </div>
+          <div class="segmented" role="radiogroup" aria-labelledby="time-shown-label">
+            {(Object.keys(TIME_SHOWN_LABELS) as TimeShown[]).map((timeShown) => (
+              <button
+                key={timeShown}
+                class="segment"
+                role="radio"
+                aria-checked={settings.timeShown === timeShown}
+                onClick={() => settings.timeShown !== timeShown && change({ timeShown }).catch(() => {})}
+              >
+                {TIME_SHOWN_LABELS[timeShown]}
               </button>
             ))}
           </div>

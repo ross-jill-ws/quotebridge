@@ -111,9 +111,9 @@ export function App() {
         {setupOpen ? (
           <SetupView terminals={terminals} onDone={finishSetup} />
         ) : view === "feeds" ? (
-          <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} />
+          <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "charts" ? (
-          <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} />
+          <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "settings" ? (
           <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} onSaved={setSettings} />
         ) : (

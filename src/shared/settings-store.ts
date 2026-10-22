@@ -28,6 +28,10 @@ export type Theme = (typeof THEMES)[number];
 export const CHART_COLOURS = ["default", "green-on-black"] as const;
 export type ChartColours = (typeof CHART_COLOURS)[number];
 
+/** The clock times are shown in: the broker server's (as MetaTrader shows them), this computer's, or UTC (ADR 11). */
+export const TIMES_SHOWN = ["broker", "local", "utc"] as const;
+export type TimeShown = (typeof TIMES_SHOWN)[number];
+
 export interface Settings {
   format: typeof SETTINGS_FORMAT;
   managedTerminals: ManagedTerminal[];
@@ -47,6 +51,8 @@ export interface Settings {
   flashPrices: boolean;
   /** The Charts view's colour scheme: the app's own colours, or MetaTrader's classic Green on black. */
   chartColours: ChartColours;
+  /** The clock the dashboard shows times in; candles still break on the broker clock. */
+  timeShown: TimeShown;
   firstCloseNotificationShown: boolean;
   /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
   setupCompleted: boolean;
@@ -63,6 +69,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   theme: "system",
   flashPrices: true,
   chartColours: "default",
+  timeShown: "broker",
   firstCloseNotificationShown: false,
   setupCompleted: false,
 });
@@ -139,6 +146,7 @@ function withDefaults(stored: unknown): Settings {
     theme: (THEMES as readonly unknown[]).includes(partial.theme) ? partial.theme! : defaults.theme,
     flashPrices: typeof partial.flashPrices === "boolean" ? partial.flashPrices : defaults.flashPrices,
     chartColours: (CHART_COLOURS as readonly unknown[]).includes(partial.chartColours) ? partial.chartColours! : defaults.chartColours,
+    timeShown: (TIMES_SHOWN as readonly unknown[]).includes(partial.timeShown) ? partial.timeShown! : defaults.timeShown,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };

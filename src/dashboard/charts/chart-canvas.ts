@@ -102,7 +102,7 @@ export class ChartCanvas {
     this.candles = candles;
     const n = old.length;
     const live =
-      n > 0 && (candles.length === n || candles.length === n + 1) && candles[n - 1].time === old[n - 1].time && (n < 2 || candles[n - 2] === old[n - 2]);
+      n > 0 && (candles.length === n || candles.length === n + 1) && candles[n - 1].time === old[n - 1].time && (n < 2 || sameCandle(candles[n - 2], old[n - 2]));
     this.changedFrom = live ? n - 1 : undefined;
     if (live) {
       for (let i = n - 1; i < candles.length; i++) this.main.update(this.point(candles[i]));
@@ -250,6 +250,11 @@ export class ChartCanvas {
     for (const { levels } of this.indicators.values()) for (const level of levels) level.applyOptions({ color: s.level });
     this.separators.colour = s.line;
   }
+}
+
+/** The same bar, though perhaps another object (display times are recomputed). */
+function sameCandle(a: Candle, b: Candle) {
+  return a === b || (a.time === b.time && a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close);
 }
 
 /** MetaTrader's period separators, as fine dashed lines at the first bar of each day (intraday periods only). */

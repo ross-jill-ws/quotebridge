@@ -181,3 +181,16 @@ test("a hand-edited Chart colours value that cannot work is read as its default"
   await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, chartColours: "green-on-black" }));
   assert.equal((await new SettingsStore(folder).read()).chartColours, "green-on-black");
 });
+
+test("times are shown in broker time by default; local and UTC are kept; a hand-edited value that cannot work is read as broker time", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  assert.equal((await store.read()).timeShown, "broker");
+
+  for (const timeShown of ["local", "utc", "broker"] as const) {
+    await store.update((s) => void (s.timeShown = timeShown));
+    assert.equal((await new SettingsStore(store.folder).read()).timeShown, timeShown);
+  }
+
+  await writeFile(join(store.folder, "settings.json"), JSON.stringify({ format: 1, timeShown: "Europe/London" }));
+  assert.equal((await new SettingsStore(store.folder).read()).timeShown, "broker");
+});

@@ -5,8 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { BridgeSnapshot, FeedSnapshot } from "../../server/bridge/index.js";
 import type { Candle } from "../../server/candles/index.js";
 import { PERIODS, type Period } from "../../shared/periods.js";
-import type { ChartColours } from "../../shared/settings-store.js";
+import type { ClockRule } from "../../shared/clock.js";
+import type { ChartColours, TimeShown } from "../../shared/settings-store.js";
 import { get } from "../api.js";
+import { browserOffsetMinutes, displayCandles } from "../display-clock.js";
 import { groupFeeds, type FeedGroup } from "../feeds/feed-row.js";
 import { duration } from "../format.js";
 import { Price } from "../price.js";
@@ -33,16 +35,19 @@ import { DEFAULT_INDICATORS, indicatorLabel, indicatorValues, nextColour, type I
 /** Per window (localStorage): the last symbol, period, chart type, Ask line and indicators. */
 const MEMORY_KEY = "quotebridge.chart";
 
-type CandlesAnswer = { feed: string; period: Period; digits: number; since: number; ask: number | null; candles: Candle[] };
+/** Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown. */
+type CandlesAnswer = { feed: string; period: Period; digits: number; since: number; ask: number | null; clockRule: ClockRule | null; candles: Candle[] };
 
 type Props = {
   live: Live;
   /** Terminal IDs to the names the Terminals view shows, for the symbol picker's groups. */
   terminalNames: ReadonlyMap<string, string>;
   chartColours: ChartColours;
+  /** The clock the time axis, day separators and legend follow; candles still break on the broker clock. */
+  timeShown: TimeShown;
 };
 
-export function ChartsView({ live, terminalNames, chartColours }: Props) {
+export function ChartsView({ live, terminalNames, chartColours, timeShown }: Props) {
   const [memory, setMemory] = useChartMemory();
   const snapshot = live.snapshot;
   // The "Candles since" note shows the date once the day has changed.
@@ -51,7 +56,14 @@ export function ChartsView({ live, terminalNames, chartColours }: Props) {
   const feed = chosenFeed(snapshot, memory.feed, groups);
   const group = groups.find((g) => g.terminal === feed?.terminal);
 
-  const data = useCandles(feed, memory.period, live);
+  const fetched = useCandles(feed, memory.period, live);
+  // Lightweight Charts has no time zones: it is given times shifted to the display clock (ADR 11).
+  const rule = fetched?.clockRule ?? feed?.clockRule ?? null;
+  const ruleKey = JSON.stringify(rule);
+  const data = useMemo(
+    () => fetched && { ...fetched, candles: displayCandles(fetched.candles, { shown: timeShown, rule, localOffsetMinutes: browserOffsetMinutes }) },
+    [fetched, timeShown, ruleKey],
+  );
   const mode = useColourMode();
   const scheme = chartScheme(chartColours, mode);
   const indicators = useMemo(() => drawnIndicators(memory.indicators, data?.candles ?? [], data?.digits ?? 5, scheme.series), [memory.indicators, data?.candles, data?.digits, scheme]);
@@ -306,6 +318,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, spe
         <div class="chart-legend">
           <div>
             <span class="title">{legend.title}</span>
+            {legend.time && <span class="time">{legend.time}</span>}
             {legend.ohlc.map((p) => (
               <span key={p.label} class="ohlc">
                 <b>{p.label}</b>
@@ -485,7 +498,7 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
   // Every snapshot is a new object: follow the quote only when it moved.
   useEffect(() => {
     if (!latest || !data || data.feed !== id || data.period !== period) return;
-    const next = followQuote(data.candles, period, latest);
+    const next = followQuote(data.candles, period, latest, feed?.clockRule ?? data.clockRule);
     if (next.candles !== data.candles || data.ask !== latest.ask) setData({ ...data, candles: next.candles as Candle[], ask: latest.ask });
     if (next.newBucket) setReload((n) => n + 1);
   }, [latest?.bid, latest?.ask, latest?.quoteTime]);

@@ -1,6 +1,7 @@
 // The Charts view's model (pure): the legend at the crosshair or the latest bar, the forming candle that
 // follows the live quote, day separators, what the view remembers, and since when it has candles.
 import type { Candle } from "../../server/candles/index.js";
+import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
 import { PALETTE_SIZE, type IndicatorSpec } from "./indicators.js";
 
@@ -22,6 +23,8 @@ export type LegendInput = {
 export type Legend = {
   /** "AUDUSD.a, H1", as MetaTrader titles a chart. */
   title: string;
+  /** The bar's time on the chart's clock: "2027-01-15 10:00", or the date alone for D1 and longer; empty without a bar. */
+  time: string;
   ohlc: { label: "O" | "H" | "L" | "C"; value: string }[];
   indicators: { id: string; label: string; colour: string; value: string }[];
 };
@@ -31,20 +34,27 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
   if (index < 0) index = candles.length - 1;
   const bar = candles[index];
   const price = (value: number | undefined, places: number) => (value === undefined ? NONE : value.toFixed(places));
+  const stamp = bar ? new Date(bar.time * 1000).toISOString() : "";
   return {
     title: `${symbol}, ${period}`,
+    time: isIntraday(period) ? stamp.slice(0, 16).replace("T", " ") : stamp.slice(0, 10),
     ohlc: (["open", "high", "low", "close"] as const).map((key) => ({ label: key[0].toUpperCase() as "O", value: price(bar?.[key], digits) })),
     indicators: indicators.map(({ id, label, colour, digits: places, values }) => ({ id, label, colour, value: price(values[index], places) })),
   };
 }
 
 /**
- * The candles after a live quote: it moves the forming candle, or opens a new one when it falls in a later
- * bucket (`newBucket`: the view fetches the list again, which also settles the candle just closed).
- * An older quote leaves the same list.
+ * The candles (UTC times) after a live quote (broker time): it moves the forming candle, or opens a new one when it
+ * falls in a later bucket of the broker clock (`newBucket`: the view fetches the list again, which also settles the
+ * candle just closed). An older quote leaves the same list. `rule` is the broker server's, null while unknown.
  */
-export function followQuote(candles: readonly Candle[], period: Period, quote: { bid: number; quoteTime: number }): { candles: readonly Candle[]; newBucket: boolean } {
-  const time = bucketStart(quote.quoteTime, period);
+export function followQuote(
+  candles: readonly Candle[],
+  period: Period,
+  quote: { bid: number; quoteTime: number },
+  rule: ClockRule | null = null,
+): { candles: readonly Candle[]; newBucket: boolean } {
+  const time = brokerToUtc(rule ?? UNKNOWN_RULE, bucketStart(quote.quoteTime, period) * 1000) / 1000;
   const last = candles.at(-1);
   const { bid } = quote;
   if (last && time < last.time) return { candles, newBucket: false };

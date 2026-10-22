@@ -1,6 +1,7 @@
 // Bridge server core: ZeroMQ ROUTER for QuoteBridge EAs, feed registry and terminal presence.
 // Ported from the legacy Bridge without trading or recording (milestone 1).
 import { Router } from "zeromq";
+import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { asPortInUse } from "../port-in-use.js";
 import { feedKey, MAX_MESSAGE_BYTES, parseMessage, type Hello, type Market, type Sample } from "./protocol.js";
 
@@ -21,9 +22,14 @@ const STALE_PEER_MS = 60000;
 export type SampleEvent = { type: "samples"; feed: string; market: Market; samples: Sample[] } | { type: "removed"; feed: string };
 export type SampleListener = (event: SampleEvent) => void;
 
+/** What the server knows about a market beyond the bridge: its broker server's clock rule (ADR 11) and whether it is recorded. */
+export type MarketInfo = { clockRule: ClockRule | null; recording: boolean };
+
 export type BridgeServerOptions = {
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
+  /** Adds each feed's market info to snapshots; without it, rules are unknown and nothing is recorded. */
+  marketInfo?: (market: Market) => MarketInfo;
 };
 
 type Peer = Hello & {
@@ -58,6 +64,12 @@ export type FeedSnapshot = {
   /** Online, with a quote whose time has not changed for STALE_QUOTE_MS. */
   stale: boolean;
   latest?: Sample;
+  /** The latest quote time in UTC milliseconds (its broker time as it is while the clock rule is unknown). */
+  quoteTimeUtc: number | null;
+  /** The clock rule of the market's broker server; null while unknown. */
+  clockRule: ClockRule | null;
+  /** Whether the feed's market is recorded; every feed of the market shows the same. */
+  recording: boolean;
   lastSeen: number;
   /** Samples the feed's EAs dropped from full buffers, summed over its charts. */
   dropped: number;
@@ -84,6 +96,7 @@ export type BridgeSnapshot = {
 
 export class BridgeServer {
   private readonly now: () => number;
+  private readonly marketInfo: (market: Market) => MarketInfo;
   private readonly socket = new Router({
     linger: 0,
     sendTimeout: 0,
@@ -106,6 +119,7 @@ export class BridgeServer {
 
   constructor(options: BridgeServerOptions = {}) {
     this.now = options.now ?? Date.now;
+    this.marketInfo = options.marketInfo ?? (() => ({ clockRule: null, recording: false }));
   }
 
   async start(endpoint: string) {
@@ -258,12 +272,14 @@ export class BridgeServer {
       const online = instances.filter((p) => this.isOnline(p, now));
       const p = this.owner(feed) ?? instances.sort((a, b) => b.lastSeen - a.lastSeen)[0];
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
+      const market = { brokerServer, symbol: p.symbol };
+      const { clockRule, recording } = this.marketInfo(market);
       return {
         feed,
         terminal: p.terminal,
         broker: brokerServer,
         symbol: p.symbol,
-        market: { brokerServer, symbol: p.symbol },
+        market,
         timeframe: p.timeframe ?? null,
         chartTimeframes: [...new Set(online.map((i) => i.timeframe ?? null))],
         online: this.isOnline(p, now),
@@ -274,6 +290,9 @@ export class BridgeServer {
         quoteUnchangedSince: p.quoteUnchangedSince,
         stale: this.isOnline(p, now) && p.quoteUnchangedSince !== undefined && now - p.quoteUnchangedSince >= STALE_QUOTE_MS,
         latest: p.latest,
+        quoteTimeUtc: p.latest ? brokerToUtc(clockRule ?? UNKNOWN_RULE, p.latest.quoteTime * 1000) : null,
+        clockRule,
+        recording,
         lastSeen: p.lastSeen,
         dropped: instances.reduce((n, i) => n + i.dropped, 0),
       };

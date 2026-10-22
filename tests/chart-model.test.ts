@@ -143,3 +143,24 @@ test("the chart says since when it has candles, with the date once that is not t
   assert.equal(candlesSince(start, new Date(2026, 9, 22, 15, 0).getTime()), "Candles since 09:26 (this computer's clock), when QuoteBridge started. Recording arrives in a later version.");
   assert.equal(candlesSince(start, new Date(2026, 9, 23, 8, 0).getTime()), "Candles since 22 Oct 09:26 (this computer's clock), when QuoteBridge started. Recording arrives in a later version.");
 });
+
+test("candles are UTC but break on the broker clock: a D1 quote at 10:00 on a GMT+2 broker falls in the bar that opened at 22:00 UTC the day before", () => {
+  const rule = { winterOffsetMinutes: 120, dst: "us" as const };
+  const day = Date.UTC(2027, 0, 14, 22) / 1000;
+  const candles = [{ time: day, open: 1.1, high: 1.2, low: 1.05, close: 1.15 }];
+  const brokerTen = Date.UTC(2027, 0, 15, 10) / 1000;
+  const same = followQuote(candles, "D1", { bid: 1.25, quoteTime: brokerTen }, rule);
+  assert.equal(same.newBucket, false);
+  assert.deepEqual(same.candles, [{ time: day, open: 1.1, high: 1.25, low: 1.05, close: 1.25 }]);
+  // Broker midnight opens the next bar, at 22:00 UTC.
+  const next = followQuote(candles, "D1", { bid: 1.3, quoteTime: Date.UTC(2027, 0, 16) / 1000 }, rule);
+  assert.equal(next.newBucket, true);
+  assert.equal(next.candles.at(-1)!.time, Date.UTC(2027, 0, 15, 22) / 1000);
+});
+
+test("the legend gives the bar's time as the chart shows it: date and minutes intraday, the date alone for D1 and longer", () => {
+  assert.equal(chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [] }).time, "1970-01-01 03:00");
+  assert.equal(chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [], time: 7200 }).time, "1970-01-01 02:00");
+  assert.equal(chartLegend({ symbol: "AUDUSD.a", period: "D1", digits: 5, candles: BARS, indicators: [] }).time, "1970-01-01");
+  assert.equal(chartLegend({ symbol: "GOLD", period: "M1", digits: 2, candles: [], indicators: [] }).time, "");
+});

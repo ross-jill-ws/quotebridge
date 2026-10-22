@@ -23,6 +23,9 @@ function feed(overrides: Partial<FeedSnapshot> = {}): FeedSnapshot {
     quoteUnchangedSince: NOW - 1000,
     stale: false,
     latest: { seq: 7, bid: 1.08421, ask: 1.08433, quoteTime: 1_800_000_000, sampledTime: 1_800_000_001 },
+    quoteTimeUtc: (1_800_000_000 - 7200) * 1000,
+    clockRule: { winterOffsetMinutes: 120, dst: "us" },
+    recording: false,
     lastSeen: NOW - 500,
     dropped: 0,
     ...overrides,
@@ -78,7 +81,7 @@ test("bid and ask show the symbol's digits; spread is in points, as in MetaTrade
   assert.deepEqual([gold.bid, gold.ask, gold.spread], ["2401.50", "2401.85", "35"]);
 });
 
-test("quote time is the broker's server time as sent, not converted to the viewer's time zone", () => {
+test("quote time is the broker's server time by default, not converted to the viewer's time zone", () => {
   // 1_800_000_000 s = 2027-01-15 08:00:00 (as UTC fields).
   const row = describeFeed(feed(), NOW);
   assert.equal(row.quoteTime, "08:00:00");
@@ -221,4 +224,14 @@ test("the status sentence counts feeds and terminals, and feeds with warnings as
     ["3 feeds from 2 terminals.", "1 needs attention."],
   );
   assert.deepEqual(status([feed({ feed: "a", dropped: 2 }), feed({ feed: "b", instances: 2 })]), ["2 feeds from 1 terminal.", "2 need attention."]);
+});
+
+test("the quote time follows Time shown: broker time, this computer's local time, or UTC", () => {
+  // The quote's broker time is 08:00 on a GMT+2 broker: 06:00 UTC. The computer is on GMT+11.
+  const sydney = () => 11 * 60;
+  assert.equal(describeFeed(feed(), NOW, "broker", sydney).quoteTime, "08:00:00");
+  assert.equal(describeFeed(feed(), NOW, "utc", sydney).quoteTime, "06:00:00");
+  const local = describeFeed(feed(), NOW, "local", sydney);
+  assert.equal(local.quoteTime, "17:00:00");
+  assert.equal(local.quoteDate, "2027-01-15");
 });

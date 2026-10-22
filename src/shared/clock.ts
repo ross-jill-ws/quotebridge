@@ -7,6 +7,9 @@ export type DaylightSaving = "none" | "us" | "eu";
 /** A winter offset from UTC plus a daylight-saving convention; summer adds an hour. */
 export type ClockRule = { winterOffsetMinutes: number; dst: DaylightSaving };
 
+/** The rule assumed while a broker server's rule is unknown: its broker clock is read as UTC. */
+export const UNKNOWN_RULE: ClockRule = Object.freeze({ winterOffsetMinutes: 0, dst: "none" });
+
 export const DAYLIGHT_SAVINGS: readonly DaylightSaving[] = ["none", "us", "eu"];
 
 /** The offsets a rule may have, in minutes: −12:00 to +14:00 in 15-minute steps. */

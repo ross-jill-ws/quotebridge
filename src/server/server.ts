@@ -41,29 +41,31 @@ export type RunningServer = {
 
 /** Rejects with PortInUseError when the EA or HTTP port is taken; nothing stays bound then. */
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
-  const bridge = new BridgeServer({ now: config.now });
+  // Snapshots carry each market's clock rule, read when they are taken.
+  let clockRules: ClockRules | undefined;
+  const bridge = new BridgeServer({ now: config.now, marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: false }) });
   // Before the first sample: the stored rules decide what later samples confirm or contradict.
-  const clockRules = await ClockRules.open(bridge, config.database?.clockRules ?? memoryClockRuleStore(), {
+  const rules = (clockRules = await ClockRules.open(bridge, config.database?.clockRules ?? memoryClockRuleStore(), {
     now: config.now,
     localOffsetMinutes: config.localOffsetMinutes,
-  });
+  }));
   try {
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
   } catch (e) {
-    await clockRules.close();
+    await rules.close();
     throw e;
   }
-  const candles = new CandleBuilder(bridge, { now: config.now, clockRule: (brokerServer) => clockRules.rule(brokerServer) });
+  const candles = new CandleBuilder(bridge, { now: config.now, clockRule: (brokerServer) => rules.rule(brokerServer) });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules: rules, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await bridge.close();
-    await clockRules.close();
+    await rules.close();
     throw e;
   }
   // Only after both ports are bound: a failed start must not have begun recovery or detection.
@@ -71,7 +73,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         bridge,
         eaPort: config.eaPort,
         now: config.now ?? Date.now,
-        brokerClock: (brokerServer) => clockRules.get(brokerServer),
+        brokerClock: (brokerServer) => rules.get(brokerServer),
       }) : undefined;
   return {
     bridge,
@@ -83,7 +85,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       await http.close();
       candles.close();
       await bridge.close();
-      await clockRules.close();
+      await rules.close();
     },
   };
 }

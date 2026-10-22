@@ -1774,6 +1774,11 @@ a.path {
   color: var(--chart-strong);
 }
 
+.chart-legend .time {
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 .chart-legend .ohlc b {
   margin: 0 3px 0 8px;
   font-weight: 500;

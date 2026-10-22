@@ -277,10 +277,10 @@ test("each feed carries its market from its terminal's latest hello; a login swi
   await tick(real, 120, { bid: 1.2 });
   const restarted = await candles();
   assert.deepEqual(restarted.map((c) => c.close), [1.2], "no candle mixes prices from two broker servers");
-  assert.ok(restarted[0].time >= demoTime - (demoTime % 60));
+  assert.ok(restarted[0].time >= demoTime - (demoTime % 60) - 2 * 3600);
 });
 
-test("candles carry their UTC start from the broker server's rule; W1 starts on Sunday", { timeout: 10000 }, async (t) => {
+test("candles and the live snapshot hand out UTC times from the broker server's rule, with the rule; W1 starts on Sunday broker time", { timeout: 10000 }, async (t) => {
   const clock = new FakeClock(WINTER);
   const { ea, getJson } = await start(t, clock);
   const chart = await ea({ broker: "EasyForex-Demo" });
@@ -288,15 +288,16 @@ test("candles carry their UTC start from the broker server's rule; W1 starts on 
   await tick(chart, 120);
   const quoteTime = await tick(chart, 120);
 
-  const feed = (await getJson<BridgeSnapshot>("/api/state")).feeds[0].feed;
-  const answer = async (period: string) =>
-    (await getJson<{ candles: { time: number; utc: number | null }[] }>(`/api/candles?${new URLSearchParams({ feed, period })}`)).candles;
-  const [m1] = await answer("M1");
-  assert.equal(m1.time, quoteTime - (quoteTime % 60));
-  assert.equal(m1.utc, m1.time - 2 * 3600);
+  const [state] = (await getJson<BridgeSnapshot>("/api/state")).feeds;
+  assert.deepEqual(state.clockRule, { winterOffsetMinutes: 120, dst: "us" });
+  assert.equal(state.quoteTimeUtc, (quoteTime - 2 * 3600) * 1000);
+  type Answer = { clockRule: unknown; candles: { time: number }[] };
+  const answer = async (period: string) => getJson<Answer>(`/api/candles?${new URLSearchParams({ feed: state.feed, period })}`);
+  const m1 = await answer("M1");
+  assert.deepEqual(m1.clockRule, { winterOffsetMinutes: 120, dst: "us" });
+  assert.equal(m1.candles[0].time, quoteTime - (quoteTime % 60) - 2 * 3600);
 
   // Friday 15 January 2027, 10:00 broker time: the week began on Sunday 10 January, 00:00 broker time (Saturday 22:00 UTC).
-  const [w1] = await answer("W1");
-  assert.equal(w1.time, Date.UTC(2027, 0, 10) / 1000);
-  assert.equal(w1.utc, Date.UTC(2027, 0, 9, 22) / 1000);
+  const [w1] = (await answer("W1")).candles;
+  assert.equal(w1.time, Date.UTC(2027, 0, 9, 22) / 1000);
 });
