@@ -63,8 +63,8 @@ async function start(t: TestContext, dbFolder: string, dataFolder: string, clock
     fetch(`${origin}${path}`, { method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: JSON.stringify(body) });
   const rule = await post("/api/clock-rules", { brokerServer: BROKER, winterOffsetMinutes: 120, dst: "us" });
   assert.equal(rule.status, 200);
-  const connect = async (symbol = "EURUSD") => {
-    const ea = new FakeEA({ terminal: TERMINAL, broker: BROKER, symbol }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
+  const connect = async (symbol = "EURUSD", terminal = TERMINAL) => {
+    const ea = new FakeEA({ terminal, broker: BROKER, symbol }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
     t.after(() => ea.close());
     await ea.request(ea.helloWire());
     return ea;
@@ -208,4 +208,33 @@ test("recorded markets are saved at start and again after an hour", { timeout: 3
   assert.equal((await app.saved()).H1, 20, "not again within the hour");
   clock.advance(60_000);
   assert.equal(await settle(23), 23, "again after an hour");
+});
+
+test("with two terminals on one broker server, bars only the older file holds are saved, and its unfinished last bar never wins", { timeout: 20000 }, async (t) => {
+  const current = await tempFolder(t, "saved-current");
+  const stale = await tempFolder(t, "saved-stale");
+  const db = await tempFolder(t, "saved-db");
+  const SECOND = "mt4-bbbbbbbbbbbb";
+  const app = await start(t, db, current, new FakeClock(NOW), {
+    terminalDataFolder: (id) => (id === TERMINAL ? current : id === SECOND ? stale : undefined),
+  });
+  // The current terminal's file holds the newest 50 bars. The stale one stopped 30 bars ago, as its last bar was forming.
+  const h1 = bars(MIDNIGHT - 120 * HOUR, HOUR, 120);
+  const unfinished = { ...h1[89], close: h1[89].open, volume: 1 };
+  await writeHst(current, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: h1.slice(70) });
+  await writeHst(stale, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: [...h1.slice(0, 89), unfinished] });
+  await app.connect("EURUSD", SECOND);
+  await app.connect();
+  await app.save();
+  assert.deepEqual(await app.saved(), { H1: 120 });
+  await app.save();
+  await app.saved();
+  await app.stop();
+
+  // Only the saved copy is left to download.
+  const after = await start(t, db, current, new FakeClock(NOW), { terminalDataFolder: () => undefined });
+  const rows = await after.csv();
+  assert.equal(rows.length, 120);
+  const volumes = rows.map((row) => Number(row.split(",")[5]));
+  assert.deepEqual(volumes, h1.map((b) => b.volume), "every bar as the newest file holds it");
 });

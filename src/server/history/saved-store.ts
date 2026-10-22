@@ -59,7 +59,13 @@ export class SavedBarStore {
     if (!bars.length) return Promise.resolve();
     return this.serial(async () => {
       // A temporary table is this connection's own: the bars go in with the appender, then across in one statement.
-      this.staging ??= this.connection.run(`CREATE TEMP TABLE saved_staging AS SELECT * FROM saved_bars LIMIT 0`).then(() => {});
+      this.staging ??= this.connection.run(`CREATE TEMP TABLE saved_staging AS SELECT * FROM saved_bars LIMIT 0`).then(
+        () => {},
+        (e) => {
+          this.staging = undefined;
+          throw e;
+        },
+      );
       await this.staging;
       const appender = await this.connection.createAppender("saved_staging", "main", "temp");
       try {
@@ -139,6 +145,11 @@ export class SavedBarStore {
         throw e;
       }
     });
+  }
+
+  /** Resolves once the pending jobs are done. */
+  async settled(): Promise<void> {
+    await this.work;
   }
 
   close() {

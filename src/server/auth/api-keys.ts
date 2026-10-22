@@ -142,8 +142,8 @@ export class ApiKeys {
     const id = ((request ?? {}) as { id?: unknown }).id;
     const stored = [...this.keys.values()].find((k) => k.id === id);
     if (!stored) throw new ApiKeyRequestError(404, "No such key. It may have been revoked already.");
-    this.keys.delete(stored.hash);
     await this.store.revoke(stored.id, this.now());
+    this.keys.delete(stored.hash);
     return this.list();
   }
 

@@ -65,6 +65,8 @@ const CONTENT_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+const SEND_A_KEY = "Send an API key: Authorization: Bearer qbk_….";
+
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
@@ -133,7 +135,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       // The CLI and scripts. The app window never sends one, so a key cannot reach the key endpoints (ADR 5). No
       // cookie is involved, so there is no cross-site request to guard against with the Origin check.
       const scheme = authorization.split(" ")[0];
-      if (scheme.toLowerCase() !== "bearer") return json(res, 401, { error: "Send an API key: Authorization: Bearer qbk_…. HTTP Basic is not accepted." });
+      if (scheme.toLowerCase() !== "bearer") return json(res, 401, { error: `${SEND_A_KEY} HTTP Basic is not accepted.` });
       if (!api) return json(res, 403, { error: "An API key reaches only /api/v1 and /api/auth/session." });
       const writes = req.method !== "GET" && req.method !== "HEAD";
       const check = options.apiKeys?.check(authorization.slice(scheme.length).trim(), writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
@@ -142,7 +144,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     }
 
     if (!sessions.authenticated(req.headers, cookie)) {
-      return json(res, 401, { error: api ? "Send an API key: Authorization: Bearer qbk_…. Create one in Settings › API keys." : "Open the dashboard from the app window." });
+      return json(res, 401, { error: api ? `${SEND_A_KEY} Create one in Settings › API keys.` : "Open the dashboard from the app window." });
     }
 
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
@@ -184,7 +186,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
    */
   function handleApi(url: URL, res: ServerResponse, key: ApiKeyView | null) {
     if (url.pathname !== "/api/auth/session") return json(res, 404, { error: "Unknown endpoint" });
-    if (!key) return json(res, 401, { error: "Send an API key: Authorization: Bearer qbk_…." });
+    if (!key) return json(res, 401, { error: SEND_A_KEY });
     json(res, 200, { username: windowsUser(), key: { name: key.name, prefix: key.prefix, scope: key.scope }, expires: null });
   }
 

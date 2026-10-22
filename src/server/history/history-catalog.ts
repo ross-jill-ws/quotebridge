@@ -92,7 +92,7 @@ export class HistoryCatalog {
         const rule = this.options.clockRule(m.brokerServer);
         const toUtc = (seconds: number) => brokerToUtc(rule ?? UNKNOWN_RULE, seconds * 1000) / 1000;
         const found = files.get(marketKey(m));
-        const kept = saved.get(marketKey(m));
+        const savedPeriods = saved.get(marketKey(m));
         return {
           market: marketKey(m),
           brokerServer: m.brokerServer,
@@ -105,8 +105,8 @@ export class HistoryCatalog {
           periods: PERIODS.flatMap((period) => {
             const span = found?.get(period)?.span;
             const hst = span ? { bars: span.bars, first: toUtc(span.first), last: toUtc(span.last) } : null;
-            const keptSpan = kept?.get(period) ?? null;
-            return hst || keptSpan ? [{ period, hst, saved: keptSpan }] : [];
+            const savedSpan = savedPeriods?.get(period) ?? null;
+            return hst || savedSpan ? [{ period, hst, saved: savedSpan }] : [];
           }),
         };
       });
@@ -123,12 +123,12 @@ export class HistoryCatalog {
       if (file && span && newer(span, best)) best = { file, span };
     }
     const saved = this.options.saved;
-    const older = saved ? (await saved.before(market, period, best?.span.first, 1)).bars.length > 0 : false;
-    if (!best && !older) return null;
+    const savedOlder = saved ? (await saved.before(market, period, best?.span.first, 1)).bars.length > 0 : false;
+    if (!best && !savedOlder) return null;
     const digits = best?.file.header.digits ?? this.options.storedMarkets().find((m) => marketKey(m) === marketKey(market))?.digits ?? 5;
     const file = best?.file;
     async function* pages() {
-      if (older) yield* saved!.pages(market, period, best?.span.first);
+      if (savedOlder) yield* saved!.pages(market, period, best?.span.first);
       if (file) yield* file.pages();
     }
     return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };

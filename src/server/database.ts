@@ -141,6 +141,7 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
       async checkpointAndClose() {
         try {
           await apiKeys.settled();
+          await savedBars.settled();
           await conn.run("CHECKPOINT");
         } catch (e) {
           throw new DatabaseError(`The database could not be checkpointed: ${(e as Error).message}`, { cause: e });

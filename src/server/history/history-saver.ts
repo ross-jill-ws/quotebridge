@@ -34,7 +34,7 @@ export type HistorySaverOptions = {
   now?: () => number;
 };
 
-type PeriodFile = { period: Period; file: HstFile; bars: number };
+type PeriodFile = { period: Period; file: HstFile; bars: number; last: number };
 
 export class HistorySaver {
   /** Per market key: queued or running. */
@@ -110,8 +110,9 @@ export class HistorySaver {
     progress.total = files.reduce((sum, f) => sum + f.bars, 0);
     if (!files.length) return;
     const id = await this.options.marketId(market, files[0].file.header.digits);
-    const rule = this.options.clockRule(market.brokerServer) ?? UNKNOWN_RULE;
     const insert = (period: Period, bars: HstBar[]) => {
+      // The rule as of this page: a rule change recomputes the bars saved before it, not those inserted after.
+      const rule = this.options.clockRule(market.brokerServer) ?? UNKNOWN_RULE;
       // One bar per time: a file holding a time twice keeps its later record.
       const unique = [...new Map(bars.map((b) => [b.time, b])).values()];
       return this.options.store.insert(id, period, unique.map((b) => ({ ...b, utc: brokerToUtc(rule, b.time * 1000) / 1000 })));
@@ -150,9 +151,10 @@ export class HistorySaver {
         const file = await HstFile.open(hstPath(folder, market.brokerServer, market.symbol, minutes));
         if (!file || file.header.minutes !== minutes || file.header.symbol.toLowerCase() !== market.symbol.toLowerCase()) continue;
         const span = await file.span();
-        if (span) out.push({ period, file, bars: span.bars });
+        if (span) out.push({ period, file, bars: span.bars, last: span.last });
       }
     }
-    return out;
+    // Per period, the file with the newest bar last: its version of the newest saved bar is the one kept.
+    return out.sort((a, b) => PERIODS.indexOf(a.period) - PERIODS.indexOf(b.period) || a.last - b.last || a.bars - b.bars);
   }
 }
