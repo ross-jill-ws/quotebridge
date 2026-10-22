@@ -5,7 +5,8 @@
 // On start it also propagates updates (ADR 9): every managed terminal whose install is out of date
 // (newer bundled bridge files, or another EA port) is reinstalled through the normal install path.
 import { isAbsolute, join } from "node:path";
-import { type BridgeServer, ONLINE_WINDOW_MS } from "../bridge/index.js";
+import { type BridgeServer, ONLINE_WINDOW_MS, type TerminalPresence } from "../bridge/index.js";
+import type { BrokerClock } from "../clock/index.js";
 import {
   BridgeInstaller,
   InstallCancelledError,
@@ -70,6 +71,8 @@ export interface TerminalManagerRuntime {
    * and runs the held-back updates once the requests settle.
    */
   hasInFlightOrderRequests?: (terminalId: string) => boolean;
+  /** A broker server's clock, or null while nothing was observed or set (ADR 11). */
+  brokerClock?: (brokerServer: string) => BrokerClock | null;
 }
 
 export type TerminalOperation = "queued" | "installing" | "removing";
@@ -112,8 +115,10 @@ export interface TerminalView {
   legacyTerminalId: string | null;
   lastFailure: InstallFailure | null;
   pendingRemoval: string[];
-  /** Runtime presence: the last hello from this Terminal ID and the EA version it reported. */
-  presence: { lastHello: number; eaVersion: string | null; online: boolean } | null;
+  /** Runtime presence: the last hello from this Terminal ID, the EA version and the broker server it reported. */
+  presence: { lastHello: number; eaVersion: string | null; online: boolean; brokerServer: string } | null;
+  /** The clock of the broker server the terminal is logged into, once its EA said hello and the rule is known. */
+  brokerClock: BrokerClock | null;
   checklist: TerminalChecklist;
   /** Shown when installed but no EA has connected for a while. */
   hint: string | null;
@@ -494,7 +499,7 @@ export class TerminalManager {
   private async view(
     entry: Entry,
     settings: Settings,
-    presence: Map<string, { lastHello: number; eaVersion: string | null }>,
+    presence: Map<string, TerminalPresence>,
     bundleProblem: string | null,
     operations: ReadonlyMap<string, TerminalOperation>,
   ): Promise<TerminalView> {
@@ -545,7 +550,8 @@ export class TerminalManager {
       legacyTerminalId: status?.legacyTerminalId ?? null,
       lastFailure,
       pendingRemoval: status?.pendingRemoval ?? [],
-      presence: seen ? { lastHello: seen.lastHello, eaVersion: seen.eaVersion, online: now - seen.lastHello < ONLINE_WINDOW_MS } : null,
+      presence: seen ? { lastHello: seen.lastHello, eaVersion: seen.eaVersion, online: now - seen.lastHello < ONLINE_WINDOW_MS, brokerServer: seen.brokerServer } : null,
+      brokerClock: (seen && this.runtime.brokerClock?.(seen.brokerServer)) || null,
       checklist: { refreshNavigator: eaConnected, applyTemplate: eaConnected, allowDllImports: eaConnected, eaConnected },
       hint,
       attention,

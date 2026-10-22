@@ -32,6 +32,7 @@ function terminal(overrides: Partial<TerminalView> = {}): TerminalView {
     lastFailure: null,
     pendingRemoval: [],
     presence: null,
+    brokerClock: null,
     checklist: NOT_YET,
     hint: null,
     attention: null,
@@ -48,10 +49,10 @@ test("an installed terminal shows its EA version, offers Recompile and Remove, a
 });
 
 test("a connected EA shows its running version; a quiet one shows when it was last heard", () => {
-  const online = describeTerminal(terminal({ presence: { lastHello: NOW - 1000, eaVersion: "1.08", online: true } }), NOW);
+  const online = describeTerminal(terminal({ presence: { lastHello: NOW - 1000, eaVersion: "1.08", online: true, brokerServer: "CMC-Live" } }), NOW);
   assert.deepEqual(online.connection, { text: "EA connected", tone: "good" });
   assert.equal(online.eaVersion, "EA v1.08 running");
-  const quiet = describeTerminal(terminal({ presence: { lastHello: NOW - 180_000, eaVersion: null, online: false } }), NOW);
+  const quiet = describeTerminal(terminal({ presence: { lastHello: NOW - 180_000, eaVersion: null, online: false, brokerServer: "CMC-Live" } }), NOW);
   assert.deepEqual(quiet.connection, { text: "Last heard 3 min ago", tone: "warn" });
   assert.equal(quiet.eaVersion, "EA version unknown (older than 1.08)");
 });
@@ -86,7 +87,7 @@ test("queued and running installs show progress and make the card busy", () => {
 
 // The panel shape: compact when ready, the four-step strip while being set up, dashed when found but not managed, Fault when it needs attention.
 const DONE = { refreshNavigator: true, applyTemplate: true, allowDllImports: true, eaConnected: true };
-const CONNECTED = { lastHello: NOW - 1000, eaVersion: "1.08", online: true };
+const CONNECTED = { lastHello: NOW - 1000, eaVersion: "1.08", online: true, brokerServer: "CMC-Live" };
 
 test("an installed terminal whose EA has connected is a compact panel without the steps", () => {
   const card = describeTerminal(terminal({ checklist: DONE, presence: CONNECTED }), NOW);
@@ -173,4 +174,41 @@ test("a terminal without a Terminal ID yet (portable mode not confirmed) is neit
   const selection = setupSelection([unconfirmed, EASY_FOREX], new Set());
   assert.equal(selection.checked(unconfirmed), false);
   assert.deepEqual(selection.install, ["mt4-0f5715a276b2"]);
+});
+
+// The broker clock line: the rule of the broker server the terminal is logged into, its source, and a mismatch.
+const US_RULE = { winterOffsetMinutes: 120, dst: "us" } as const;
+function clock(overrides: Partial<NonNullable<TerminalView["brokerClock"]>> = {}): NonNullable<TerminalView["brokerClock"]> {
+  return {
+    brokerServer: "CMC-Live",
+    rule: US_RULE,
+    source: "inferred",
+    description: "GMT+2, GMT+3 in US summer time",
+    lastObserved: { offsetMinutes: 120, at: NOW - 1000 },
+    mismatch: null,
+    ...overrides,
+  };
+}
+
+test("a terminal shows its broker server's clock rule and whether it was inferred or set", () => {
+  const inferred = describeTerminal(terminal({ checklist: DONE, presence: CONNECTED, brokerClock: clock() }), NOW);
+  assert.deepEqual(inferred.brokerClock, {
+    brokerServer: "CMC-Live",
+    text: "Broker clock: GMT+2, GMT+3 in US summer time · inferred",
+    rule: US_RULE,
+    caution: null,
+  });
+  const set = describeTerminal(terminal({ checklist: DONE, presence: CONNECTED, brokerClock: clock({ source: "set" }) }), NOW);
+  assert.equal(set.brokerClock?.text, "Broker clock: GMT+2, GMT+3 in US summer time · set by you");
+  assert.equal(describeTerminal(terminal({ presence: CONNECTED }), NOW).brokerClock, null, "no rule known yet");
+});
+
+test("an observed offset that contradicts the rule shows a Caution line", () => {
+  // 15 January 2027: winter, so the rule expects GMT+2.
+  const now = Date.UTC(2027, 0, 15, 8);
+  const card = describeTerminal(
+    terminal({ checklist: DONE, presence: CONNECTED, brokerClock: clock({ mismatch: { observedOffsetMinutes: 180, since: now - 25 * 60_000 } }) }),
+    now,
+  );
+  assert.equal(card.brokerClock?.caution, "The broker clock has read GMT+3 for 25 min, but this rule expects GMT+2 now. If the broker changed its clock, change the rule.");
 });

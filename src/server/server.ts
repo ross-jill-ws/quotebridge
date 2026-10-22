@@ -1,6 +1,8 @@
 // Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
 import { BridgeServer } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
+import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
+import type { AppDatabase } from "./database.js";
 import { startHttpServer } from "./http/http-server.js";
 import { WindowSessions } from "./http/window-session.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
@@ -21,6 +23,10 @@ export type ServerConfig = {
   terminals?: TerminalManagerOptions;
   /** The Settings view (GET and POST /api/settings); omitted, those endpoints answer 404. */
   settings?: AppSettingsOptions;
+  /** The app's database (clock rules); omitted, clock rules are kept in memory only. */
+  database?: AppDatabase;
+  /** The PC's local time minus UTC at an instant, in minutes (reads the EA's sampled time); injectable for tests. */
+  localOffsetMinutes?: (utcMs: number) => number;
 };
 
 export type RunningServer = {
@@ -36,21 +42,37 @@ export type RunningServer = {
 /** Rejects with PortInUseError when the EA or HTTP port is taken; nothing stays bound then. */
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
   const bridge = new BridgeServer({ now: config.now });
-  await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
-  const candles = new CandleBuilder(bridge, { now: config.now });
+  // Before the first sample: the stored rules decide what later samples confirm or contradict.
+  const clockRules = await ClockRules.open(bridge, config.database?.clockRules ?? memoryClockRuleStore(), {
+    now: config.now,
+    localOffsetMinutes: config.localOffsetMinutes,
+  });
+  try {
+    await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
+  } catch (e) {
+    await clockRules.close();
+    throw e;
+  }
+  const candles = new CandleBuilder(bridge, { now: config.now, clockRule: (brokerServer) => clockRules.rule(brokerServer) });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await bridge.close();
+    await clockRules.close();
     throw e;
   }
   // Only after both ports are bound: a failed start must not have begun recovery or detection.
-  const terminals = config.terminals ? new TerminalManager(config.terminals, { bridge, eaPort: config.eaPort, now: config.now ?? Date.now }) : undefined;
+  const terminals = config.terminals ? new TerminalManager(config.terminals, {
+        bridge,
+        eaPort: config.eaPort,
+        now: config.now ?? Date.now,
+        brokerClock: (brokerServer) => clockRules.get(brokerServer),
+      }) : undefined;
   return {
     bridge,
     terminals,
@@ -61,6 +83,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       await http.close();
       candles.close();
       await bridge.close();
+      await clockRules.close();
     },
   };
 }

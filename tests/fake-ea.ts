@@ -27,6 +27,7 @@ export class FakeEA {
   dropped = 0;
   quoteStatus: "ok" | "no-quote" = "ok";
   private socket: Dealer;
+  private sending: Promise<unknown> = Promise.resolve();
 
   constructor(options: FakeEAOptions = {}) {
     this.session = options.session ?? `chart-${Math.random().toString(36).slice(2, 10)}`;
@@ -56,8 +57,11 @@ export class FakeEA {
     return `T|1|${this.session}|${rows.join(";")}`;
   }
 
+  /** Sends one message after any still in flight: a ZeroMQ socket refuses a second send while one is pending. */
   send(wire: string) {
-    return this.socket.send(wire);
+    const sent = this.sending.then(() => this.socket.send(wire));
+    this.sending = sent.catch(() => {});
+    return sent;
   }
 
   hello() {

@@ -24,7 +24,7 @@ test("a feed appears after hello and is subscribed", { timeout: 10000 }, async (
 
   const { feeds } = bridge.snapshot();
   assert.equal(feeds.length, 1);
-  assert.equal(feeds[0].feed, '["mt4-aaaaaaaaaaaa","Demo-Broker","EURUSD"]');
+  assert.equal(feeds[0].feed, '["mt4-aaaaaaaaaaaa","EURUSD"]');
   assert.equal(feeds[0].terminal, "mt4-aaaaaaaaaaaa");
   assert.equal(feeds[0].broker, "Demo-Broker");
   assert.equal(feeds[0].symbol, "EURUSD");
@@ -198,7 +198,7 @@ test("terminal presence records the last hello and the EA version from a 1.08 he
   clock.advance(1500);
   await gbpusd.request(gbpusd.helloWire());
 
-  assert.deepEqual(bridge.snapshot().terminals, [{ terminalId: "mt4-aaaaaaaaaaaa", lastHello: clock.time, eaVersion: "1.08" }]);
+  assert.deepEqual(bridge.snapshot().terminals, [{ terminalId: "mt4-aaaaaaaaaaaa", lastHello: clock.time, eaVersion: "1.08", brokerServer: "Demo-Broker" }]);
 });
 
 test("a hello without the version field (EA 1.07 and older) means version unknown", { timeout: 10000 }, async (t) => {

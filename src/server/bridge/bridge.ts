@@ -2,7 +2,7 @@
 // Ported from the legacy Bridge without trading or recording (milestone 1).
 import { Router } from "zeromq";
 import { asPortInUse } from "../port-in-use.js";
-import { feedKey, MAX_MESSAGE_BYTES, parseMessage, type Hello, type Sample } from "./protocol.js";
+import { feedKey, MAX_MESSAGE_BYTES, parseMessage, type Hello, type Market, type Sample } from "./protocol.js";
 
 /** A feed is online while its last message is younger than this. EAs re-send hello every 2 s. */
 export const ONLINE_WINDOW_MS = 7000;
@@ -14,8 +14,11 @@ const MAX_PEERS = 1000;
 /** A peer silent this long may be evicted to make room when the peer limit is reached. */
 const STALE_PEER_MS = 60000;
 
-/** New samples of a feed, or the feed forgotten (removed by the user, or its last chart evicted). */
-export type SampleEvent = { type: "samples"; feed: string; samples: Sample[] } | { type: "removed"; feed: string };
+/**
+ * New samples of a feed, with its market (from its terminal's latest hello), or the feed forgotten (removed by the user,
+ * or its last chart evicted).
+ */
+export type SampleEvent = { type: "samples"; feed: string; market: Market; samples: Sample[] } | { type: "removed"; feed: string };
 export type SampleListener = (event: SampleEvent) => void;
 
 export type BridgeServerOptions = {
@@ -34,8 +37,11 @@ type Peer = Hello & {
 export type FeedSnapshot = {
   feed: string;
   terminal: string;
+  /** The broker server of the feed's market. */
   broker: string;
   symbol: string;
+  /** The feed's market: its symbol on the broker server of its terminal's latest hello (ADR 11). */
+  market: Market;
   /** Chart period of the owner chart, in minutes; null for EAs that do not report it. */
   timeframe: number | null;
   /** Periods of every online chart sending this feed. */
@@ -63,6 +69,8 @@ export type TerminalPresence = {
   lastHello: number;
   /** null: the EA predates 1.08 and does not report its version. */
   eaVersion: string | null;
+  /** The broker server the terminal is logged into, as of its latest hello. */
+  brokerServer: string;
 };
 
 export type BridgeSnapshot = {
@@ -219,7 +227,7 @@ export class BridgeServer {
       }
       const p: Peer = { ...old, ...m, feed: feedKey(m), route, lastSeen: this.now() };
       this.peers.set(m.session, p);
-      this.terminals.set(m.terminal, { terminalId: m.terminal, lastHello: p.lastSeen, eaVersion: m.eaVersion ?? null });
+      this.terminals.set(m.terminal, { terminalId: m.terminal, lastHello: p.lastSeen, eaVersion: m.eaVersion ?? null, brokerServer: m.broker });
       // The hello reply is the subscription state; duplicates may hand ownership over, so refresh every chart of the feed.
       for (const peer of this.peers.values()) if (peer.feed === p.feed) await this.control(peer);
     } else if (m.type === "samples") {
@@ -231,7 +239,9 @@ export class BridgeServer {
       p.lastSeen = this.now();
       const latest = m.samples.at(-1)!;
       const fresh = m.samples.filter((s) => !p.latest || s.seq > p.latest.seq);
-      if (fresh.length) this.emit({ type: "samples", feed: p.feed, samples: fresh });
+      // The market of the terminal's latest hello, as in the snapshot: one feed's charts never disagree about it.
+      const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
+      if (fresh.length) this.emit({ type: "samples", feed: p.feed, market: { brokerServer, symbol: p.symbol }, samples: fresh });
       if (!p.latest || latest.seq > p.latest.seq) {
         if (!p.latest || latest.quoteTime !== p.latest.quoteTime) p.quoteUnchangedSince = this.now();
         p.latest = latest;
@@ -247,11 +257,13 @@ export class BridgeServer {
       const instances = [...this.peers.values()].filter((p) => p.feed === feed);
       const online = instances.filter((p) => this.isOnline(p, now));
       const p = this.owner(feed) ?? instances.sort((a, b) => b.lastSeen - a.lastSeen)[0];
+      const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       return {
         feed,
         terminal: p.terminal,
-        broker: p.broker,
+        broker: brokerServer,
         symbol: p.symbol,
+        market: { brokerServer, symbol: p.symbol },
         timeframe: p.timeframe ?? null,
         chartTimeframes: [...new Set(online.map((i) => i.timeframe ?? null))],
         online: this.isOnline(p, now),

@@ -44,7 +44,7 @@ async function send(chart: FakeEA, quotes: Omit<Quote, "seq">[], firstSeq = 1) {
 }
 
 const bid = (quoteTime: number, bid: number) => ({ quoteTime, bid, ask: bid + 0.0002 });
-const feedOf = (chart: FakeEA) => JSON.stringify([chart.terminal, chart.broker, chart.symbol]);
+const feedOf = (chart: FakeEA) => JSON.stringify([chart.terminal, chart.symbol]);
 const ohlc = (c: Candles) => c.candles.map((k) => [k.time, k.open, k.high, k.low, k.close]);
 
 test("samples become M1 bid candles bucketed by quote time", { timeout: 10000 }, async (t) => {
@@ -117,7 +117,7 @@ test("higher periods aggregate the M1 candles, and minutes without samples have 
   ]);
 });
 
-test("W1 candles start on Monday 00:00 and MN1 candles on the 1st of the calendar month", { timeout: 10000 }, async (t) => {
+test("W1 candles start on Sunday 00:00 broker time, as in MetaTrader's HST files, and MN1 candles on the 1st of the calendar month", { timeout: 10000 }, async (t) => {
   const { ea, candles } = await start(t);
   const chart = await ea();
   const DAY = 86400;
@@ -136,10 +136,10 @@ test("W1 candles start on Monday 00:00 and MN1 candles on the 1st of the calenda
   const feed = feedOf(chart);
 
   assert.deepEqual(ohlc(await candles(feed, "W1")), [
-    [OCT_1 - 3 * DAY, 1.1, 1.12, 1.1, 1.12], // Mon 28 Sep
-    [MONDAY - 7 * DAY, 1.09, 1.09, 1.09, 1.09], // Mon 12 Oct
-    [MONDAY, 1.15, 1.15, 1.15, 1.15],
-    [MONDAY + 7 * DAY, 1.13, 1.14, 1.13, 1.14], // Mon 26 Oct: Sat 31 Oct and Sun 1 Nov
+    [OCT_1 - 4 * DAY, 1.1, 1.12, 1.1, 1.12], // Sun 27 Sep
+    [MONDAY - DAY, 1.09, 1.15, 1.09, 1.15], // Sun 18 Oct: Sun 23:59 and Mon 19 Oct
+    [MONDAY + 6 * DAY, 1.13, 1.13, 1.13, 1.13], // Sun 25 Oct: Sat 31 Oct
+    [NOV_1, 1.14, 1.14, 1.14, 1.14], // Sun 1 Nov
   ]);
   assert.deepEqual(ohlc(await candles(feed, "MN1")), [
     [1788220800, 1.1, 1.1, 1.1, 1.1], // 1 Sep 2026
@@ -170,7 +170,7 @@ test("unknown feeds, unknown periods, bad limits and requests without a session 
   const feed = feedOf(chart);
   const status = async (query: Record<string, string>, headers?: Record<string, string>) => (await get(new URLSearchParams(query).toString(), headers)).status;
 
-  assert.equal(await status({ feed: '["mt4-ffffffffffff","Demo-Broker","EURUSD"]', period: "M1" }), 404);
+  assert.equal(await status({ feed: '["mt4-ffffffffffff","EURUSD"]', period: "M1" }), 404);
   assert.equal(await status({ period: "M1" }), 404);
   assert.equal(await status({ feed, period: "M2" }), 400);
   assert.equal(await status({ feed }), 400);
@@ -212,7 +212,7 @@ test("each feed keeps at most 7 days of M1 candles, oldest dropped, with many fe
     assert.equal(m1[0].time, MONDAY + 25 * MINUTE, chart.symbol);
     assert.equal(m1.at(-1)!.close, 1 + n + (minutes - 1) / 1e6, chart.symbol);
     const w1 = (await candles(feedOf(chart), "W1")).candles;
-    assert.deepEqual(w1.map((c) => c.time), [MONDAY, MONDAY + 7 * 86400], chart.symbol);
+    assert.deepEqual(w1.map((c) => c.time), [MONDAY - 86400, MONDAY + 6 * 86400], chart.symbol);
     assert.equal(w1[0].open, 1 + n + 25 / 1e6, chart.symbol);
   }
 });

@@ -7,6 +7,7 @@ import type { RunningServer } from "../../src/server/index.js";
 import type { TerminalManagerOptions } from "../../src/server/terminals/index.js";
 import type { MetaEditorProcesses } from "../../src/shared/metaeditor/index.js";
 import { FakeEA } from "../../tests/fake-ea.js";
+import { brokerNow, localNow } from "./fake-feeds.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE } from "../../tests/installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor } from "../../tests/metaeditor-fixtures.js";
 import { MachineFixture } from "../../tests/terminal-fixtures.js";
@@ -49,9 +50,13 @@ export async function fakeTerminalOptions(root: string, options: TerminalManager
   };
 }
 
-/** After an install, a fake EA in each installed terminal (except Quiet Broker) says hello every 2 s. */
+/**
+ * After an install, a fake EA in each installed terminal (except Quiet Broker) says hello and sends an EURUSD sample
+ * every 2 s, on a GMT+2/+3 broker clock, so the Terminals panel shows an inferred clock rule.
+ */
 export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => void {
   const eas = new Map<string, FakeEA>();
+  let seq = 0;
   const timer = setInterval(async () => {
     const state = await server.terminals?.state().catch(() => undefined);
     for (const t of state?.terminals ?? []) {
@@ -59,6 +64,7 @@ export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => 
       let ea = eas.get(t.terminalId);
       if (!ea) eas.set(t.terminalId, (ea = new FakeEA({ terminal: t.terminalId, symbol: "EURUSD", broker: t.name.split(" ")[0] }).connect(endpoint)));
       void ea.hello().catch(() => {});
+      void ea.ticks([{ seq: ++seq, bid: 1.0842, ask: 1.0844, quoteTime: brokerNow(), sampledTime: localNow() }]).catch(() => {});
     }
   }, 2000);
   return () => {

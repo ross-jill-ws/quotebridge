@@ -12,6 +12,7 @@ function feed(overrides: Partial<FeedSnapshot> = {}): FeedSnapshot {
     terminal: "mt4-0123456789ab",
     broker: "Demo-Broker",
     symbol: "EURUSD",
+    market: { brokerServer: "Demo-Broker", symbol: "EURUSD" },
     timeframe: 60,
     chartTimeframes: [60],
     online: true,
@@ -163,7 +164,7 @@ test("a feed that loses its quote stops flashing; its next quote does not flash"
 });
 
 function presence(terminalId: string, overrides: Partial<TerminalPresence> = {}): TerminalPresence {
-  return { terminalId, lastHello: NOW - 1000, eaVersion: "1.08", ...overrides };
+  return { terminalId, lastHello: NOW - 1000, eaVersion: "1.08", brokerServer: "Demo-Broker", ...overrides };
 }
 
 test("feeds are grouped by terminal, each group named by its terminal and listing its feeds by symbol", () => {

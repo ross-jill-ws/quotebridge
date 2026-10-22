@@ -1,5 +1,5 @@
 // Chart periods and their buckets, shared by the server's candle builder and the Charts view's forming candle.
-// Times are seconds of broker server time, read as if they were UTC (no time-zone conversion).
+// Times are seconds of the broker clock, read as if they were UTC: candles break on the broker clock, as MetaTrader's do.
 
 /** Chart periods in MetaTrader's order. */
 export const PERIODS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"] as const;
@@ -13,12 +13,12 @@ export function isIntraday(period: Period): boolean {
   return period !== "D1" && period !== "W1" && period !== "MN1";
 }
 
-/** The start of the period bucket holding `time`: W1 starts on Monday 00:00, MN1 on the 1st of the calendar month. */
+/** The start of the period bucket holding `time`: W1 starts on Sunday 00:00 (as in MetaTrader's HST files), MN1 on the 1st of the calendar month. */
 export function bucketStart(time: number, period: Period): number {
   if (period === "W1") {
     const day = time - (time % DAY);
-    // 1 January 1970 was a Thursday: three days after a Monday.
-    return day - ((day / DAY + 3) % 7) * DAY;
+    // 1 January 1970 was a Thursday: four days after a Sunday.
+    return day - ((day / DAY + 4) % 7) * DAY;
   }
   if (period === "MN1") {
     const date = new Date(time * 1000);

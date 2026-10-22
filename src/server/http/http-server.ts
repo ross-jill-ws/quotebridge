@@ -8,6 +8,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
+import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
@@ -21,6 +22,7 @@ export type HttpServerOptions = {
   port: number;
   bridge: BridgeServer;
   candles: CandleBuilder;
+  clockRules: ClockRules;
   sessions: WindowSessions;
   dashboardFolder?: string;
   /** The terminal manager, when the server manages terminals. */
@@ -130,6 +132,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       res.writeHead(204).end();
       return;
     }
+    if (url.pathname === "/api/clock-rules") return handleClockRules(req, res);
     if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, req, res);
     const terminals = options.terminals?.();
     if (terminals) {
@@ -141,9 +144,28 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     json(res, 405, { error: "Method not allowed" });
   }
 
+  /** Broker clocks for the Terminals panel: GET lists every broker server's rule, POST sets one as the trader chose. */
+  async function handleClockRules(req: IncomingMessage, res: ServerResponse) {
+    if (req.method === "GET") return json(res, 200, { clockRules: options.clockRules.list() });
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    let body: unknown;
+    try {
+      body = await readJson(req);
+    } catch {
+      return json(res, 400, { error: "Expected a JSON body." });
+    }
+    try {
+      json(res, 200, await options.clockRules.set(body));
+    } catch (e) {
+      if (!(e instanceof ClockRuleRequestError)) throw e;
+      json(res, e.status, { error: e.message });
+    }
+  }
+
   /**
-   * The Charts view's candles for one feed and period, with its latest ask. Candle times are seconds of broker
-   * server time; `since` is this server's start in epoch milliseconds. The latest `limit` (1–10,080), or all of them.
+   * The Charts view's candles for one feed and period, with its latest ask. Candle `time` is seconds of the broker
+   * clock and `utc` its UTC start (null while the clock rule is unknown); `since` is this server's start in epoch
+   * milliseconds. The latest `limit` (1–10,080), or all of them.
    */
   function handleCandles(url: URL, res: ServerResponse) {
     const feed = bridge.snapshot().feeds.find((f) => f.feed === url.searchParams.get("feed"));
@@ -156,7 +178,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return json(res, 400, { error: `Expected a limit from 1 to ${MAX_M1_CANDLES}` });
     }
     const candles = options.candles.candles(feed.feed, period as Period, limit);
-    json(res, 200, { feed: feed.feed, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), candles });
+    json(res, 200, { feed: feed.feed, market: feed.market, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), candles });
   }
 
   /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */

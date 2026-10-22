@@ -1,6 +1,14 @@
 // Synthetic feeds for `npm run dev`, covering every row state of the Feeds view. They run in the dev
 // runner, not the server process, so they reconnect (ZeroMQ does) when the server restarts.
+import { utcToBroker } from "../../src/shared/clock.js";
 import { FakeEA } from "../../tests/fake-ea.js";
+
+/** The fake broker's clock: GMT+2, GMT+3 in US summer time, like most MetaTrader brokers. */
+const BROKER_CLOCK = { winterOffsetMinutes: 120, dst: "us" } as const;
+/** Broker seconds now, as MetaTrader stamps a quote. */
+export const brokerNow = () => Math.floor(utcToBroker(BROKER_CLOCK, Date.now()) / 1000);
+/** The PC's local time in seconds read as if UTC, as the EA's TimeLocal() reports it. */
+export const localNow = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / 1000);
 
 /** Synthetic feeds covering every row state of the Feeds view. Returns a function that stops them. */
 export function fakeFeeds(endpoint: string): () => void {
@@ -29,7 +37,7 @@ export function fakeFeeds(endpoint: string): () => void {
   ];
   fakes[4].ea.quoteStatus = "no-quote";
   fakes[6].ea.dropped = 1250;
-  const frozenTime = Math.floor(Date.now() / 1000);
+  const frozenTime = brokerNow();
 
   const alive = (f: Fake) => f.until === undefined || Date.now() < f.until;
   const hello = () => fakes.filter(alive).forEach((f) => void f.ea.hello().catch(() => {}));
@@ -38,9 +46,9 @@ export function fakeFeeds(endpoint: string): () => void {
       if (f.price === undefined || f.spread === undefined) continue;
       const step = 10 ** -f.ea.digits;
       f.price = Number((f.price + (Math.round(Math.random() * 6) - 3) * step).toFixed(f.ea.digits));
-      const quoteTime = f.frozen ? frozenTime : Math.floor(Date.now() / 1000);
+      const quoteTime = f.frozen ? frozenTime : brokerNow();
       const ask = Number((f.price + f.spread).toFixed(f.ea.digits));
-      void f.ea.ticks([{ seq: ++f.seq, bid: f.price, ask, quoteTime }]).catch(() => {});
+      void f.ea.ticks([{ seq: ++f.seq, bid: f.price, ask, quoteTime, sampledTime: localNow() }]).catch(() => {});
     }
   };
   hello();

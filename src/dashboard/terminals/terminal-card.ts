@@ -1,5 +1,6 @@
 // Terminal card view model: what a terminal's state, EA connection and actions look like. Pure.
 import type { TerminalView } from "../../server/terminals/index.js";
+import { formatOffset, offsetAtUtc, type ClockRule } from "../../shared/clock.js";
 import { duration } from "../format.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
@@ -9,6 +10,9 @@ export type Tone = "good" | "warn" | "bad" | "neutral";
  * while its EA has not connected, `found` (dashed) when not managed, `attention` (Fault) when it needs the user.
  */
 export type PanelShape = "compact" | "setup" | "found" | "attention";
+
+/** The broker clock line of a terminal panel, and what its Change… dialog starts from. */
+export type BrokerClockLine = { brokerServer: string; text: string; rule: ClockRule; caution: string | null };
 
 export type SetupStep = { key: keyof TerminalView["checklist"]; title: string; text: string; status: "done" | "next" | "todo" };
 
@@ -24,6 +28,11 @@ export interface TerminalCard {
   connection: { text: string; tone: Tone };
   /** "EA v1.08 running", or null when no EA was heard. */
   eaVersion: string | null;
+  /**
+   * The clock rule of the broker server the terminal is logged into ("Broker clock: GMT+2, GMT+3 in US summer time ·
+   * inferred"), for the Change… dialog, with a Caution line when observed offsets contradict it; null while unknown.
+   */
+  brokerClock: BrokerClockLine | null;
   /** Which actions the card offers. */
   actions: { install: boolean; recompile: boolean; remove: boolean; decline: boolean; compileLog: boolean };
   /** MetaEditor of this terminal is open: ask the user to close it, then retry. */
@@ -56,6 +65,7 @@ export function describeTerminal(t: TerminalView, now: number): TerminalCard {
     state: stateBadge(t),
     connection: connection(t, now),
     eaVersion: t.presence ? (t.presence.eaVersion ? `EA v${t.presence.eaVersion} running` : "EA version unknown (older than 1.08)") : null,
+    brokerClock: brokerClock(t, now),
     actions: {
       install: t.supported && !t.managed,
       recompile: t.supported && t.managed && t.state !== "no-metaeditor",
@@ -93,6 +103,20 @@ function connection(t: TerminalView, now: number): TerminalCard["connection"] {
   if (!t.presence) return { text: "No EA connected yet", tone: "neutral" };
   if (t.presence.online) return { text: "EA connected", tone: "good" };
   return { text: `Last heard ${duration(now - t.presence.lastHello)} ago`, tone: "warn" };
+}
+
+function brokerClock(t: TerminalView, now: number): TerminalCard["brokerClock"] {
+  const clock = t.brokerClock;
+  if (!clock || !t.managed) return null;
+  const mismatch = clock.mismatch;
+  return {
+    brokerServer: clock.brokerServer,
+    text: `Broker clock: ${clock.description} · ${clock.source === "set" ? "set by you" : "inferred"}`,
+    rule: clock.rule,
+    caution: mismatch
+      ? `The broker clock has read ${formatOffset(mismatch.observedOffsetMinutes)} for ${duration(now - mismatch.since)}, but this rule expects ${formatOffset(offsetAtUtc(clock.rule, now))} now. If the broker changed its clock, change the rule.`
+      : null,
+  };
 }
 
 /** Installed, and the EA has not connected yet: the MetaTrader steps are still to do. */

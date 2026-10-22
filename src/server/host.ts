@@ -57,6 +57,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         windowToken: config.windowToken,
         dashboardFolder: config.dashboardFolder,
         now: options.now,
+        database,
         ...(terminals ? { terminals } : {}),
         // The Settings view saves here too; main applies what was saved (Start with Windows, theme, new ports).
         settings: { store: settings, onSaved: (saved) => send({ type: "settings", settings: saved }) },
@@ -83,7 +84,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       stopStatus();
       stopHook();
       await server.close().catch((e) => send({ type: "error", during: "stop", error: toServerError(e) }));
-      // Milestone 1 buffers nothing for recording, so there is nothing to flush before CHECKPOINT.
+      // Closing the server waits for its clock-rule writes; nothing else is buffered before CHECKPOINT yet.
       try {
         await database.checkpointAndClose();
         checkpoint = true;

@@ -1,12 +1,13 @@
-// Terminals view: every terminal the app found, its bridge files, its EA and the setup checklist,
-// with Install / Recompile / Remove, rescan and add folder.
+// Terminals view: every terminal the app found, its bridge files, its EA, its broker clock and the setup checklist,
+// with Install / Recompile / Remove, rescan, add folder and the broker clock's Change… dialog.
 import { useState } from "preact/hooks";
 import type { TerminalsState, TerminalView } from "../../server/terminals/index.js";
 import { post } from "../api.js";
 import { useTicker } from "../use-live.js";
 import { AddFolder } from "./add-folder.js";
+import { ClockRuleDialog } from "./clock-rule.js";
 import { CompileLogDialog } from "./compile-log.js";
-import { describeTerminal } from "./terminal-card.js";
+import { describeTerminal, type BrokerClockLine } from "./terminal-card.js";
 import type { Terminals } from "./use-terminals.js";
 
 export function TerminalsView({ terminals }: { terminals: Terminals }) {
@@ -14,6 +15,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
   const [logFor, setLogFor] = useState<TerminalView>();
+  const [clockFor, setClockFor] = useState<BrokerClockLine>();
 
   if (unavailable) {
     return (
@@ -113,7 +115,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
       )}
       <div class="cards">
         {managed.map((t) => (
-          <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} />
+          <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} changeClock={setClockFor} />
         ))}
       </div>
 
@@ -122,7 +124,7 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
           <h2 class="section-title">Found on this computer, not managed</h2>
           <div class="cards">
             {others.map((t) => (
-              <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} />
+              <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} changeClock={setClockFor} />
             ))}
           </div>
         </>
@@ -132,18 +134,29 @@ export function TerminalsView({ terminals }: { terminals: Terminals }) {
           <h2 class="section-title">Not supported yet</h2>
           <div class="cards">
             {unsupported.map((t) => (
-              <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} />
+              <TerminalCardView key={t.key} t={t} act={act} showLog={() => setLogFor(t)} changeClock={setClockFor} />
             ))}
           </div>
         </>
       )}
       {logFor && <CompileLogDialog terminal={logFor} onClose={() => setLogFor(undefined)} />}
+      {clockFor && <ClockRuleDialog brokerServer={clockFor.brokerServer} rule={clockFor.rule} onClose={() => setClockFor(undefined)} onSaved={() => refresh()} />}
     </section>
   );
 }
 
 /** One terminal; the panel's shape shows its state (terminal-card.ts). */
-function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: () => Promise<unknown>) => Promise<void>; showLog: () => void }) {
+function TerminalCardView({
+  t,
+  act,
+  showLog,
+  changeClock,
+}: {
+  t: TerminalView;
+  act: (action: () => Promise<unknown>) => Promise<void>;
+  showLog: () => void;
+  changeClock: (clock: BrokerClockLine) => void;
+}) {
   useTicker(1000); // "Last heard 3 min ago" keeps counting
   const card = describeTerminal(t, Date.now());
   const install = () => act(() => post("/api/terminals/install", { terminalIds: [t.terminalId] }));
@@ -225,6 +238,12 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
               <dd>{card.eaVersion}</dd>
             </>
           )}
+          {t.presence && (
+            <>
+              <dt>Broker server</dt>
+              <dd>{t.presence.brokerServer}</dd>
+            </>
+          )}
           {t.legacyTerminalId && (
             <>
               <dt>Legacy setup</dt>
@@ -234,6 +253,22 @@ function TerminalCardView({ t, act, showLog }: { t: TerminalView; act: (action: 
             </>
           )}
         </dl>
+      )}
+
+      {card.brokerClock && (
+        <div class="term-clock">
+          <p>
+            {card.brokerClock.text}
+            <button class="button quiet" onClick={() => changeClock(card.brokerClock!)}>
+              Change…
+            </button>
+          </p>
+          {card.brokerClock.caution && (
+            <p class="warn-text" role="note">
+              <strong>Caution:</strong> {card.brokerClock.caution}
+            </p>
+          )}
+        </div>
       )}
 
       {(t.unsupportedReason && !t.supported) || !t.detected || t.pendingRemoval.length > 0 || (found && t.legacyTerminalId) ? (

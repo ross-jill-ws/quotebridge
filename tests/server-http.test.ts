@@ -247,7 +247,7 @@ test("an offline feed can be removed over HTTP; an online feed cannot", { timeou
   const state = async () => (await (await fetch(origin + "/api/state", { headers: { cookie } })).json()) as BridgeSnapshot;
   const chart = ea({ terminal: "mt4-aaaaaaaaaaaa", broker: "Demo-Broker", symbol: "EURUSD" });
   await chart.request(chart.helloWire());
-  const feed = '["mt4-aaaaaaaaaaaa","Demo-Broker","EURUSD"]';
+  const feed = '["mt4-aaaaaaaaaaaa","EURUSD"]';
 
   const online = await remove(feed);
   assert.equal(online.status, 409);

@@ -85,5 +85,13 @@ function parseTicks(p: string[]): TickBatch {
   return { type: "samples", session: p[2], samples };
 }
 
-/** Feed key: one symbol from one terminal and broker. */
-export const feedKey = (h: Pick<Hello, "terminal" | "broker" | "symbol">) => JSON.stringify([h.terminal, h.broker, h.symbol]);
+/**
+ * Feed key: one symbol from one terminal. The broker server is not part of it: a feed's market follows its terminal's
+ * current login (ADR 11).
+ */
+export const feedKey = (h: Pick<Hello, "terminal" | "symbol">) => JSON.stringify([h.terminal, h.symbol]);
+
+/** A market: one symbol on one broker server. */
+export type Market = { brokerServer: string; symbol: string };
+
+export const marketKey = (m: Market) => JSON.stringify([m.brokerServer, m.symbol]);
