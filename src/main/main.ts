@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { get } from "node:http";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { aboutText, APP_NAME, APP_USER_MODEL_ID } from "../shared/app-identity.js";
+import { aboutText, APP_NAME, APP_USER_MODEL_ID, SOURCE_URL } from "../shared/app-identity.js";
+import { TRADINGVIEW_URL } from "../shared/licences.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
 import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, TITLE_BAR_COLOURS, type ShellPorts } from "./shell/index.js";
@@ -24,6 +25,8 @@ const TITLE_BAR_HEIGHT = 32;
 const STARTING_PAGE_MARGIN = 32;
 /** Windows cuts tray tooltips at 127 characters. */
 const TOOLTIP_MAX = 127;
+/** The only pages the window opens, in the default browser: the source and the attribution Lightweight Charts asks for. */
+const EXTERNAL_LINKS = new Set([SOURCE_URL, TRADINGVIEW_URL]);
 const STARTING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
   `<!doctype html><title>${APP_NAME}</title><body style="font-family:Segoe UI,sans-serif;margin:0;padding:${TITLE_BAR_HEIGHT + STARTING_PAGE_MARGIN}px 2rem;color:#444;app-region:drag">Starting ${APP_NAME}…</body>`,
 )}`;
@@ -107,8 +110,11 @@ async function boot() {
   });
   window.removeMenu();
   void window.loadURL(STARTING_PAGE);
-  // The window shows only the app's own dashboard.
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // The window shows only the app's own dashboard; the About links open in the default browser.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (EXTERNAL_LINKS.has(url)) void electronShell.openExternal(url);
+    return { action: "deny" };
+  });
   window.webContents.on("will-navigate", (event, url) => {
     const origin = supervisor.status().server?.httpOrigin;
     if (!origin || new URL(url).origin !== origin) event.preventDefault();

@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { SettingsView as Settings } from "../server/settings/index.js";
 import type { TerminalsState } from "../server/terminals/index.js";
 import { get } from "./api.js";
+import { ChartsView } from "./charts/charts-view.js";
 import { FeedsView } from "./feeds/feeds-view.js";
 import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
@@ -112,7 +113,7 @@ export function App() {
         ) : view === "feeds" ? (
           <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} />
         ) : view === "charts" ? (
-          <ChartsPlaceholder />
+          <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} />
         ) : view === "settings" ? (
           <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} onSaved={setSettings} />
         ) : (
@@ -203,15 +204,3 @@ function Notice({ tone, title, children }: { tone: "warn" | "bad"; title: string
   );
 }
 
-/** Until the Charts view arrives (M2-07). */
-function ChartsPlaceholder() {
-  return (
-    <section class="view">
-      <h1>Charts</h1>
-      <p class="lead">Candles drawn from the quotes the app receives.</p>
-      <div class="empty">
-        <p>Charts are not ready yet.</p>
-      </div>
-    </section>
-  );
-}

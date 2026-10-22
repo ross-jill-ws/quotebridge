@@ -1,7 +1,7 @@
 // The Settings view's model (server process): the settings it shows and the changes it may make.
 // The server stays the single writer of settings.json; each save is handed on so main applies it.
 import { createServer } from "node:net";
-import { THEMES, type Settings, type SettingsStore } from "../../shared/settings-store.js";
+import { CHART_COLOURS, THEMES, type Settings, type SettingsStore } from "../../shared/settings-store.js";
 import type { PortRole } from "../port-in-use.js";
 
 export type AppSettingsOptions = {
@@ -11,7 +11,7 @@ export type AppSettingsOptions = {
 };
 
 /** What GET and POST /api/settings answer. */
-export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "ports"> & {
+export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "chartColours" | "ports"> & {
   /** The ports this server is bound to. They differ from `ports` after a change until main restarts the server, or in a dev run with port overrides. */
   portsInUse: Settings["ports"];
 };
@@ -52,6 +52,9 @@ export class AppSettings {
       } else if (key === "theme") {
         if (!(THEMES as readonly unknown[]).includes(value)) throw new SettingsRequestError(400, `The theme must be one of ${THEMES.join(", ")}.`);
         change.theme = value as Settings["theme"];
+      } else if (key === "chartColours") {
+        if (!(CHART_COLOURS as readonly unknown[]).includes(value)) throw new SettingsRequestError(400, `The chart colours must be one of ${CHART_COLOURS.join(", ")}.`);
+        change.chartColours = value as Settings["chartColours"];
       } else if (key !== "ports") {
         throw new SettingsRequestError(400, `"${key}" cannot be changed here.`);
       }
@@ -87,8 +90,8 @@ export class AppSettings {
   }
 
   private toView(settings: Settings): SettingsView {
-    const { startWithWindows, openWindowAtStartup, theme, flashPrices, ports } = settings;
-    return { startWithWindows, openWindowAtStartup, theme, flashPrices, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
+    const { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, ports } = settings;
+    return { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
   }
 }
 

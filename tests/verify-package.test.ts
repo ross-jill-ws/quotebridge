@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { verifyPackage } from "../scripts/release/verify-package.js";
+import { LICENCE_TEXTS } from "../src/shared/licences.js";
 
 const EA_FILES: Record<string, string> = {
   "mt4/Experts/QuoteBridge.mq4": '#property version "1.08"\n#include <QuoteBridgeZmq.mqh>\n',
@@ -70,6 +71,7 @@ const DASHBOARD: Record<string, string | Buffer> = {
   "dist/dashboard/app.css": '@font-face { font-family: "Archivo"; src: url(fonts/archivo-latin.woff2) format("woff2"); }\nbody { font-family: "Archivo", sans-serif; }\n',
   "dist/dashboard/app.js": 'const source = "https://github.com/example/quotebridge";',
   "dist/dashboard/fonts/archivo-latin.woff2": WOFF2,
+  ...Object.fromEntries(LICENCE_TEXTS.map((path) => [`dist/dashboard/${path}`, "Licence text"])),
 };
 
 /** A repository whose HEAD holds the EA sources, and a clean unpacked app built from it. */
@@ -197,5 +199,15 @@ test("the dashboard page and stylesheet must load nothing from the network", asy
   assert.deepEqual(await verifyPackage({ appFolder: f.app, repoFolder: f.repo, ref: f.ref }), [
     "The dashboard loads from the network: dist/dashboard/index.html (https://fonts.googleapis.com/css2?family=Archivo)",
     "The dashboard loads from the network: dist/dashboard/app.css (//cdn.example.com/reset.css)",
+  ]);
+});
+
+test("the dashboard must carry the licence texts of the works it bundles", async (t) => {
+  const f = fixture(t);
+  const { "dist/dashboard/licences/lightweight-charts-NOTICE.txt": _, ...withoutNotice } = DASHBOARD;
+  writeAsar(f.asar, { ...withoutNotice, "dist/dashboard/licences/Archivo-OFL.txt": "" });
+  assert.deepEqual(await verifyPackage({ appFolder: f.app, repoFolder: f.repo, ref: f.ref }), [
+    "The dashboard does not carry a licence text: dist/dashboard/licences/Archivo-OFL.txt",
+    "The dashboard does not carry a licence text: dist/dashboard/licences/lightweight-charts-NOTICE.txt",
   ]);
 });

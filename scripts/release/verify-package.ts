@@ -6,7 +6,8 @@
 // - `resources\bridge\native` holds the x86 DLL the EA imports, with its license notices (ADR 8);
 // - the native Node modules (ZeroMQ, DuckDB) are unpacked from the asar archive;
 // - the dashboard in the asar archive holds the Archivo font and every file its stylesheet uses, and
-//   neither its page nor its stylesheet loads anything from the network.
+//   neither its page nor its stylesheet loads anything from the network;
+// - the dashboard carries the licence texts of the works it bundles (About › Licences).
 //
 // Usage: tsx scripts/release/verify-package.ts <win-unpacked folder> [git ref, default HEAD]
 import { execFile } from "node:child_process";
@@ -14,6 +15,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { LICENCE_TEXTS } from "../../src/shared/licences.js";
 import { PE_MACHINE_X86, peMachineType } from "../../src/shared/terminal-catalog/pe-machine.js";
 
 const run = promisify(execFile);
@@ -125,6 +127,9 @@ async function checkDashboard(asarFile: string): Promise<string[]> {
     else if (path.endsWith(".woff2") && bytes.subarray(0, 4).toString("latin1") === "wOF2") font = true;
   }
   if (!font) problems.push("No woff2 font is bundled with the dashboard (the Archivo font, never loaded from the network).");
+  for (const path of [...LICENCE_TEXTS].sort()) {
+    if (!archive.file(DASHBOARD + path)?.length) problems.push(`The dashboard does not carry a licence text: ${DASHBOARD}${path}`);
+  }
   return problems;
 }
 
@@ -197,5 +202,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const problem of problems) console.error(`✖ ${problem}`);
     process.exit(1);
   }
-  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked, dashboard font bundled.`);
+  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked, dashboard font and licence texts bundled.`);
 }

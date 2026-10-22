@@ -46,6 +46,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
   ".map": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 const SECURITY_HEADERS = {

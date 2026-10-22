@@ -6,7 +6,7 @@ import { parsePort, portChange, portsNote } from "../src/dashboard/settings/sett
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
-const VIEW: SettingsView = { startWithWindows: true, openWindowAtStartup: false, theme: "system", flashPrices: true, ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
+const VIEW: SettingsView = { startWithWindows: true, openWindowAtStartup: false, theme: "system", flashPrices: true, chartColours: "default", ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
 
 test("a typed port is a whole number from 1024 to 65535, different from the other port and from the current one", () => {
   assert.deepEqual(parsePort(" 5556 ", "ea", VIEW), { port: 5556 });

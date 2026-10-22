@@ -173,3 +173,11 @@ test("a hand-edited Flash prices value that cannot work is read as its default",
   await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, flashPrices: "off" }));
   assert.equal((await new SettingsStore(folder).read()).flashPrices, true);
 });
+
+test("a hand-edited Chart colours value that cannot work is read as its default", async (t) => {
+  const folder = await appData(t);
+  await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, chartColours: "purple" }));
+  assert.equal((await new SettingsStore(folder).read()).chartColours, "default");
+  await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, chartColours: "green-on-black" }));
+  assert.equal((await new SettingsStore(folder).read()).chartColours, "green-on-black");
+});

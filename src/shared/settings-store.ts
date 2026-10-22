@@ -25,6 +25,9 @@ export interface DeclinedTerminal {
 export const THEMES = ["system", "light", "dark"] as const;
 export type Theme = (typeof THEMES)[number];
 
+export const CHART_COLOURS = ["default", "green-on-black"] as const;
+export type ChartColours = (typeof CHART_COLOURS)[number];
+
 export interface Settings {
   format: typeof SETTINGS_FORMAT;
   managedTerminals: ManagedTerminal[];
@@ -42,6 +45,8 @@ export interface Settings {
   theme: Theme;
   /** The pips flash Uptick or Downtick on a tick (never with reduced motion). */
   flashPrices: boolean;
+  /** The Charts view's colour scheme: the app's own colours, or MetaTrader's classic Green on black. */
+  chartColours: ChartColours;
   firstCloseNotificationShown: boolean;
   /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
   setupCompleted: boolean;
@@ -57,6 +62,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   openWindowAtStartup: false,
   theme: "system",
   flashPrices: true,
+  chartColours: "default",
   firstCloseNotificationShown: false,
   setupCompleted: false,
 });
@@ -132,6 +138,7 @@ function withDefaults(stored: unknown): Settings {
     openWindowAtStartup: typeof partial.openWindowAtStartup === "boolean" ? partial.openWindowAtStartup : defaults.openWindowAtStartup,
     theme: (THEMES as readonly unknown[]).includes(partial.theme) ? partial.theme! : defaults.theme,
     flashPrices: typeof partial.flashPrices === "boolean" ? partial.flashPrices : defaults.flashPrices,
+    chartColours: (CHART_COLOURS as readonly unknown[]).includes(partial.chartColours) ? partial.chartColours! : defaults.chartColours,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };

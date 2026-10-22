@@ -4,7 +4,8 @@ import type { FeedSnapshot } from "../../server/bridge/index.js";
 import { post } from "../api.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
-import { describeFeed, groupFeeds, nextFlash, priceParts, type Flash, type FeedGroup } from "./feed-row.js";
+import { Price } from "../price.js";
+import { describeFeed, groupFeeds, nextFlash, type Flash, type FeedGroup } from "./feed-row.js";
 
 type Props = {
   live: Live;
@@ -184,26 +185,6 @@ function FeedGroupView({
         </table>
       </div>
     </section>
-  );
-}
-
-/** A price set like a dealing ticket; on a tick the pips flash in its direction and fade back to ink. */
-function Price({ value, digits, flash }: { value: number | undefined; digits: number; flash?: Flash }) {
-  if (value === undefined) return <span class="px none">—</span>;
-  const { big, pips, pipette } = priceParts(value, digits);
-  const direction = flash?.direction ?? "none";
-  return (
-    <span class="px">
-      <span class="visually-hidden">{value.toFixed(digits)}</span>
-      <span class="big" aria-hidden="true">
-        {big}
-      </span>
-      {/* A new key restarts the fade on every tick. */}
-      <span key={`${direction}-${flash?.changedAt}`} class={direction === "none" ? "moving" : `moving ${direction}`} aria-hidden="true">
-        {pips && <span class="pips">{pips}</span>}
-        {pipette && <span class="pipette">{pipette}</span>}
-      </span>
-    </span>
   );
 }
 

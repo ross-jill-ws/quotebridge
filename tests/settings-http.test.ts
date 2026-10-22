@@ -53,6 +53,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     openWindowAtStartup: false,
     theme: "system",
     flashPrices: true,
+    chartColours: "default",
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
   });
@@ -136,4 +137,20 @@ test("Flash prices can be turned off and on from the Settings view", async (t) =
   assert.equal((await store.read()).flashPrices, false);
   assert.equal(saved.at(-1)?.flashPrices, false);
   assert.equal((await post({ flashPrices: true })).body.flashPrices, true);
+});
+
+test("Chart colours can be switched to Green on black and back from the Settings view", async (t) => {
+  const { store, saved, get, post } = await start(t);
+  assert.equal((await get()).body.chartColours, "default");
+
+  const { status, body } = await post({ chartColours: "green-on-black" });
+
+  assert.equal(status, 200);
+  assert.equal(body.chartColours, "green-on-black");
+  assert.equal((await store.read()).chartColours, "green-on-black");
+  assert.equal(saved.at(-1)?.chartColours, "green-on-black");
+  assert.equal((await post({ chartColours: "default" })).body.chartColours, "default");
+  for (const value of ["classic", true, null]) {
+    assert.equal((await post({ chartColours: value })).status, 400, JSON.stringify(value));
+  }
 });

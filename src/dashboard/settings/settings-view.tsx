@@ -4,13 +4,15 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
-import type { Theme } from "../../shared/settings-store.js";
+import { BUNDLED_WORKS } from "../../shared/licences.js";
+import type { ChartColours, Theme } from "../../shared/settings-store.js";
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
 import { parsePort, PORT_LABELS, portChange, portsNote, type PortRole } from "./settings-model.js";
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
+const CHART_COLOUR_LABELS: Record<ChartColours, string> = { default: "Default", "green-on-black": "Green on black" };
 
 /** `onSaved` hands each saved change to the shell (the Feeds view's Flash prices, the rail's port). */
 export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: number; onSaved?: (settings: Settings) => void }) {
@@ -97,6 +99,27 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
                 onClick={() => settings.theme !== theme && change({ theme }).catch(() => {})}
               >
                 {THEME_LABELS[theme]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-label" id="chart-colours-label">
+              Chart colours
+            </span>
+            <span class="setting-hint">Default follows the theme. Green on black is MetaTrader's classic look: hollow bull bars on a black canvas.</span>
+          </div>
+          <div class="segmented" role="radiogroup" aria-labelledby="chart-colours-label">
+            {(Object.keys(CHART_COLOUR_LABELS) as ChartColours[]).map((chartColours) => (
+              <button
+                key={chartColours}
+                class="segment"
+                role="radio"
+                aria-checked={settings.chartColours === chartColours}
+                onClick={() => settings.chartColours !== chartColours && change({ chartColours }).catch(() => {})}
+              >
+                {CHART_COLOUR_LABELS[chartColours]}
               </button>
             ))}
           </div>
@@ -306,29 +329,52 @@ function About() {
       <div class="setting-row">
         <div class="setting-text">
           <span class="setting-label">Source</span>
-          <span class="mono path">{SOURCE_URL}</span>
+          <a class="mono path" href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
+            {SOURCE_URL}
+          </a>
         </div>
       </div>
       <details class="setting-row licences">
         <summary>Licences</summary>
         <ul>
-          <li>
-            <strong>{APP_NAME}</strong>: MIT License.
-          </li>
-          <li>
-            <strong>libzmq</strong> (ZeroMQ), bundled for the QuoteBridge EA: Mozilla Public License 2.0, built from unmodified upstream source.
-          </li>
-          <li>
-            <strong>Preact</strong>: MIT License.
-          </li>
-          <li>
-            <strong>Archivo</strong> typeface, © 2020 The Archivo Project Authors: SIL Open Font License 1.1.
-          </li>
+          {BUNDLED_WORKS.map((work) => (
+            <li key={work.name}>
+              <strong>{work.name}</strong>: {work.licence}.
+              {work.link && (
+                <>
+                  {" "}
+                  <a href={work.link.url} target="_blank" rel="noopener noreferrer">
+                    {work.link.label}
+                  </a>
+                </>
+              )}
+              {work.texts.map((text) => (
+                <LicenceText key={text.path} label={text.label} path={text.path} />
+              ))}
+            </li>
+          ))}
         </ul>
       </details>
       <p class="setting-row setting-hint">
         {TRADEMARK_NOTICE} {APP_NAME} is an independent project, not affiliated with or endorsed by MetaQuotes Ltd.
       </p>
     </SettingsGroup>
+  );
+}
+
+/** A licence or notice text, read from the dashboard when first opened. */
+function LicenceText({ label, path }: { label: string; path: string }) {
+  const [text, setText] = useState<string>();
+  const load = (e: Event) => {
+    if (text !== undefined || !(e.currentTarget as HTMLDetailsElement).open) return;
+    fetch(`/${path}`).then(
+      (res) => (res.ok ? res.text() : Promise.reject(new Error())),
+    ).then(setText, () => setText("The text could not be read."));
+  };
+  return (
+    <details class="licence-text" onToggle={load}>
+      <summary>{label}</summary>
+      <pre>{text ?? "Loading…"}</pre>
+    </details>
   );
 }
