@@ -8,8 +8,8 @@ import { HIDDEN_ARG } from "./environment.js";
 
 /** The title bar overlay takes the rail colour (dev/design/visual-design.md), with the caption symbols in rail ink. */
 export const TITLE_BAR_COLOURS = {
-  light: { color: "#172033", symbolColor: "#b9c3d3" },
-  dark: { color: "#08101d", symbolColor: "#8c99ae" },
+  light: { color: "#161d45", symbolColor: "#c3cbe0" },
+  dark: { color: "#060b17", symbolColor: "#c3cbe0" },
 } as const;
 
 export type TitleBarColours = { color: string; symbolColor: string };

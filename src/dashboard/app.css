@@ -22,34 +22,47 @@
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-/* Design tokens: each colour is light-dark(light, dark). The page follows the colour-scheme media
-   query (in the app window, main's nativeTheme.themeSource) unless data-theme forces one (theme.ts). */
+/* Design tokens (dev/design/visual-design.md, M3-09): each colour is light-dark(light, dark). The page follows the
+   colour-scheme media query (in the app window, main's nativeTheme.themeSource) unless data-theme forces one
+   (theme.ts). The tokens the chart's canvas needs are also in colour-tokens.ts; a test keeps the two equal. */
 :root {
   color-scheme: light dark;
 
-  --ink: light-dark(#172033, #dce3ee);
-  --ink-2: light-dark(#4a5568, #a3afc2);
-  --ink-3: light-dark(#7a8699, #74829a);
-  --ground: light-dark(#edf0f4, #0d1524);
-  --surface: light-dark(#ffffff, #131e31);
-  --sunk: light-dark(#f5f7fa, #101a2b);
-  --line: light-dark(#d5dbe3, #24314a);
-  --line-soft: light-dark(#e6eaf0, #1c2840);
-  --rail: light-dark(#172033, #08101d);
-  --rail-ink: light-dark(#b9c3d3, #8c99ae);
+  --ink: light-dark(#131a38, #e3e8f4);
+  --ink-2: light-dark(#4a5370, #a6b0c8);
+  --ink-3: light-dark(#6e7790, #78839e);
+  --ground: light-dark(#eef1f7, #0a1120);
+  --surface: light-dark(#ffffff, #111a2e);
+  --sunk: light-dark(#f6f8fc, #0d1526);
+  --line: light-dark(#d6dbe8, #222f4a);
+  --line-soft: light-dark(#e7ebf3, #1a2640);
+  --rail: light-dark(#161d45, #060b17);
+  --rail-ink: #c3cbe0;
   --rail-ink-strong: #ffffff;
-  --rail-line: rgb(255 255 255 / 8%);
+  --rail-line: light-dark(rgb(255 255 255 / 9%), rgb(255 255 255 / 7%));
   /* The rail is dark in both themes: its status colours are the dark theme's. */
-  --rail-live: #3cc98e;
-  --rail-caution: #f0b14a;
-  --rail-fault: #ff8a80;
+  --rail-live: #2ee6a0;
+  --rail-caution: #f5b94a;
+  --rail-fault: #ff8f86;
 
-  --uptick: light-dark(#0f7b53, #3cc98e);
-  --downtick: light-dark(#c2412d, #ff7d69);
-  --caution: light-dark(#9a5b00, #f0b14a);
-  --caution-bg: light-dark(#fbefd9, #33270f);
-  --fault: light-dark(#b42318, #ff8a80);
-  --fault-bg: light-dark(#fce8e6, #3a1a1d);
+  /* The one accent, for the app's own controls only: never on a number, a price or a candle. */
+  --accent: light-dark(#3346e6, #8f9cff);
+  --accent-ink: light-dark(#ffffff, #0a1120);
+  --accent-soft: light-dark(#e6e9fd, #1d2552);
+
+  /* Price direction. Text takes Uptick and Downtick (4.5:1 on the surface); marks (candles, dots, washes) take the
+     vivid ones, which light mode can make more saturated. In dark mode they are the same. */
+  --uptick: light-dark(#007f56, #2ee6a0);
+  --downtick: light-dark(#d42a3f, #ff5e6e);
+  --uptick-vivid: light-dark(#00a86b, #2ee6a0);
+  --downtick-vivid: light-dark(#e5384f, #ff5e6e);
+  --up-wash: light-dark(rgb(0 168 107 / 16%), rgb(46 230 160 / 18%));
+  --down-wash: light-dark(rgb(229 56 79 / 14%), rgb(255 94 110 / 18%));
+
+  --caution: light-dark(#9c5c00, #f5b94a);
+  --caution-bg: light-dark(#fdf1dc, #33270f);
+  --fault: light-dark(#c0261b, #ff8f86);
+  --fault-bg: light-dark(#fde9e7, #3a1a1d);
 
   /* Series (indicators, reference lines): never green or red, so a line never reads as direction. */
   --series-gold: light-dark(#b7791f, #e8b44a);
@@ -104,11 +117,15 @@ input {
 
 a,
 input[type="checkbox"] {
-  accent-color: var(--ink);
+  accent-color: var(--accent);
+}
+
+a {
+  color: var(--accent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -236,15 +253,21 @@ input[type="checkbox"] {
   outline-offset: -2px;
 }
 
-/* The current view joins the page: its item takes the page's ground and runs into it, with curved corners. */
+/* The current view joins the page: its item takes the page's ground and runs into it, with curved corners, and
+   carries the accent on a bar at its left and on its icon. */
 .rail-item[aria-current="page"] {
   background: var(--ground);
   color: var(--ink);
   font-weight: 650;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.rail-item[aria-current="page"] svg {
+  color: var(--accent);
 }
 
 .rail-item[aria-current="page"]:focus-visible {
-  outline-color: var(--ink);
+  outline-color: var(--accent);
 }
 
 .rail-item[aria-current="page"]::before,
@@ -383,7 +406,7 @@ input[type="checkbox"] {
 
 .good > .dot,
 .dot.good {
-  background: var(--uptick);
+  background: var(--uptick-vivid);
 }
 
 .warn > .dot {
@@ -476,7 +499,7 @@ input[type="checkbox"] {
 
 .button.quiet:hover:not(:disabled) {
   border-color: transparent;
-  background: var(--sunk);
+  background: var(--accent-soft);
   color: var(--ink);
 }
 
@@ -490,14 +513,14 @@ input[type="checkbox"] {
 }
 
 .button.primary {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--surface);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .button.primary:hover:not(:disabled) {
-  border-color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 88%, var(--surface));
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 88%, var(--ink));
 }
 
 .button.small {
@@ -762,8 +785,13 @@ input[type="checkbox"]:focus-visible {
   vertical-align: 2px;
 }
 
-/* The one bold thing: prices set the way a dealing ticket sets them. */
+/* The one bold thing: prices set the way a dealing ticket sets them. The padding gives a tick's wash room; the
+   negative margin keeps the digits where they were. */
 .px {
+  display: inline-block;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
   white-space: nowrap;
   font-stretch: 92%;
 }
@@ -793,13 +821,36 @@ input[type="checkbox"]:focus-visible {
   color: var(--ink-3);
 }
 
-/* On a tick the pips flash Uptick or Downtick and settle back to ink over 1.2 s. */
-.flashing .moving.up > * {
-  animation: flash-up 1.2s ease-out;
+/* On a tick the pips flash Uptick or Downtick and a wash with an underline appears behind the whole price; both
+   fade over 0.9 s and the pips settle back to ink. */
+.flashing .px.up .moving > * {
+  animation: flash-up 0.9s ease-out;
 }
 
-.flashing .moving.down > * {
-  animation: flash-down 1.2s ease-out;
+.flashing .px.down .moving > * {
+  animation: flash-down 0.9s ease-out;
+}
+
+.flashing .px.up {
+  animation: wash-up 0.9s ease-out;
+}
+
+.flashing .px.down {
+  animation: wash-down 0.9s ease-out;
+}
+
+@keyframes wash-up {
+  from {
+    background: var(--up-wash);
+    box-shadow: inset 0 -2px 0 var(--uptick-vivid);
+  }
+}
+
+@keyframes wash-down {
+  from {
+    background: var(--down-wash);
+    box-shadow: inset 0 -2px 0 var(--downtick-vivid);
+  }
 }
 
 @keyframes flash-up {
@@ -1318,7 +1369,7 @@ input[type="checkbox"]:focus-visible {
 }
 
 .progress-icon.good {
-  background: var(--uptick);
+  background: var(--uptick-vivid);
 }
 
 .progress-icon.bad {
@@ -1406,7 +1457,7 @@ label.setting-row {
   color: var(--ink-3);
 }
 
-/* A checkbox drawn as a switch; still a native checkbox for keyboard and screen readers. On is ink. */
+/* A checkbox drawn as a switch; still a native checkbox for keyboard and screen readers. On is the accent. */
 .switch {
   appearance: none;
   flex: none;
@@ -1434,7 +1485,7 @@ label.setting-row {
 }
 
 .switch:checked {
-  background: var(--ink);
+  background: var(--accent);
 }
 
 .switch:checked::after {
@@ -1464,7 +1515,7 @@ label.setting-row {
   padding: 2px;
   border: 1px solid var(--line);
   border-radius: var(--radius-small);
-  background: var(--surface);
+  background: var(--sunk);
 }
 
 .segment {
@@ -1478,9 +1529,11 @@ label.setting-row {
   cursor: pointer;
 }
 
+/* The selected segment: a raised chip in accent text. */
 .segment[aria-checked="true"] {
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 .port-row {
@@ -1723,7 +1776,7 @@ a.path {
 }
 
 .symbol-pick:has(select:focus-visible) {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--accent);
   outline-offset: 4px;
   border-radius: 4px;
 }
@@ -1764,7 +1817,7 @@ a.path {
   padding: 2px;
   border: 1px solid var(--line);
   border-radius: var(--radius-small);
-  background: var(--surface);
+  background: var(--sunk);
 }
 
 .seg button {
@@ -1781,8 +1834,9 @@ a.path {
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 .seg svg {
@@ -2002,7 +2056,8 @@ a.path {
     scroll-behavior: auto !important;
   }
 
-  /* Prices stay still: no flash at all, not even a frame of colour. */
+  /* Prices stay still: no flash and no wash, not even a frame of colour. */
+  .px,
   .moving > * {
     animation: none !important;
   }

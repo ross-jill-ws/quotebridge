@@ -291,8 +291,8 @@ test("the theme reaches Electron at start and whenever the server saved a new on
 });
 
 test("the title bar takes the rail colour of the theme at start, after a saved change and when Windows switches", () => {
-  const LIGHT = { color: "#172033", symbolColor: "#b9c3d3" };
-  const DARK = { color: "#08101d", symbolColor: "#8c99ae" };
+  const LIGHT = { color: "#161d45", symbolColor: "#c3cbe0" };
+  const DARK = { color: "#060b17", symbolColor: "#c3cbe0" };
   const { shell, supervisor, window, system } = setup({ settings: { ...AFTER_SETUP, theme: "dark" } });
   shell.start();
   assert.deepEqual(window.titleBar, DARK);

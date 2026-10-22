@@ -21,6 +21,7 @@ import {
 } from "lightweight-charts";
 import type { Candle } from "../../server/candles/index.js";
 import type { ChartType } from "./chart-model.js";
+import { COLOUR_TOKENS } from "../colour-tokens.js";
 import type { ChartScheme } from "./chart-scheme.js";
 import type { IndicatorSpec } from "./indicators.js";
 
@@ -267,7 +268,7 @@ function sameCandle(a: Candle, b: Candle) {
 
 /** MetaTrader's period separators, as fine dashed lines at the first bar of each day (intraday periods only). */
 class DaySeparators implements ISeriesPrimitive<Time> {
-  colour = "#d5dbe3";
+  colour: string = COLOUR_TOKENS.line[0];
   private times: readonly number[] = [];
   private attachedTo?: SeriesAttachedParameter<Time>;
   private readonly views: readonly IPrimitivePaneView[] = [

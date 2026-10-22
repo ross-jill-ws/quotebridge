@@ -1,24 +1,35 @@
 // The Charts view's pure models: colour schemes, the legend, the forming candle, day separators and view memory.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, readChartMemory, showsCandlesSince, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
+import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
 import { indicatorLabel, nextColour } from "../src/dashboard/charts/indicators.js";
 
-test("Default candles are filled Uptick and Downtick on the surface colour, following the theme", () => {
+test("Default candles are filled Uptick vivid and Downtick vivid on the surface colour, following the theme", () => {
   const light = chartScheme("default", "light");
   assert.equal(light.canvas, "#ffffff");
-  assert.deepEqual(light.up, { body: "#0f7b53", wick: "#0f7b53", border: "#0f7b53" });
-  assert.deepEqual(light.down, { body: "#c2412d", wick: "#c2412d", border: "#c2412d" });
-  assert.equal(light.bidLabel, "#172033");
-  assert.equal(light.ask, "#c2412d");
+  assert.deepEqual(light.up, { body: "#00a86b", wick: "#00a86b", border: "#00a86b" });
+  assert.deepEqual(light.down, { body: "#e5384f", wick: "#e5384f", border: "#e5384f" });
+  assert.equal(light.bidLabel, "#131a38");
+  assert.equal(light.ask, "#d42a3f", "the Ask line is Downtick, the text colour");
 
   const dark = chartScheme("default", "dark");
-  assert.equal(dark.canvas, "#131e31");
-  assert.deepEqual(dark.up, { body: "#3cc98e", wick: "#3cc98e", border: "#3cc98e" });
-  assert.deepEqual(dark.down, { body: "#ff7d69", wick: "#ff7d69", border: "#ff7d69" });
-  assert.equal(dark.bidLabel, "#dce3ee");
-  assert.equal(dark.crosshair, "#74829a");
+  assert.equal(dark.canvas, "#111a2e");
+  assert.deepEqual(dark.up, { body: "#2ee6a0", wick: "#2ee6a0", border: "#2ee6a0" });
+  assert.deepEqual(dark.down, { body: "#ff5e6e", wick: "#ff5e6e", border: "#ff5e6e" });
+  assert.equal(dark.bidLabel, "#e3e8f4");
+  assert.equal(dark.crosshair, "#78839e");
+});
+
+test("the chart's colours are app.css's tokens: every light-dark() pair there matches the colour module", () => {
+  const css = readFileSync(new URL("../src/dashboard/app.css", import.meta.url), "utf8");
+  for (const [name, [light, dark]] of Object.entries(COLOUR_TOKENS)) {
+    const match = new RegExp(`--${name}:\\s*light-dark\\(\\s*(#[0-9a-f]{6}),\\s*(#[0-9a-f]{6})\\s*\\);`, "i").exec(css);
+    assert.ok(match, `app.css defines --${name} as light-dark(#rrggbb, #rrggbb)`);
+    assert.deepEqual([match[1].toLowerCase(), match[2].toLowerCase()], [light, dark], `--${name}`);
+  }
 });
 
 test("Green on black draws hollow bull bars and filled bear bars in green on a black canvas, whatever the theme", () => {

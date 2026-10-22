@@ -1,7 +1,9 @@
-// The chart's colours (pure). The canvas draws with explicit colours, so the scheme carries the design
-// tokens of app.css for each theme: Default follows the light or dark theme; Green on black is MetaTrader's
-// classic preset and the same in both. Indicator lines always take the series palette, never a price colour.
+// The chart's colours (pure). The canvas draws with explicit colours, so the scheme is built from the design
+// tokens (colour-tokens.ts, kept equal to app.css's) for each theme: Default follows the light or dark theme; Green on
+// black is MetaTrader's classic preset and the same in both. Indicator lines always take the series palette, never a
+// price colour.
 import type { ChartColours } from "../../shared/settings-store.js";
+import { COLOUR_TOKENS, type ColourToken } from "../colour-tokens.js";
 
 export type ColourMode = "light" | "dark";
 
@@ -37,40 +39,31 @@ export type ChartScheme = {
 
 const filled = (colour: string): CandleColours => ({ body: colour, wick: colour, border: colour });
 
-const DEFAULT: Record<ColourMode, ChartScheme> = {
-  light: {
-    canvas: "#ffffff",
-    text: "#4a5568",
-    strong: "#172033",
-    grid: "#eef1f5",
-    line: "#d5dbe3",
-    crosshair: "#7a8699",
-    crosshairLabel: "#172033",
-    up: filled("#0f7b53"),
-    down: filled("#c2412d"),
-    price: "#172033",
-    bidLabel: "#172033",
-    ask: "#c2412d",
-    level: "#a0aabb",
-    series: ["#b7791f", "#2f6fb3", "#7a4cc2", "#4a5568"],
-  },
-  dark: {
-    canvas: "#131e31",
-    text: "#a3afc2",
-    strong: "#dce3ee",
-    grid: "#1a2640",
-    line: "#24314a",
-    crosshair: "#74829a",
-    crosshairLabel: "#dce3ee",
-    up: filled("#3cc98e"),
-    down: filled("#ff7d69"),
-    price: "#dce3ee",
-    bidLabel: "#dce3ee",
-    ask: "#ff7d69",
-    level: "#4a5872",
-    series: ["#e8b44a", "#6aa8ea", "#b08cf0", "#a3afc2"],
-  },
-};
+/** Indicator levels: fainter than the tertiary ink, not a token of their own. */
+const LEVEL: Record<ColourMode, string> = { light: "#a0aabb", dark: "#4a5872" };
+
+/** Default: the canvas is the surface, candles are Uptick and Downtick vivid, the Ask line is Downtick. */
+function tokenScheme(mode: ColourMode): ChartScheme {
+  const token = (name: ColourToken) => COLOUR_TOKENS[name][mode === "light" ? 0 : 1];
+  return {
+    canvas: token("surface"),
+    text: token("ink-2"),
+    strong: token("ink"),
+    grid: token("line-soft"),
+    line: token("line"),
+    crosshair: token("ink-3"),
+    crosshairLabel: token("ink"),
+    up: filled(token("uptick-vivid")),
+    down: filled(token("downtick-vivid")),
+    price: token("ink"),
+    bidLabel: token("ink"),
+    ask: token("downtick"),
+    level: LEVEL[mode],
+    series: [token("series-gold"), token("series-azure"), token("series-violet"), token("series-slate")],
+  };
+}
+
+const DEFAULT: Record<ColourMode, ChartScheme> = { light: tokenScheme("light"), dark: tokenScheme("dark") };
 
 /** Bull bars hollow (black body), bear bars filled white, green outlines and price. */
 const GREEN_ON_BLACK: ChartScheme = {
