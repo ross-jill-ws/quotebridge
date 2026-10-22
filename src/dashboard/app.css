@@ -1522,6 +1522,10 @@ label.setting-row {
   color: var(--ink-2);
 }
 
+.nowrap {
+  white-space: nowrap;
+}
+
 .recording-state.on {
   font-weight: 600;
   color: var(--ink);

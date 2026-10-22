@@ -256,15 +256,22 @@ function RecordingGroup({ timeShown }: { timeShown: TimeShown }) {
                   {row.symbol} <span class="recording-server">{row.brokerServer}</span>
                 </span>
                 <span class="setting-hint">
-                  <span class={`recording-state${recording.recording ? " on" : ""}`}>{row.state}</span> · {row.samples}
-                  {row.range && <> · {row.range}</>} · {row.size}
+                  {/* Each part wraps as a whole, never inside a date. */}
+                  <span class={`recording-state nowrap${recording.recording ? " on" : ""}`}>{row.state}</span> · <span class="nowrap">{row.samples}</span>
+                  {row.range && (
+                    <>
+                      {" "}
+                      · <span class="nowrap">{row.range}</span>
+                    </>
+                  )}{" "}
+                  · <span class="nowrap">{row.size}</span>
                 </span>
                 {consequence && (
-                  <div class="confirm" role="alertdialog" aria-label={consequence.title}>
+                  <div class="confirm" role="alertdialog" aria-label={consequence.title} onKeyDown={(e) => e.key === "Escape" && setConfirming(undefined)}>
                     <strong>{consequence.title}</strong>
                     <p>{consequence.body}</p>
                     <div class="confirm-actions">
-                      <button class="button danger" disabled={busy} onClick={() => remove(recording)}>
+                      <button class="button danger" autoFocus disabled={busy} onClick={() => remove(recording)}>
                         {consequence.confirm}
                       </button>
                       <button class="button quiet" disabled={busy} onClick={() => setConfirming(undefined)}>

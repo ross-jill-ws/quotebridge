@@ -524,14 +524,20 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
   const shown = useRef(data);
   shown.current = data && data.feed === id && data.period === period ? data : undefined;
   const loading = useRef(false);
+  // The view may move again before the page it asked for is drawn: never ask twice for the same one.
+  const asked = useRef("");
   const loadOlder = () => {
     const now = shown.current;
     if (!now || now.complete || !now.candles.length || loading.current) return;
+    const page = url(now.candles[0].time);
+    if (page === asked.current) return;
+    asked.current = page;
     loading.current = true;
-    get<CandlesAnswer>(url(now.candles[0].time))
+    get<CandlesAnswer>(page)
       .then(
         (page) => setData((d) => (d && same(d, page) ? { ...d, candles: prependOlder(d.candles, page.candles), complete: page.complete } : d)),
-        () => {},
+        // It may be asked for again.
+        () => (asked.current = ""),
       )
       .finally(() => (loading.current = false));
   };

@@ -64,7 +64,8 @@ export class ChartCanvas {
       layout: { fontFamily: FONT, fontSize: 12, attributionLogo: false, panes: { enableResize: true } },
       grid: { vertLines: { visible: false } },
       rightPriceScale: { scaleMargins: { top: 0.14, bottom: 0.08 } },
-      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 8 },
+      // The oldest loaded bar stays at the left edge: older ones load before it is reached.
+      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 8, fixLeftEdge: true },
       crosshair: { mode: CrosshairMode.Normal },
     });
     this.chart.subscribeCrosshairMove((param) => onCrosshair(param.time === undefined ? undefined : (param.time as number)));
