@@ -3,7 +3,7 @@ import { BridgeServer, marketKey } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
-import { ChartHistory } from "./history/index.js";
+import { ChartHistory, HistoryCatalog } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
@@ -80,12 +80,20 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     liveCandles: (feed, period) => candles.candles(feed, period),
     clockRule: (brokerServer) => rules.rule(brokerServer),
   });
+  const catalog = new HistoryCatalog({
+    snapshot: () => bridge.snapshot(),
+    dataFolder: config.terminalDataFolder ?? ((terminalId) => terminals?.dataFolder(terminalId)),
+    terminalName: (terminalId) => terminals?.name(terminalId),
+    clockRule: (brokerServer) => rules.rule(brokerServer),
+    storedMarkets: () => recorder?.storedMarkets() ?? [],
+    isRecording: (market) => recorder?.isRecording(market) ?? false,
+  });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await bridge.close();

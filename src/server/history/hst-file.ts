@@ -60,6 +60,25 @@ export class HstFile {
     });
   }
 
+  /** How many records the file holds and the times of its first and last, in broker seconds; null when it holds none. */
+  async span(): Promise<{ bars: number; first: number; last: number } | null> {
+    return this.read(async (file) => {
+      const count = await this.count(file);
+      return count ? { bars: count, first: await this.time(file, 0), last: await this.time(file, count - 1) } : null;
+    });
+  }
+
+  /** Every bar, oldest first, a page at a time: a download need not hold the whole file. */
+  async *pages(): AsyncGenerator<HstBar[]> {
+    const file = await open(this.path, "r");
+    try {
+      const count = await this.count(file);
+      for (let at = 0; at < count; at += READ_RECORDS) yield await this.records(file, at, Math.min(READ_RECORDS, count - at));
+    } finally {
+      await file.close();
+    }
+  }
+
   /** Up to `limit` bars older than `before` (broker seconds; all when undefined), oldest first. */
   async before(before: number | undefined, limit: number): Promise<HstPage> {
     return this.read(async (file) => {
@@ -113,6 +132,34 @@ export class HstFile {
     }
     return bars;
   }
+}
+
+/** The header of a v401 file, as MetaTrader writes it. */
+export function hstHeaderBytes(symbol: string, minutes: number, digits: number): Buffer {
+  const out = Buffer.alloc(HEADER_BYTES);
+  out.writeInt32LE(401, 0);
+  out.write("(C)opyright 2003, MetaQuotes Software Corp.", 4, 64, "latin1");
+  out.write(symbol, 68, 12, "latin1");
+  out.writeInt32LE(minutes, 80);
+  out.writeInt32LE(digits, 84);
+  return out;
+}
+
+/** v401 records of `bars` (oldest first, broker seconds), to follow the header. */
+export function hstRecordBytes(bars: readonly HstBar[]): Buffer {
+  const out = Buffer.alloc(60 * bars.length);
+  bars.forEach((bar, i) => {
+    const at = i * 60;
+    out.writeBigInt64LE(BigInt(bar.time), at);
+    out.writeDoubleLE(bar.open, at + 8);
+    out.writeDoubleLE(bar.high, at + 16);
+    out.writeDoubleLE(bar.low, at + 24);
+    out.writeDoubleLE(bar.close, at + 32);
+    out.writeBigInt64LE(BigInt(Math.round(bar.tickVolume)), at + 40);
+    out.writeInt32LE(bar.spread, at + 48);
+    out.writeBigInt64LE(BigInt(Math.round(bar.realVolume)), at + 52);
+  });
+  return out;
 }
 
 function readHeader(buffer: Buffer): HstHeader | null {

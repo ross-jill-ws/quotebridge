@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
-import type { ChartHistory } from "../history/index.js";
+import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog } from "../history/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
@@ -25,6 +25,8 @@ export type HttpServerOptions = {
   bridge: BridgeServer;
   candles: CandleBuilder;
   history: ChartHistory;
+  /** The History page's markets and downloads. */
+  catalog: HistoryCatalog;
   clockRules: ClockRules;
   /** Recording, when the server has a database. */
   recorder?: Recorder;
@@ -137,6 +139,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       res.writeHead(204).end();
       return;
     }
+    if (url.pathname === "/api/history" || url.pathname.startsWith("/api/history/")) return handleHistory(url, req, res);
     if (url.pathname === "/api/clock-rules") return handleClockRules(req, res);
     if (options.recorder && ["/api/markets/recording", "/api/recordings", "/api/recordings/delete"].includes(url.pathname)) return handleRecording(options.recorder, url, req, res);
     if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, req, res);
@@ -222,6 +225,48 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       clockRule: feed.clockRule,
       ...page,
     });
+  }
+
+  /**
+   * The History page: GET /api/history lists every market with its periods; /api/history/csv and /api/history/hst
+   * download everything available for `market` (its key, as listed) and `period`.
+   */
+  async function handleHistory(url: URL, req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    if (url.pathname === "/api/history") return json(res, 200, { markets: await options.catalog.list() });
+    const format = url.pathname === "/api/history/csv" ? "csv" : url.pathname === "/api/history/hst" ? "hst" : undefined;
+    if (!format) return json(res, 404, { error: "Unknown endpoint" });
+    const market = parseMarket(url.searchParams.get("market"));
+    if (!market) return json(res, 400, { error: 'Expected market as ["<broker server>","<symbol>"]' });
+    const period = url.searchParams.get("period") as Period;
+    if (!PERIODS.includes(period)) return json(res, 400, { error: `Expected a period: ${PERIODS.join(", ")}` });
+    const download = await options.catalog.download(market, period);
+    if (!download) return json(res, 404, { error: `No history of ${market.symbol} ${period} on ${market.brokerServer} is available.` });
+    const minutes = PERIOD_MINUTES[period];
+    const { digits, clockRule, pages } = download;
+    res.writeHead(200, {
+      "content-type": format === "csv" ? "text/csv; charset=utf-8" : "application/octet-stream",
+      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${market.symbol}${minutes}.${format}`)}`,
+      "cache-control": "no-store",
+    });
+    // Written a page at a time, waiting for the client to take each: a long M1 file is never held whole. A client that
+    // goes away ends the wait too, and the loop then stops (closing the file).
+    const write = (chunk: string | Buffer) =>
+      res.write(chunk)
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            const done = () => {
+              res.off("drain", done).off("close", done);
+              resolve();
+            };
+            res.on("drain", done).on("close", done);
+          });
+    await write(format === "csv" ? CSV_HEADER : hstHeaderBytes(market.symbol, minutes, digits));
+    for await (const bars of pages) {
+      if (res.destroyed) return;
+      await write(format === "csv" ? csvRows(bars, digits, clockRule) : hstRecordBytes(bars));
+    }
+    res.end();
   }
 
   /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */
@@ -323,6 +368,17 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
         for (const socket of connections) socket.destroy();
       }),
   };
+}
+
+/** A market key, `["<broker server>","<symbol>"]`, or null when it is not one. */
+function parseMarket(text: string | null): { brokerServer: string; symbol: string } | null {
+  try {
+    const value: unknown = JSON.parse(text ?? "");
+    if (Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "string" && v.length > 0 && v.length <= 200)) {
+      return { brokerServer: value[0], symbol: value[1] };
+    }
+  } catch {}
+  return null;
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {

@@ -6,6 +6,7 @@ import type { TerminalsState } from "../server/terminals/index.js";
 import { get } from "./api.js";
 import { ChartsView } from "./charts/charts-view.js";
 import { FeedsView } from "./feeds/feeds-view.js";
+import { HistoryView } from "./history/history-view.js";
 import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
@@ -34,6 +35,12 @@ const ICONS = {
       <rect x="13.5" y="4" width="3" height="7" rx=".5" />
     </>
   ),
+  history: (
+    <>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M10 5.5V10l3 2" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="10" cy="10" r="2.6" />
@@ -46,6 +53,7 @@ const VIEWS = [
   { id: "feeds", label: "Feeds" },
   { id: "terminals", label: "Terminals" },
   { id: "charts", label: "Charts" },
+  { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -114,6 +122,8 @@ export function App() {
           <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "charts" ? (
           <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} timeShown={settings?.timeShown ?? "broker"} />
+        ) : view === "history" ? (
+          <HistoryView timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "settings" ? (
           <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} onSaved={setSettings} />
         ) : (

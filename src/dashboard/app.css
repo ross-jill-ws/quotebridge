@@ -1961,3 +1961,59 @@ a.path {
     animation: none !important;
   }
 }
+
+/* History */
+.history-search {
+  margin-left: auto;
+  min-width: 260px;
+}
+
+/* Cells take the ink explicitly: an inherited light-dark() colour can stay on the old theme after a switch. */
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.history-table th,
+.history-table td {
+  padding: 7px 18px;
+  text-align: left;
+  vertical-align: middle;
+  color: var(--ink);
+}
+
+.history-table th {
+  padding: 8px 18px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.history-table td {
+  border-top: 1px solid var(--line-soft);
+}
+
+.history-table td.muted {
+  color: var(--ink-2);
+}
+
+.history-table .period-col {
+  width: 72px;
+  font-weight: 600;
+}
+
+.history-table .download-col {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.history-table .download-col .button {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.history-empty {
+  margin: 0;
+  padding: 12px 18px;
+}

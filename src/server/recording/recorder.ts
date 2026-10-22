@@ -83,6 +83,11 @@ export class Recorder {
     return recorder;
   }
 
+  /** Every market stored (recorded or once recorded). */
+  storedMarkets(): StoredMarket[] {
+    return [...this.markets.values()];
+  }
+
   isRecording(market: Market): boolean {
     return this.markets.get(marketKey(market))?.recording ?? false;
   }

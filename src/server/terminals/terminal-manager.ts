@@ -217,6 +217,11 @@ export class TerminalManager {
     return this.entries.find((e) => e.terminalId === terminalId)?.dataFolder;
   }
 
+  /** A known terminal's name as the Terminals view shows it, as of the last scan. */
+  name(terminalId: string): string | undefined {
+    return this.entries.find((e) => e.terminalId === terminalId)?.name;
+  }
+
   /** Listeners run after anything the views show changed (scan, operation, settings). */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
