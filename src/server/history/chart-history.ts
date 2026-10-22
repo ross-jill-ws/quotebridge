@@ -18,6 +18,9 @@ const ROLLUP_PAGE = 5000;
 /** A page of candles, oldest first, with UTC times. `source`: "hst" when it holds HST bars, else "saved" when it holds saved ones, else "live". */
 export type HistoryPage = { candles: Candle[]; source: "hst" | "saved" | "live"; complete: boolean };
 
+/** A page in broker seconds; its last `live` candles are the live ones, the last of them still forming. */
+export type BrokerHistoryPage = HistoryPage & { live: number };
+
 export type ChartHistoryOptions = {
   /** A terminal's data folder, where its HST files are; undefined when unknown. */
   dataFolder: (terminalId: string) => string | undefined;
@@ -49,7 +52,13 @@ export class ChartHistory {
   async page(feed: FeedSnapshot, period: Period, limit: number, before?: number): Promise<HistoryPage> {
     const rule = this.options.clockRule(feed.market.brokerServer) ?? UNKNOWN_RULE;
     const toUtc = (c: Candle): Candle => ({ ...c, time: brokerToUtc(rule, c.time * 1000) / 1000 });
-    const brokerBefore = before === undefined ? Infinity : utcToBroker(rule, before * 1000) / 1000;
+    const { candles, source, complete } = await this.brokerPage(feed, period, limit, before === undefined ? undefined : utcToBroker(rule, before * 1000) / 1000);
+    return { candles: candles.map(toUtc), source, complete };
+  }
+
+  /** Up to `limit` candles older than `before` (broker seconds; the latest when undefined), in broker seconds. */
+  async brokerPage(feed: FeedSnapshot, period: Period, limit: number, before?: number): Promise<BrokerHistoryPage> {
+    const brokerBefore = before ?? Infinity;
     const source = await this.source(feed, period);
     const hstLast = (await source?.last()) ?? null;
 
@@ -61,12 +70,13 @@ export class ChartHistory {
     }
     const liveBefore = live.filter((c) => c.time < brokerBefore);
     if (liveBefore.length >= limit || !hstLast) {
-      return { candles: liveBefore.slice(-limit).map(toUtc), source: "live", complete: liveBefore.length <= limit && !hstLast };
+      const candles = liveBefore.slice(-limit);
+      return { candles, source: "live", complete: liveBefore.length <= limit && !hstLast, live: candles.length };
     }
     // HST's closed bars, older than the live part and than `before`.
     const cut = Math.min(brokerBefore, live[0]?.time ?? Infinity);
     const closed = await source!.before(cut === Infinity ? undefined : cut, limit - liveBefore.length);
-    return { candles: [...closed.bars, ...liveBefore].map(toUtc), source: closed.bars.length ? closed.source : "live", complete: closed.complete };
+    return { candles: [...closed.bars, ...liveBefore], source: closed.bars.length ? closed.source : "live", complete: closed.complete, live: liveBefore.length };
   }
 
   /** HST, continued by saved history; else saved history alone, when it holds any; else none. */

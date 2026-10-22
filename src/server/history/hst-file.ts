@@ -83,21 +83,40 @@ export class HstFile {
   async before(before: number | undefined, limit: number): Promise<HstPage> {
     return this.read(async (file) => {
       const count = await this.count(file);
-      // The first index at or after `before`: bars are in time order.
-      let end = count;
-      if (before !== undefined) {
-        let low = 0;
-        while (low < end) {
-          const middle = (low + end) >> 1;
-          if ((await this.time(file, middle)) < before) low = middle + 1;
-          else end = middle;
-        }
-      }
+      const end = before === undefined ? count : await this.index(file, count, before);
       const start = Math.max(0, end - limit);
       const bars: HstBar[] = [];
       for (let at = start; at < end; at += READ_RECORDS) bars.push(...(await this.records(file, at, Math.min(READ_RECORDS, end - at))));
       return { bars, complete: start === 0, next: start < end ? await this.time(file, start) : before };
     });
+  }
+
+  /** Up to `limit` bars from `from` to `to` (broker seconds, both included), oldest first. */
+  async between(from: number, to: number, limit: number): Promise<HstBar[]> {
+    return this.read(async (file) => {
+      const count = await this.count(file);
+      const bars: HstBar[] = [];
+      for (let at = await this.index(file, count, from); at < count && bars.length < limit; at += READ_RECORDS) {
+        // From the first bar at or after `from`.
+        const page = await this.records(file, at, Math.min(READ_RECORDS, count - at));
+        const inside = page.filter((b) => b.time <= to);
+        bars.push(...inside.slice(0, limit - bars.length));
+        if (inside.length < page.length) break;
+      }
+      return bars;
+    });
+  }
+
+  /** The first index at or after `time`: bars are in time order. */
+  private async index(file: FileHandle, count: number, time: number): Promise<number> {
+    let low = 0;
+    let end = count;
+    while (low < end) {
+      const middle = (low + end) >> 1;
+      if ((await this.time(file, middle)) < time) low = middle + 1;
+      else end = middle;
+    }
+    return low;
   }
 
   private async read<T>(work: (file: FileHandle) => Promise<T>): Promise<T> {

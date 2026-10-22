@@ -105,6 +105,26 @@ export class SavedBarStore {
     return { bars: rows.slice(0, limit).reverse().map(bar), complete: rows.length <= limit };
   }
 
+  /** Up to `limit` bars of a market's period from `from` to `to` (broker seconds, both included), oldest first. */
+  async between(market: Market, period: Period, from: number, to: number, limit: number): Promise<HstBar[]> {
+    const rows = await this.read(
+      `SELECT ${COLUMNS} FROM saved_bars WHERE market_id = (SELECT id FROM markets WHERE broker_server = $1 AND symbol = $2) AND period = $3
+        AND broker_seconds BETWEEN $4 AND $5 ORDER BY broker_seconds LIMIT $6`,
+      [market.brokerServer, market.symbol, period, BigInt(from), BigInt(to), limit],
+    );
+    return rows.map(bar);
+  }
+
+  /** How many bars of a market's period are saved older than `before` (broker seconds; all when undefined), and the first and last of them. */
+  async count(market: Market, period: Period, before?: number): Promise<{ bars: number; first: number; last: number } | null> {
+    const [row] = await this.read(
+      `SELECT count(*) AS n, min(broker_seconds) AS first, max(broker_seconds) AS last FROM saved_bars
+        WHERE market_id = (SELECT id FROM markets WHERE broker_server = $1 AND symbol = $2) AND period = $3 AND broker_seconds < $4`,
+      [market.brokerServer, market.symbol, period, BigInt(before ?? Number.MAX_SAFE_INTEGER)],
+    );
+    return Number(row?.n ?? 0) ? { bars: Number(row.n), first: Number(row.first), last: Number(row.last) } : null;
+  }
+
   /** Every bar of a market's period older than `before` (broker seconds; all when undefined), oldest first, a page at a time. */
   async *pages(market: Market, period: Period, before?: number): AsyncGenerator<HstBar[]> {
     let after = -1;

@@ -33,6 +33,25 @@ export type HistoryMarket = {
   periods: HistoryPeriod[];
 };
 
+/**
+ * Everything available for a market's period, as the REST API reads it: the HST file holding the newest bar, joined
+ * with the saved bars older than its first. `bars`, `first` and `last` describe the whole; times are broker seconds.
+ */
+export type HistorySeries = HistorySpan & {
+  digits: number;
+  clockRule: ClockRule | null;
+  /** The newest `limit` bars, oldest first. */
+  latest(limit: number): Promise<HstBar[]>;
+  /** Up to `limit` bars from `from` to `to` (both included), oldest first. */
+  between(from: number, to: number, limit: number): Promise<HstBar[]>;
+};
+
+/**
+ * An HST file in a terminal's data folder, as the REST API lists it: `file` (`<terminal ID>/<broker server>/<name>`)
+ * is how a download names it, never a path.
+ */
+export type HistoryFile = { file: string; terminalId: string; brokerServer: string; period: Period; hst: HstFile; span: HistorySpan };
+
 /** A download: everything available for a market's period, oldest first, in broker seconds, a page at a time. */
 export type HistoryDownload = { digits: number; clockRule: ClockRule | null; pages: AsyncIterable<HstBar[]> };
 
@@ -113,7 +132,70 @@ export class HistoryCatalog {
   }
 
   /** Everything available for a market's period, or null when nothing is. */
+  async series(market: Market, period: Period): Promise<HistorySeries | null> {
+    const best = await this.bestFile(market, period);
+    const saved = this.options.saved;
+    const older = (await saved?.count(market, period, best?.span.first)) ?? null;
+    if (!best && !older) return null;
+    const file = best?.file;
+    const hstFirst = best?.span.first ?? Infinity;
+    return {
+      bars: (best?.span.bars ?? 0) + (older?.bars ?? 0),
+      first: older?.first ?? best!.span.first,
+      last: best?.span.last ?? older!.last,
+      digits: this.digits(market, best),
+      clockRule: this.options.clockRule(market.brokerServer),
+      latest: async (limit) => {
+        const recent = file ? (await file.before(undefined, limit)).bars : [];
+        const rest = older && recent.length < limit ? (await saved!.before(market, period, best?.span.first, limit - recent.length)).bars : [];
+        return [...rest, ...recent];
+      },
+      between: async (from, to, limit) => {
+        const early = older && from < hstFirst ? await saved!.between(market, period, from, Math.min(to, hstFirst - 1), limit) : [];
+        const late = file && to >= hstFirst && early.length < limit ? await file.between(Math.max(from, hstFirst), to, limit - early.length) : [];
+        return [...early, ...late];
+      },
+    };
+  }
+
+  /** Everything available for a market's period, or null when nothing is. */
   async download(market: Market, period: Period): Promise<HistoryDownload | null> {
+    const best = await this.bestFile(market, period);
+    const saved = this.options.saved;
+    const savedOlder = saved ? (await saved.before(market, period, best?.span.first, 1)).bars.length > 0 : false;
+    if (!best && !savedOlder) return null;
+    const digits = this.digits(market, best);
+    const file = best?.file;
+    async function* pages() {
+      if (savedOlder) yield* saved!.pages(market, period, best?.span.first);
+      if (file) yield* file.pages();
+    }
+    return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };
+  }
+
+  /** The HST files of every terminal the app has heard from, in every broker server's folder, by terminal, server and name. */
+  async files(): Promise<HistoryFile[]> {
+    const out: HistoryFile[] = [];
+    const terminals = [...new Set(this.options.snapshot().terminals.map((t) => t.terminalId))].sort();
+    for (const terminalId of terminals) {
+      const dataFolder = this.options.dataFolder(terminalId);
+      if (!dataFolder) continue;
+      const servers = (await readdir(join(dataFolder, "history"), { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory());
+      for (const brokerServer of servers.map((d) => d.name).sort()) {
+        const names = await readdir(join(dataFolder, "history", brokerServer)).catch(() => [] as string[]);
+        for (const name of names.filter((n) => /\.hst$/i.test(n)).sort()) {
+          const hst = await HstFile.open(join(dataFolder, "history", brokerServer, name));
+          const period = hst && PERIOD_BY_MINUTES.get(hst.header.minutes);
+          const span = hst && period ? await hst.span() : null;
+          if (hst && period && span) out.push({ file: `${terminalId}/${brokerServer}/${name}`, terminalId, brokerServer, period, hst, span });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The HST file of a market's period holding the newest bar, among the terminals logged into its broker server. */
+  private async bestFile(market: Market, period: Period): Promise<PeriodFile | null> {
     const minutes = PERIOD_MINUTES[period];
     let best: PeriodFile | null = null;
     for (const terminalId of terminalsByServer(this.options.snapshot()).get(market.brokerServer) ?? []) {
@@ -122,16 +204,12 @@ export class HistoryCatalog {
       const span = file?.header.minutes === minutes ? await file.span() : null;
       if (file && span && newer(span, best)) best = { file, span };
     }
-    const saved = this.options.saved;
-    const savedOlder = saved ? (await saved.before(market, period, best?.span.first, 1)).bars.length > 0 : false;
-    if (!best && !savedOlder) return null;
-    const digits = best?.file.header.digits ?? this.options.storedMarkets().find((m) => marketKey(m) === marketKey(market))?.digits ?? 5;
-    const file = best?.file;
-    async function* pages() {
-      if (savedOlder) yield* saved!.pages(market, period, best?.span.first);
-      if (file) yield* file.pages();
-    }
-    return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };
+    return best;
+  }
+
+  /** The digits of a market's prices: its HST file's, else as stored, else 5. */
+  private digits(market: Market, best: PeriodFile | null): number {
+    return best?.file.header.digits ?? this.options.storedMarkets().find((m) => marketKey(m) === marketKey(market))?.digits ?? 5;
   }
 
   /** Per symbol, per period: the terminals' HST file holding the newest bar. */

@@ -157,6 +157,19 @@ export class Recorder {
     });
   }
 
+  /**
+   * Up to `limit` of a market's samples from `fromMs` to `toMs` (UTC ms, both included), oldest first, or newest first
+   * when `newest`; the buffered ones are written first. None for a market never stored.
+   */
+  async samples(market: Market, fromMs: number, toMs: number, limit: number, newest = false): Promise<SampleRow[]> {
+    const stored = this.markets.get(marketKey(market));
+    if (!stored) return [];
+    return this.serial(async () => {
+      await this.write();
+      return this.store.samples(stored.id, fromMs, toMs, limit, newest);
+    });
+  }
+
   /** Deletes a market's samples (recording, if on, goes on) and answers the list. */
   async deleteSamples(request: unknown): Promise<RecordingView[]> {
     const { brokerServer, symbol } = (request ?? {}) as { brokerServer?: unknown; symbol?: unknown };

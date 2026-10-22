@@ -122,7 +122,7 @@ test("a read key only reads; a trade key may also send changes; a wrong scope ge
   const trade = (await app.create("Trader", "trade")).key;
   const order = (key: string) => app.cli(key, "/api/v1/orders/preview", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal((await order(read)).status, 403);
-  assert.equal((await order(trade)).status, 404, "past the scope check, nothing answers yet");
+  assert.equal((await order(trade)).status, 501, "past the scope check: trading comes with milestone 5");
   assert.equal((await app.cli(trade, "/api/v1/nothing-here")).status, 404, "trade implies read");
 });
 

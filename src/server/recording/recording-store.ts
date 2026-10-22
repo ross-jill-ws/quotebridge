@@ -84,6 +84,26 @@ export class RecordingStore {
     }
   }
 
+  /** Up to `limit` of a market's samples from `fromMs` to `toMs` (UTC ms, both included), oldest first, or newest first when `newest`. */
+  async samples(marketId: number, fromMs: number, toMs: number, limit: number, newest = false): Promise<SampleRow[]> {
+    const order = newest ? "DESC" : "ASC";
+    const rows = (
+      await this.connection.runAndReadAll(
+        `SELECT utc_ms, broker_seconds, bid, ask, received_ms FROM samples WHERE market_id = $1 AND utc_ms BETWEEN $2 AND $3
+          ORDER BY utc_ms ${order}, received_ms ${order} LIMIT $4`,
+        [marketId, BigInt(fromMs), BigInt(toMs), limit],
+      )
+    ).getRowObjectsJS();
+    return rows.map((row) => ({
+      marketId,
+      utcMs: Number(row.utc_ms),
+      brokerSeconds: Number(row.broker_seconds),
+      bid: Number(row.bid),
+      ask: Number(row.ask),
+      receivedMs: Number(row.received_ms),
+    }));
+  }
+
   async summaries(): Promise<SampleSummary[]> {
     const rows = (await this.connection.runAndReadAll("SELECT market_id, count(*) AS n, min(utc_ms) AS first, max(utc_ms) AS last FROM samples GROUP BY market_id")).getRowObjectsJS();
     return rows.map((row) => ({ marketId: Number(row.market_id), samples: Number(row.n), first: Number(row.first), last: Number(row.last) }));

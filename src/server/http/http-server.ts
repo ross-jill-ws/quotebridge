@@ -18,6 +18,8 @@ import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
+import { json, write } from "./respond.js";
+import { info, RestV1 } from "./rest-v1.js";
 import { sessionCookie, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
@@ -89,6 +91,15 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     });
   });
   const live = new LiveSnapshots(bridge);
+  const rest = new RestV1({
+    bridge,
+    candles: options.candles,
+    catalog: options.catalog,
+    history: options.history,
+    clockRule: (brokerServer) => options.clockRules.rule(brokerServer),
+    recorder: options.recorder,
+    terminalName: (terminalId) => options.terminals?.()?.name(terminalId),
+  });
   server.on("upgrade", (req, socket: Socket, head: Buffer) => {
     if (req.headers.host !== host || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
     if (new URL(req.url ?? "/", origin).pathname !== "/live") return refuse(socket, 404, "Not Found");
@@ -129,6 +140,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return;
     }
 
+    // Public: the CLI checks the API version before it has a key.
+    if (url.pathname === "/api/v1/info" && (req.method === "GET" || req.method === "HEAD")) return json(res, 200, info());
+
     const api = url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/") || url.pathname === "/api/auth/session";
     const authorization = req.headers.authorization?.trim();
     if (authorization !== undefined) {
@@ -140,7 +154,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       const writes = req.method !== "GET" && req.method !== "HEAD";
       const check = options.apiKeys?.check(authorization.slice(scheme.length).trim(), writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
       if (!check.ok) return json(res, check.status, { error: check.error });
-      return handleApi(url, res, check.key);
+      return handleApi(url, req, res, check.key);
     }
 
     if (!sessions.authenticated(req.headers, cookie)) {
@@ -150,7 +164,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });
 
-    if (api) return handleApi(url, res, null);
+    if (api) return handleApi(url, req, res, null);
     if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) return handleApiKeys(options.apiKeys, url, req, res);
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
     if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
@@ -180,12 +194,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     json(res, 405, { error: "Method not allowed" });
   }
 
-  /**
-   * The REST API, past the key or window session check: GET /api/auth/session tells the CLI whose key it holds. The
-   * /api/v1 reads are milestone 3's REST ticket.
-   */
-  function handleApi(url: URL, res: ServerResponse, key: ApiKeyView | null) {
-    if (url.pathname !== "/api/auth/session") return json(res, 404, { error: "Unknown endpoint" });
+  /** The REST API, past the key or window session check: GET /api/auth/session tells the CLI whose key it holds. */
+  function handleApi(url: URL, req: IncomingMessage, res: ServerResponse, key: ApiKeyView | null) {
+    if (url.pathname !== "/api/auth/session") return rest.handle(url, req, res);
     if (!key) return json(res, 401, { error: SEND_A_KEY });
     json(res, 200, { username: windowsUser(), key: { name: key.name, prefix: key.prefix, scope: key.scope }, expires: null });
   }
@@ -318,22 +329,11 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${market.symbol}${minutes}.${format}`)}`,
       "cache-control": "no-store",
     });
-    // Written a page at a time, waiting for the client to take each: a long M1 file is never held whole. A client that
-    // goes away ends the wait too, and the loop then stops (closing the file).
-    const write = (chunk: string | Buffer) =>
-      res.write(chunk)
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => {
-            const done = () => {
-              res.off("drain", done).off("close", done);
-              resolve();
-            };
-            res.on("drain", done).on("close", done);
-          });
-    await write(format === "csv" ? CSV_HEADER : hstHeaderBytes(market.symbol, minutes, digits));
+    // Written a page at a time: a long M1 file is never held whole. A client that goes away stops the loop (closing the file).
+    await write(res, format === "csv" ? CSV_HEADER : hstHeaderBytes(market.symbol, minutes, digits));
     for await (const bars of pages) {
       if (res.destroyed) return;
-      await write(format === "csv" ? csvRows(bars, digits, clockRule) : hstRecordBytes(bars));
+      await write(res, format === "csv" ? csvRows(bars, digits, clockRule) : hstRecordBytes(bars));
     }
     res.end();
   }
@@ -457,10 +457,6 @@ function parseMarket(text: string | null): { brokerServer: string; symbol: strin
     }
   } catch {}
   return null;
-}
-
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }).end(JSON.stringify(body));
 }
 
 const MAX_BODY_BYTES = 16 * 1024;
