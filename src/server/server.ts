@@ -2,6 +2,7 @@
 import { BridgeServer } from "./bridge/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { WindowSessions } from "./http/window-session.js";
+import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
 import { TerminalManager, type TerminalManagerOptions } from "./terminals/index.js";
 
 export type ServerConfig = {
@@ -17,6 +18,8 @@ export type ServerConfig = {
   now?: () => number;
   /** Terminal management (Terminals view, setup screen, tray attention); omitted, those endpoints answer 404. */
   terminals?: TerminalManagerOptions;
+  /** The Settings view (GET and POST /api/settings); omitted, those endpoints answer 404. */
+  settings?: AppSettingsOptions;
 };
 
 export type RunningServer = {
@@ -34,10 +37,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   const bridge = new BridgeServer({ now: config.now });
   await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
   const sessions = new WindowSessions();
+  const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals });
+    http = await startHttpServer({ port: config.httpPort, bridge, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     await bridge.close();
     throw e;

@@ -1,6 +1,7 @@
 // The dashboard shell: header with navigation and connection state, and the current view.
 import { useEffect, useState } from "preact/hooks";
 import { FeedsView } from "./feeds/feeds-view.js";
+import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
 import { useTerminals } from "./terminals/use-terminals.js";
@@ -9,6 +10,7 @@ import { useLive, type Live } from "./use-live.js";
 const VIEWS = [
   { id: "feeds", label: "Feeds" },
   { id: "terminals", label: "Terminals" },
+  { id: "settings", label: "Settings" },
 ] as const;
 
 type ViewId = (typeof VIEWS)[number]["id"];
@@ -56,7 +58,15 @@ export function App() {
       </header>
       <ConnectionNotice live={live} />
       <main class="content">
-        {setupOpen ? <SetupView terminals={terminals} onDone={finishSetup} /> : view === "feeds" ? <FeedsView live={live} /> : <TerminalsView terminals={terminals} />}
+        {setupOpen ? (
+          <SetupView terminals={terminals} onDone={finishSetup} />
+        ) : view === "feeds" ? (
+          <FeedsView live={live} />
+        ) : view === "settings" ? (
+          <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} />
+        ) : (
+          <TerminalsView terminals={terminals} />
+        )}
       </main>
     </>
   );

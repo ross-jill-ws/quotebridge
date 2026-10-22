@@ -132,3 +132,29 @@ test("hand-edited ports that cannot work are read as defaults (a bad port as its
     assert.equal(saved.startWithWindows, false);
   }
 });
+
+test("the Settings view's own settings default to: keep the window in the tray at a sign-in start, theme follows Windows", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  const settings = await store.read();
+  assert.equal(settings.openWindowAtStartup, false);
+  assert.equal(settings.theme, "system");
+
+  await store.update((s) => {
+    s.openWindowAtStartup = true;
+    s.theme = "dark";
+  });
+  const reopened = await new SettingsStore(store.folder).read();
+  assert.equal(reopened.openWindowAtStartup, true);
+  assert.equal(reopened.theme, "dark");
+});
+
+test("a hand-edited theme or window-at-startup value that cannot work is read as its default", async (t) => {
+  const folder = await appData(t);
+  await writeFile(join(folder, "settings.json"), JSON.stringify({ format: 1, theme: "purple", openWindowAtStartup: "yes", startWithWindows: false }));
+
+  const settings = await new SettingsStore(folder).read();
+
+  assert.equal(settings.theme, "system");
+  assert.equal(settings.openWindowAtStartup, false);
+  assert.equal(settings.startWithWindows, false);
+});

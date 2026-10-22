@@ -22,6 +22,9 @@ export interface DeclinedTerminal {
   dataFolder: string;
 }
 
+export const THEMES = ["system", "light", "dark"] as const;
+export type Theme = (typeof THEMES)[number];
+
 export interface Settings {
   format: typeof SETTINGS_FORMAT;
   managedTerminals: ManagedTerminal[];
@@ -33,6 +36,10 @@ export interface Settings {
     http: number;
   };
   startWithWindows: boolean;
+  /** A sign-in start (`--hidden`) shows the window instead of staying in the tray. */
+  openWindowAtStartup: boolean;
+  /** The window's colours: follow Windows, or always light or dark. */
+  theme: Theme;
   firstCloseNotificationShown: boolean;
   /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
   setupCompleted: boolean;
@@ -45,6 +52,8 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   // 5555 is the legacy default, so existing templates keep working.
   ports: { ea: 5555, http: 5580 },
   startWithWindows: true,
+  openWindowAtStartup: false,
+  theme: "system",
   firstCloseNotificationShown: false,
   setupCompleted: false,
 });
@@ -117,6 +126,8 @@ function withDefaults(stored: unknown): Settings {
     declinedTerminals: Array.isArray(partial.declinedTerminals) ? partial.declinedTerminals : defaults.declinedTerminals,
     ports: readPorts(partial.ports, defaults.ports),
     startWithWindows: typeof partial.startWithWindows === "boolean" ? partial.startWithWindows : defaults.startWithWindows,
+    openWindowAtStartup: typeof partial.openWindowAtStartup === "boolean" ? partial.openWindowAtStartup : defaults.openWindowAtStartup,
+    theme: (THEMES as readonly unknown[]).includes(partial.theme) ? partial.theme! : defaults.theme,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
   };

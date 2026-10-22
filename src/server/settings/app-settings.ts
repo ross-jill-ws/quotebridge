@@ -1,0 +1,102 @@
+// The Settings view's model (server process): the settings it shows and the changes it may make.
+// The server stays the single writer of settings.json; each save is handed on so main applies it.
+import { createServer } from "node:net";
+import { THEMES, type Settings, type SettingsStore } from "../../shared/settings-store.js";
+import type { PortRole } from "../port-in-use.js";
+
+export type AppSettingsOptions = {
+  store: SettingsStore;
+  /** Called with the saved settings after every change (the host forwards them to main). */
+  onSaved?: (settings: Settings) => void;
+};
+
+/** What GET and POST /api/settings answer. */
+export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "ports"> & {
+  /** The ports this server is bound to. They differ from `ports` after a change until main restarts the server, or in a dev run with port overrides. */
+  portsInUse: Settings["ports"];
+};
+
+export class SettingsRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Ports below 1024 are left to system services. */
+const LOWEST_PORT = 1024;
+const BOOLEAN_KEYS = ["startWithWindows", "openWindowAtStartup"] as const;
+const PORT_NAMES: Record<PortRole, string> = { ea: "EA port", http: "dashboard port" };
+
+export class AppSettings {
+  constructor(
+    private readonly options: AppSettingsOptions,
+    private readonly portsInUse: Settings["ports"],
+  ) {}
+
+  async view(): Promise<SettingsView> {
+    return this.toView(await this.options.store.read());
+  }
+
+  /** Applies a change from the Settings view; throws SettingsRequestError (400) for one it may not make. */
+  async change(request: unknown): Promise<SettingsView> {
+    if (typeof request !== "object" || request === null || Array.isArray(request)) throw new SettingsRequestError(400, "Expected the settings to change.");
+    const body = request as Record<string, unknown>;
+    const change: Partial<Settings> = {};
+    for (const [key, value] of Object.entries(body)) {
+      if ((BOOLEAN_KEYS as readonly string[]).includes(key)) {
+        if (typeof value !== "boolean") throw new SettingsRequestError(400, `"${key}" must be true or false.`);
+        change[key as (typeof BOOLEAN_KEYS)[number]] = value;
+      } else if (key === "theme") {
+        if (!(THEMES as readonly unknown[]).includes(value)) throw new SettingsRequestError(400, `The theme must be one of ${THEMES.join(", ")}.`);
+        change.theme = value as Settings["theme"];
+      } else if (key !== "ports") {
+        throw new SettingsRequestError(400, `"${key}" cannot be changed here.`);
+      }
+    }
+    const current = await this.options.store.read();
+    if ("ports" in body) change.ports = await this.checkPorts(body.ports, current.ports);
+    const saved = await this.options.store.update((settings) => ({ ...settings, ...change }));
+    this.options.onSaved?.(saved);
+    return this.toView(saved);
+  }
+
+  private async checkPorts(requested: unknown, current: Settings["ports"]): Promise<Settings["ports"]> {
+    if (typeof requested !== "object" || requested === null || Array.isArray(requested)) throw new SettingsRequestError(400, "Expected the ports to change.");
+    const given = requested as Record<string, unknown>;
+    const ports = { ...current };
+    for (const role of Object.keys(given)) {
+      if (role !== "ea" && role !== "http") throw new SettingsRequestError(400, `There is no "${role}" port.`);
+      const port = given[role];
+      if (typeof port !== "number" || !Number.isInteger(port) || port < LOWEST_PORT || port > 65535) {
+        throw new SettingsRequestError(400, `The ${PORT_NAMES[role]} must be a whole number from ${LOWEST_PORT} to 65535.`);
+      }
+      ports[role] = port;
+    }
+    if (ports.ea === ports.http) throw new SettingsRequestError(400, "The EA port and the dashboard port must differ.");
+    for (const role of ["ea", "http"] as const) {
+      // A port this server holds is free for it; any other must be free now.
+      if (ports[role] === current[role] || ports[role] === this.portsInUse[role]) continue;
+      if (!(await isFree(ports[role]))) {
+        throw new SettingsRequestError(400, `Port ${ports[role]} is in use by another program. Choose another ${PORT_NAMES[role]}.`);
+      }
+    }
+    return ports;
+  }
+
+  private toView(settings: Settings): SettingsView {
+    const { startWithWindows, openWindowAtStartup, theme, ports } = settings;
+    return { startWithWindows, openWindowAtStartup, theme, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
+  }
+}
+
+/** Whether a TCP port on 127.0.0.1 (where the app binds both its ports) can be bound now. */
+function isFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen({ port, host: "127.0.0.1", exclusive: true }, () => probe.close(() => resolve(true)));
+  });
+}

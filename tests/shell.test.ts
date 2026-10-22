@@ -15,6 +15,7 @@ class FakeSupervisor {
   stops: StopReason[] = [];
   changes: HostSettingsChange[] = [];
   tokenRequests = 0;
+  restarts = 0;
   finishStop: (result: StopResult) => void = () => {};
   private listeners = new Set<(e: SupervisorEvent) => void>();
   start() {
@@ -23,6 +24,10 @@ class FakeSupervisor {
   stop(reason: StopReason) {
     this.stops.push(reason);
     return new Promise<StopResult>((resolve) => (this.finishStop = resolve));
+  }
+  restart() {
+    this.restarts++;
+    return Promise.resolve();
   }
   issueWindowToken() {
     this.tokenRequests++;
@@ -47,6 +52,7 @@ function setup({ settings = AFTER_SETUP, argv = [] as string[], packaged = true 
   const notifications: { title: string; body: string }[] = [];
   const loginItems: LoginItem[] = [];
   const exits: number[] = [];
+  const themes: string[] = [];
   const supervisor = new FakeSupervisor();
   const ports: ShellPorts = {
     window: {
@@ -65,9 +71,10 @@ function setup({ settings = AFTER_SETUP, argv = [] as string[], packaged = true 
     notify: (title, body) => void notifications.push({ title, body }),
     setLoginItem: packaged ? (item) => void loginItems.push(item) : null,
     exit: (code) => void exits.push(code),
+    setTheme: (theme) => void themes.push(theme),
   };
   const shell = new Shell(ports, { settings, argv });
-  return { shell, window, tray, notifications, loginItems, exits, supervisor, log };
+  return { shell, window, tray, notifications, loginItems, exits, supervisor, log, themes };
 }
 
 test("a normal start shows the window and starts the server; a login start stays hidden in the tray", () => {
@@ -255,4 +262,40 @@ test("the tray warns while a managed terminal needs attention; a server warning 
 
   supervisor.emit({ type: "server-status", status: serverStatus([]) });
   assert.equal(tray.warning, null);
+});
+
+test("Open the window at startup: a sign-in start shows the window instead of staying in the tray", () => {
+  const { shell, window } = setup({ settings: { ...AFTER_SETUP, openWindowAtStartup: true }, argv: ["--hidden"] });
+  shell.start();
+  assert.equal(window.visible, true);
+});
+
+test("a second launch by the login item still leaves the app where it is, whatever Open the window at startup says", () => {
+  const { shell, window } = setup({ settings: { ...AFTER_SETUP, openWindowAtStartup: true }, argv: ["--hidden"] });
+  shell.start();
+  window.visible = false;
+  shell.secondInstance(["QuoteBridge.exe", "--hidden"]);
+  assert.equal(window.visible, false);
+});
+
+test("the theme reaches Electron at start and whenever the server saved a new one", () => {
+  const { shell, supervisor, themes } = setup({ settings: { ...AFTER_SETUP, theme: "dark" } });
+  shell.start();
+  assert.deepEqual(themes, ["dark"]);
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "light" } });
+  assert.deepEqual(themes, ["dark", "light"]);
+});
+
+test("a saved port change restarts the server through the stop path, so it binds the new ports; other changes do not", () => {
+  const { shell, supervisor } = setup();
+  shell.start();
+
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, startWithWindows: false } });
+  assert.equal(supervisor.restarts, 0);
+
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, startWithWindows: false, ports: { ea: 5556, http: 5580 } } });
+  assert.equal(supervisor.restarts, 1);
+
+  supervisor.emit({ type: "settings", settings: { ...AFTER_SETUP, theme: "dark", ports: { ea: 5556, http: 5580 } } });
+  assert.equal(supervisor.restarts, 1, "the same ports again: no restart");
 });

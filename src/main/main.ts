@@ -1,6 +1,6 @@
 // Main process: thin Electron wiring for the shell (src/main/shell) and the supervisor (ADR 10).
 // The rules live in `Shell` and `Supervisor` and are tested there; this file only connects Electron.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, shell as electronShell, Tray, utilityProcess } from "electron";
 import { dirname, join } from "node:path";
 import { get } from "node:http";
 import { createInterface } from "node:readline";
@@ -16,6 +16,8 @@ const SERVER_ENTRY = devRun.serverEntry ?? fileURLToPath(new URL("../server/entr
 const PRELOAD = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 /** Must match src/main/preload.cts. */
 const PICK_FOLDER_CHANNEL = "quotebridge:pick-folder";
+const ABOUT_CHANNEL = "quotebridge:about";
+const OPEN_DATA_FOLDER_CHANNEL = "quotebridge:open-data-folder";
 /** Windows cuts tray tooltips at 127 characters. */
 const TOOLTIP_MAX = 127;
 const STARTING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(
@@ -86,6 +88,15 @@ async function boot() {
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
+  // The Settings view's About section: facts only main knows, and the data folder in Explorer.
+  ipcMain.handle(ABOUT_CHANNEL, (event) => {
+    if (event.sender !== window.webContents) return null;
+    return { version: app.getVersion(), installFolder: app.isPackaged ? dirname(app.getPath("exe")) : null, dataFolder };
+  });
+  ipcMain.handle(OPEN_DATA_FOLDER_CHANNEL, async (event) => {
+    if (event.sender !== window.webContents) return;
+    await electronShell.openPath(dataFolder);
+  });
   window.removeMenu();
   void window.loadURL(STARTING_PAGE);
   // The window shows only the app's own dashboard.
@@ -147,6 +158,7 @@ async function boot() {
         return result;
       },
       issueWindowToken: () => supervisor.issueWindowToken(),
+      restart: () => supervisor.restart(),
       updateSettings: (change) => supervisor.updateSettings(change),
       onEvent: (listener) => supervisor.onEvent(listener),
     },
@@ -156,6 +168,9 @@ async function boot() {
     // A dev run leaves the OS login item alone: it would start the dev Electron at every login.
     setLoginItem: app.isPackaged ? (item) => app.setLoginItemSettings(item) : null,
     exit: (code) => app.exit(code),
+    setTheme: (theme) => {
+      nativeTheme.themeSource = theme;
+    },
   };
   const shell = new Shell(ports, { settings, argv: process.argv });
 

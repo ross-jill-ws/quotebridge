@@ -2,7 +2,7 @@
 // Start with Windows and Quit. Electron comes in as ports, so these rules are tested without it.
 import type { StopReason, StopResult, SupervisorEvent } from "../supervisor/index.js";
 import type { HostSettingsChange } from "../../shared/server-host-protocol.js";
-import type { Settings } from "../../shared/settings-store.js";
+import type { Settings, Theme } from "../../shared/settings-store.js";
 import { APP_NAME } from "../../shared/app-identity.js";
 import { HIDDEN_ARG } from "./environment.js";
 
@@ -28,6 +28,8 @@ export interface ShellSupervisor {
   start(): void;
   stop(reason: StopReason): Promise<StopResult>;
   issueWindowToken(): Promise<string>;
+  /** Stops the server through the stop path and launches it again (with the ports saved by then). */
+  restart(): Promise<void>;
   updateSettings(change: HostSettingsChange): void;
   onEvent(listener: (event: SupervisorEvent) => void): () => void;
 }
@@ -43,6 +45,8 @@ export type ShellPorts = {
   /** Null in a dev run: the OS login item is left alone (it would start the dev Electron at login). */
   setLoginItem: ((item: LoginItem) => void) | null;
   exit(code: number): void;
+  /** Electron's own colours (dialogs, title bar): `nativeTheme.themeSource`. */
+  setTheme(theme: Theme): void;
 };
 
 export type ShellOptions = {
@@ -70,12 +74,12 @@ export class Shell {
     ports.supervisor.onEvent((event) => this.onSupervisorEvent(event));
   }
 
-  /** Starts the server and shows the window, unless started hidden at login after setup. */
+  /** Starts the server and shows the window, unless started hidden at login after setup (and not asked to open then). */
   start() {
     this.applySettings(this.settings);
     this.ports.supervisor.start();
     const firstRun = !this.settings.setupCompleted;
-    if (firstRun || !this.options.argv.includes(HIDDEN_ARG)) this.ports.window.show();
+    if (firstRun || this.settings.openWindowAtStartup || !this.options.argv.includes(HIDDEN_ARG)) this.ports.window.show();
   }
 
   /** The user closed the app window: hide to the tray (ADR 6), with a one-time notification. */
@@ -130,7 +134,11 @@ export class Shell {
 
   /** Settings at boot and every time the server saved a change. */
   private applySettings(settings: Settings) {
+    // The server binds its ports at start: new ones take a restart (the Settings view's Change…).
+    const portsChanged = settings.ports.ea !== this.settings.ports.ea || settings.ports.http !== this.settings.ports.http;
     this.settings = structuredClone(settings);
+    this.ports.setTheme(settings.theme);
+    if (portsChanged) void this.ports.supervisor.restart();
     if (settings.firstCloseNotificationShown) this.closeNotificationShown = true;
     this.ports.tray.setStartWithWindows(settings.startWithWindows);
     this.ports.setLoginItem?.(loginItemFor(settings));

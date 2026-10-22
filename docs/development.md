@@ -40,6 +40,7 @@ Use this for most work on the dashboard and the server. Nothing on your machine'
 - **Fake terminals:** a folder laid out like a MetaTrader user's machine, with four MT4 terminals and one MT5 terminal. One fails to compile, and one reports MetaEditor as open, so every state on the Terminals view and the setup screen can be seen. The compiler is a stand-in that takes about 1.5 s, so progress is visible.
 - **Fake EAs:** feeds that cover every row state of the Feeds view: live quotes, a stale quote, a symbol without a valid quote, a duplicate chart, dropped samples, and a feed that goes offline after a few seconds. Installing into a fake terminal also starts a fake EA there, which ticks that terminal's checklist.
 - **Opening the dashboard:** the terminal prints a one-time sign-in link; open it in your browser. Press Enter for a new link, for example for a second browser.
+- **Settings view:** the dev ports override the saved ones, and the view says so; a port change is saved but the run stays on 6655/6680. The theme applies only in the app window (`--app`); a browser tab follows the browser's own colour mode.
 
 ### `--app`: inside the app window
 

@@ -58,6 +58,8 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         dashboardFolder: config.dashboardFolder,
         now: options.now,
         ...(terminals ? { terminals } : {}),
+        // The Settings view saves here too; main applies what was saved (Start with Windows, theme, new ports).
+        settings: { store: settings, onSaved: (saved) => send({ type: "settings", settings: saved }) },
       });
       running = { server, database, settings, stopStatus: () => {}, stopHook: options.onRunning?.(server, config) ?? (() => {}) };
       settle("running");

@@ -8,6 +8,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { asPortInUse } from "../port-in-use.js";
+import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
 import { sessionCookie, type WindowSessions } from "./window-session.js";
@@ -22,6 +23,8 @@ export type HttpServerOptions = {
   dashboardFolder?: string;
   /** The terminal manager, when the server manages terminals. */
   terminals?: () => TerminalManager | undefined;
+  /** The Settings view's model, when the server has a settings store. */
+  settings?: AppSettings;
 };
 
 export type HttpServer = {
@@ -123,6 +126,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       res.writeHead(204).end();
       return;
     }
+    if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, req, res);
     const terminals = options.terminals?.();
     if (terminals) {
       const handled = await handleTerminals(terminals, url, req, res);
@@ -131,6 +135,24 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Unknown endpoint" });
     if (req.method === "GET" || req.method === "HEAD") return serveStatic(url.pathname, req, res);
     json(res, 405, { error: "Method not allowed" });
+  }
+
+  /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */
+  async function handleSettings(settings: AppSettings, req: IncomingMessage, res: ServerResponse) {
+    if (req.method === "GET") return json(res, 200, await settings.view());
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    let body: unknown;
+    try {
+      body = await readJson(req);
+    } catch {
+      return json(res, 400, { error: "Expected a JSON body." });
+    }
+    try {
+      json(res, 200, await settings.change(body));
+    } catch (e) {
+      if (!(e instanceof SettingsRequestError)) throw e;
+      json(res, e.status, { error: e.message });
+    }
   }
 
   /** Terminals view and setup screen endpoints. Returns false when the route is not one of them. */
