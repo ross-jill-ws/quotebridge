@@ -725,6 +725,19 @@ input[type="checkbox"]:focus-visible {
   white-space: normal;
 }
 
+.feeds .record-col {
+  width: 64px;
+  text-align: center;
+}
+
+.feeds td.record-col .switch {
+  vertical-align: middle;
+}
+
+.feeds td.record-col .switch:disabled {
+  opacity: 0.5;
+}
+
 .symbol-link {
   color: inherit;
   text-decoration: none;
@@ -1428,6 +1441,23 @@ label.setting-row {
   transform: translateX(18px);
 }
 
+.switch.small {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+}
+
+.switch.small::after {
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+}
+
+.switch.small:checked::after {
+  transform: translateX(14px);
+}
+
 .segmented {
   display: inline-flex;
   flex: none;
@@ -1480,6 +1510,27 @@ label.setting-row {
 .input.port-input {
   min-width: 0;
   width: 96px;
+}
+
+.recording-row {
+  align-items: flex-start;
+}
+
+.recording-server {
+  margin-left: 6px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.recording-state.on {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.recording-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
 }
 
 .confirm {

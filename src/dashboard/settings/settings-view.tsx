@@ -1,7 +1,8 @@
-// The Settings view: Startup, Appearance, Connection and About. A change applies at once (the server
+// The Settings view: Startup, Appearance, Recording, Connection and About. A change applies at once (the server
 // saves it and main applies it); only a port change asks first, because it restarts the app.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
 import { BUNDLED_WORKS } from "../../shared/licences.js";
@@ -9,7 +10,7 @@ import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
-import { parsePort, PORT_LABELS, portChange, portsNote, type PortRole } from "./settings-model.js";
+import { deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, type PortRole } from "./settings-model.js";
 
 const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
 const CHART_COLOUR_LABELS: Record<ChartColours, string> = { default: "Default", "green-on-black": "Green on black" };
@@ -154,6 +155,8 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
         />
       </SettingsGroup>
 
+      <RecordingGroup timeShown={settings.timeShown} />
+
       <SettingsGroup
         title="Connection"
         after={
@@ -187,6 +190,107 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
 
       <About />
     </section>
+  );
+}
+
+/** How often the Recording list is read again while the view is open: its counts grow. */
+const RECORDINGS_REFRESH_MS = 5000;
+
+/** Settings › Recording: each recorded or once-recorded market, with Stop and Delete data…. */
+function RecordingGroup({ timeShown }: { timeShown: TimeShown }) {
+  const [recordings, setRecordings] = useState<RecordingView[]>();
+  const [error, setError] = useState("");
+  const [confirming, setConfirming] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const load = () => get<{ recordings: RecordingView[] }>("/api/recordings").then((answer) => setRecordings(answer.recordings), (e: Error) => setError(e.message));
+    load();
+    const timer = setInterval(load, RECORDINGS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  const act = async (work: () => Promise<RecordingView[]>) => {
+    setBusy(true);
+    setError("");
+    try {
+      setRecordings(await work());
+      setConfirming(undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = (r: RecordingView) =>
+    act(async () => {
+      await post("/api/markets/recording", { brokerServer: r.brokerServer, symbol: r.symbol, on: false });
+      return (await get<{ recordings: RecordingView[] }>("/api/recordings")).recordings;
+    });
+  const remove = (r: RecordingView) => act(async () => (await post<{ recordings: RecordingView[] }>("/api/recordings/delete", { brokerServer: r.brokerServer, symbol: r.symbol })).recordings);
+
+  const rows = recordings ? recordingRows(recordings, timeShown) : [];
+  return (
+    <SettingsGroup
+      title="Recording"
+      after={
+        error && (
+          <div class="notice bad" role="alert">
+            {error}
+          </div>
+        )
+      }
+    >
+      {!recordings ? (
+        <p class="setting-row setting-hint">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p class="setting-row setting-hint">Nothing is recorded. Switch on Record on a Feeds row to keep every sample of that market.</p>
+      ) : (
+        rows.map((row, i) => {
+          const recording = recordings[i];
+          const consequence = confirming === row.key ? deleteRecording(recording) : undefined;
+          return (
+            <div key={row.key} class="setting-row recording-row">
+              <div class="setting-text">
+                <span class="setting-label">
+                  {row.market} <span class="recording-server">{row.brokerServer}</span>
+                </span>
+                <span class="setting-hint">
+                  <span class={`recording-state${recording.recording ? " on" : ""}`}>{row.state}</span> · {row.samples}
+                  {row.range && <> · {row.range}</>} · {row.size}
+                </span>
+                {consequence && (
+                  <div class="confirm" role="alertdialog" aria-label={consequence.title}>
+                    <strong>{consequence.title}</strong>
+                    <p>{consequence.body}</p>
+                    <div class="confirm-actions">
+                      <button class="button danger" disabled={busy} onClick={() => remove(recording)}>
+                        {consequence.confirm}
+                      </button>
+                      <button class="button quiet" disabled={busy} onClick={() => setConfirming(undefined)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div class="recording-actions">
+                {row.canStop && (
+                  <button class="button" disabled={busy} onClick={() => stop(recording)}>
+                    Stop
+                  </button>
+                )}
+                {row.canDelete && !consequence && (
+                  <button class="button quiet" disabled={busy} onClick={() => setConfirming(row.key)}>
+                    Delete data…
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
+    </SettingsGroup>
   );
 }
 

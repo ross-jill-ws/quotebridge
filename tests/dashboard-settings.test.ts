@@ -2,7 +2,7 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parsePort, portChange, portsNote } from "../src/dashboard/settings/settings-model.js";
+import { deleteRecording, parsePort, portChange, portsNote, recordingRows } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
@@ -49,4 +49,49 @@ test("the page's data-theme follows the Theme setting; System leaves it to the c
   assert.equal(themeAttribute("light"), "light");
   assert.equal(themeAttribute("dark"), "dark");
   assert.equal(themeAttribute("system"), undefined);
+});
+
+const RECORDED = {
+  brokerServer: "EasyForex-Demo",
+  symbol: "EURUSD",
+  digits: 5,
+  recording: true,
+  recordingSince: Date.UTC(2027, 0, 15, 8),
+  samples: 1234567,
+  first: Date.UTC(2027, 0, 15, 8),
+  last: Date.UTC(2027, 0, 16, 21, 59, 30),
+  aboutBytes: 39_506_144,
+  clockRule: { winterOffsetMinutes: 120, dst: "us" as const },
+};
+
+test("Settings › Recording lists each market with its state, sample count, range on the chosen clock and about-size", () => {
+  const [row] = recordingRows([RECORDED], "broker", () => 0);
+  assert.equal(row.market, "EURUSD");
+  assert.equal(row.brokerServer, "EasyForex-Demo");
+  assert.equal(row.state, "Recording since 2027-01-15 10:00");
+  assert.equal(row.samples, "1,234,567 samples");
+  assert.equal(row.range, "2027-01-15 10:00 to 2027-01-16 23:59");
+  assert.equal(row.size, "about 39.5 MB");
+  assert.equal(row.canStop, true);
+  assert.equal(row.canDelete, true);
+
+  assert.equal(recordingRows([RECORDED], "utc", () => 0)[0].range, "2027-01-15 08:00 to 2027-01-16 21:59");
+  assert.equal(recordingRows([RECORDED], "local", () => 660)[0].range, "2027-01-15 19:00 to 2027-01-17 08:59");
+});
+
+test("a stopped market keeps its data and offers Delete only; one sample, and none yet, read plainly", () => {
+  const [stopped] = recordingRows([{ ...RECORDED, recording: false, recordingSince: null, samples: 1, last: RECORDED.first, aboutBytes: 32 }], "broker", () => 0);
+  assert.deepEqual([stopped.state, stopped.samples, stopped.size, stopped.canStop, stopped.canDelete], ["Stopped", "1 sample", "about 32 bytes", false, true]);
+  const [fresh] = recordingRows([{ ...RECORDED, samples: 0, first: null, last: null, aboutBytes: 0 }], "broker", () => 0);
+  assert.deepEqual([fresh.samples, fresh.range, fresh.canDelete], ["No samples yet", "", false]);
+});
+
+test("Delete data… asks first, naming the market and how many samples go", () => {
+  const confirm = deleteRecording(RECORDED);
+  assert.equal(confirm.title, "Delete the recorded data of EURUSD on EasyForex-Demo?");
+  assert.match(confirm.body, /1,234,567 samples are deleted/);
+  assert.match(confirm.body, /cannot be undone/);
+  assert.match(confirm.body, /Recording goes on/);
+  assert.doesNotMatch(deleteRecording({ ...RECORDED, recording: false }).body, /Recording goes on/);
+  assert.equal(confirm.confirm, "Delete 1,234,567 samples");
 });

@@ -1,4 +1,5 @@
-// Feeds view: every feed the QuoteBridge EAs send, grouped by terminal, with its live quote and warnings.
+// Feeds view: every feed the QuoteBridge EAs send, grouped by terminal, with its live quote, warnings and the record
+// switch of its market.
 import { useMemo, useRef, useState } from "preact/hooks";
 import type { FeedSnapshot } from "../../server/bridge/index.js";
 import type { TimeShown } from "../../shared/settings-store.js";
@@ -26,6 +27,19 @@ export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props
   const { snapshot } = live;
   const connected = live.status === "live";
   const flashes = useFlashes(snapshot?.feeds, snapshot?.time ?? 0);
+
+  /** Recording belongs to the market: every row of it follows the switch with the next snapshot. */
+  async function record(feed: FeedSnapshot, on: boolean) {
+    setBusy(feed.feed);
+    setError("");
+    try {
+      await post("/api/markets/recording", { ...feed.market, on });
+    } catch (e) {
+      setError(`Could not ${on ? "start" : "stop"} recording ${feed.symbol}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(undefined);
+    }
+  }
 
   async function remove(feed: FeedSnapshot) {
     setBusy(feed.feed);
@@ -84,7 +98,7 @@ export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props
       ) : (
         <div class={`feed-groups${connected ? "" : " paused"}${flashPrices && connected ? " flashing" : ""}`}>
           {groups.map((group) => (
-            <FeedGroupView key={group.terminal} group={group} time={time} timeShown={timeShown} flashes={flashes} connected={connected} busy={busy} onRemove={remove} />
+            <FeedGroupView key={group.terminal} group={group} time={time} timeShown={timeShown} flashes={flashes} connected={connected} busy={busy} onRecord={record} onRemove={remove} />
           ))}
         </div>
       )}
@@ -99,6 +113,7 @@ function FeedGroupView({
   flashes,
   connected,
   busy,
+  onRecord,
   onRemove,
 }: {
   group: FeedGroup;
@@ -107,6 +122,7 @@ function FeedGroupView({
   flashes: ReadonlyMap<string, Flash>;
   connected: boolean;
   busy?: string;
+  onRecord: (feed: FeedSnapshot, on: boolean) => void;
   onRemove: (feed: FeedSnapshot) => void;
 }) {
   const titleId = `group-${group.terminal}`;
@@ -134,6 +150,9 @@ function FeedGroupView({
                 Quote time
               </th>
               <th class="status-col">Status</th>
+              <th class="record-col" title="Keep every sample of this market (symbol and broker server) until you delete it in Settings">
+                Record
+              </th>
               <th class="action-col">
                 <span class="visually-hidden">Actions</span>
               </th>
@@ -170,6 +189,18 @@ function FeedGroupView({
                         {w.text}
                       </span>
                     ))}
+                  </td>
+                  <td class="record-col">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      class="switch small"
+                      checked={feed.recording}
+                      disabled={!connected || busy === feed.feed}
+                      aria-label={`Record ${feed.symbol} on ${feed.broker}`}
+                      title={feed.recording ? `Recording ${feed.symbol} on ${feed.broker}. Stop or delete it in Settings › Recording.` : `Record every sample of ${feed.symbol} on ${feed.broker}`}
+                      onChange={(e) => onRecord(feed, (e.target as HTMLInputElement).checked)}
+                    />
                   </td>
                   <td class="actions">
                     {row.removable && (

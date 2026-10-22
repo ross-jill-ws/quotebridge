@@ -79,6 +79,7 @@ export class ClockRules {
   private readonly localOffsetMinutes: (utcMs: number) => number;
   private unsubscribe = () => {};
   private writes: Promise<void> = Promise.resolve();
+  private readonly ruleListeners = new Set<(brokerServer: string, rule: ClockRule) => Promise<void> | void>();
 
   private constructor(
     private readonly store: ClockRuleStore,
@@ -94,6 +95,19 @@ export class ClockRules {
     for (const row of await store.load()) rules.entries.set(row.brokerServer, { ...row, savedAt: row.lastObservedAt ?? 0, flagged: false });
     rules.unsubscribe = bridge.onSamples((event) => rules.handle(event));
     return rules;
+  }
+
+  /**
+   * Calls `listener` when a broker server's rule is first inferred or set to another rule (stored UTC times are then
+   * recomputed). A set waits for it. Returns an unsubscribe function.
+   */
+  onRuleChange(listener: (brokerServer: string, rule: ClockRule) => Promise<void> | void): () => void {
+    this.ruleListeners.add(listener);
+    return () => this.ruleListeners.delete(listener);
+  }
+
+  private async ruleChanged(brokerServer: string, rule: ClockRule) {
+    await Promise.all([...this.ruleListeners].map(async (listener) => listener(brokerServer, rule)));
   }
 
   /** A broker server's rule, or null before anything was observed or set. */
@@ -135,6 +149,7 @@ export class ClockRules {
     };
     this.entries.set(brokerServer, entry);
     await this.save(entry);
+    if (!old || old.winterOffsetMinutes !== entry.winterOffsetMinutes || old.dst !== entry.dst) await this.ruleChanged(brokerServer, rule);
     return view(entry);
   }
 
@@ -170,6 +185,7 @@ export class ClockRules {
       // The first observation sets the rule.
       entry = { brokerServer, ...inferRule(offset), source: "inferred", lastObservedOffset: null, lastObservedAt: null, savedAt: 0, flagged: false };
       this.entries.set(brokerServer, entry);
+      void this.ruleChanged(brokerServer, inferRule(offset)).catch((e) => console.error("Stored times could not follow a new clock rule", e));
     }
     entry.lastObservedOffset = offset;
     entry.lastObservedAt = now;

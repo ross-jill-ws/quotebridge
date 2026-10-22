@@ -1,10 +1,11 @@
 // The app's DuckDB database in the data folder: the schema-version table, then each migration in order.
-// Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11). The WAL is never deleted or rewritten:
+// Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and recorded samples. The WAL is never deleted or rewritten:
 // if CHECKPOINT does not happen, DuckDB replays the WAL on the next open.
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { duckDbClockRuleStore, type ClockRuleStore } from "./clock/index.js";
+import { RecordingStore } from "./recording/index.js";
 
 export const DATABASE_FILE_NAME = "quotebridge.duckdb";
 
@@ -18,6 +19,26 @@ const MIGRATIONS: string[][] = [
       source VARCHAR NOT NULL,
       last_observed_offset INTEGER,
       last_observed_at BIGINT
+    )`,
+  ],
+  [
+    "CREATE SEQUENCE market_ids START 1",
+    `CREATE TABLE markets (
+      id INTEGER PRIMARY KEY DEFAULT nextval('market_ids'),
+      broker_server VARCHAR NOT NULL,
+      symbol VARCHAR NOT NULL,
+      digits INTEGER,
+      recording BOOLEAN NOT NULL DEFAULT false,
+      recording_since BIGINT,
+      UNIQUE (broker_server, symbol)
+    )`,
+    `CREATE TABLE samples (
+      market_id INTEGER NOT NULL,
+      utc_ms BIGINT NOT NULL,
+      broker_seconds BIGINT NOT NULL,
+      bid DOUBLE NOT NULL,
+      ask DOUBLE NOT NULL,
+      received_ms BIGINT NOT NULL
     )`,
   ],
 ];
@@ -37,6 +58,8 @@ export type AppDatabase = {
   schemaVersion: number;
   /** Clock rules per broker server. */
   clockRules: ClockRuleStore;
+  /** Markets and their recorded samples. */
+  recordings: RecordingStore;
   /** CHECKPOINT, then close. Closes even when CHECKPOINT fails (the WAL then stays for replay) and rethrows. */
   checkpointAndClose(): Promise<void>;
 };
@@ -75,6 +98,7 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
       file,
       schemaVersion,
       clockRules: duckDbClockRuleStore(conn),
+      recordings: new RecordingStore(conn),
       async checkpointAndClose() {
         try {
           await conn.run("CHECKPOINT");

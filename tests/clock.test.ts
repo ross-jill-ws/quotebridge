@@ -1,7 +1,7 @@
 // The clock module: a broker server's clock rule, its offset at any moment and conversions both ways.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brokerToUtc, describeRule, inferRule, offsetAtBroker, offsetAtUtc, utcToBroker, type ClockRule } from "../src/shared/clock.js";
+import { brokerSummers, brokerToUtc, describeRule, inferRule, offsetAtBroker, offsetAtUtc, utcToBroker, type ClockRule } from "../src/shared/clock.js";
 
 const MINUTE = 60_000;
 const utc = (iso: string) => Date.parse(`${iso}Z`);
@@ -108,4 +108,16 @@ test("a rule reads as the Terminals panel shows it", () => {
   assert.equal(describeRule({ winterOffsetMinutes: 330, dst: "none" }), "GMT+5:30, no daylight saving");
   assert.equal(describeRule({ winterOffsetMinutes: -210, dst: "eu" }), "GMT−3:30, GMT−2:30 in EU summer time");
   assert.equal(describeRule({ winterOffsetMinutes: -60, dst: "us" }), "GMT−1, GMT+0 in US summer time");
+});
+
+test("a rule's summers in broker time agree with its offset at every broker hour, including the skipped and repeated hours", () => {
+  for (const rule of [{ winterOffsetMinutes: 120, dst: "us" as const }, { winterOffsetMinutes: 60, dst: "eu" as const }, { winterOffsetMinutes: -300, dst: "us" as const }]) {
+    const summers = brokerSummers(rule, 2025, 2027);
+    assert.equal(summers.length, 3);
+    for (let ms = Date.UTC(2025, 0, 1); ms < Date.UTC(2028, 0, 1); ms += 15 * 60_000) {
+      const summer = summers.some(([from, to]) => ms >= from && ms < to);
+      assert.equal(summer ? rule.winterOffsetMinutes + 60 : rule.winterOffsetMinutes, offsetAtBroker(rule, ms), `${JSON.stringify(rule)} ${new Date(ms).toISOString()}`);
+    }
+  }
+  assert.deepEqual(brokerSummers({ winterOffsetMinutes: 120, dst: "none" }, 2025, 2027), []);
 });

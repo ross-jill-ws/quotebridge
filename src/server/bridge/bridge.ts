@@ -260,7 +260,7 @@ export class BridgeServer {
         if (!p.latest || latest.quoteTime !== p.latest.quoteTime) p.quoteUnchangedSince = this.now();
         p.latest = latest;
       }
-      // Milestone 1 records nothing: a batch is ACKed once it is held in memory for display.
+      // A batch is ACKed once it is held in memory; the recorder writes it within a second.
       await this.send(p.route, `A|1|${p.session}|${latest.seq}`);
     }
   }

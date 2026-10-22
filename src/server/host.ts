@@ -84,7 +84,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       stopStatus();
       stopHook();
       await server.close().catch((e) => send({ type: "error", during: "stop", error: toServerError(e) }));
-      // Closing the server waits for its clock-rule writes; nothing else is buffered before CHECKPOINT yet.
+      // Closing the server writes the buffered recorded samples and waits for its clock-rule writes.
       try {
         await database.checkpointAndClose();
         checkpoint = true;

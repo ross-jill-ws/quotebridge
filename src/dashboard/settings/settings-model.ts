@@ -1,6 +1,10 @@
-// The Settings view's model: reading a typed port, what a port change will do, and the note shown
-// when the server runs on other ports than the saved ones (a development run's overrides).
+// The Settings view's model: reading a typed port, what a port change will do, the note shown when the server
+// runs on other ports than the saved ones (a development run's overrides), and the Recording list.
+import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView } from "../../server/settings/index.js";
+import type { TimeShown } from "../../shared/settings-store.js";
+import { browserOffsetMinutes, displaySeconds } from "../display-clock.js";
+import { count } from "../format.js";
 
 export type PortRole = "ea" | "http";
 
@@ -40,4 +44,63 @@ export function portsNote(view: SettingsView): string | null {
   const { ports, portsInUse } = view;
   if (ports.ea === portsInUse.ea && ports.http === portsInUse.http) return null;
   return `This run listens on EA port ${portsInUse.ea} and dashboard port ${portsInUse.http}: a development run's port overrides win over the saved ports.`;
+}
+
+/** One market of Settings › Recording, as shown. */
+export type RecordingRow = {
+  key: string;
+  market: string;
+  brokerServer: string;
+  /** "Recording since 2027-01-15 10:00", or "Stopped". */
+  state: string;
+  /** "1,234,567 samples", "1 sample", "No samples yet". */
+  samples: string;
+  /** "2027-01-15 10:00 to 2027-01-16 23:59" on the chosen clock; empty without samples. */
+  range: string;
+  /** "about 39.5 MB": an estimate. */
+  size: string;
+  canStop: boolean;
+  canDelete: boolean;
+};
+
+/** `localOffsetMinutes` is this computer's offset from UTC (injectable for tests). */
+export function recordingRows(recordings: readonly RecordingView[], shown: TimeShown, localOffsetMinutes = browserOffsetMinutes): RecordingRow[] {
+  return recordings.map((r) => {
+    const when = (utcMs: number) => new Date(displaySeconds({ shown, rule: r.clockRule, localOffsetMinutes }, utcMs / 1000) * 1000).toISOString().slice(0, 16).replace("T", " ");
+    return {
+      key: `${r.brokerServer}\n${r.symbol}`,
+      market: r.symbol,
+      brokerServer: r.brokerServer,
+      state: r.recording ? (r.recordingSince === null ? "Recording" : `Recording since ${when(r.recordingSince)}`) : "Stopped",
+      samples: r.samples === 0 ? "No samples yet" : sampleCount(r.samples),
+      range: r.first === null || r.last === null ? "" : `${when(r.first)} to ${when(r.last)}`,
+      size: `about ${bytes(r.aboutBytes)}`,
+      canStop: r.recording,
+      canDelete: r.samples > 0,
+    };
+  });
+}
+
+/** The confirmation for Delete data…. */
+export function deleteRecording(r: Pick<RecordingView, "symbol" | "brokerServer" | "samples" | "recording">): { title: string; body: string; confirm: string } {
+  const goes = r.recording ? " Recording goes on: new samples are kept from now." : "";
+  return {
+    title: `Delete the recorded data of ${r.symbol} on ${r.brokerServer}?`,
+    body: `${sampleCount(r.samples)} ${r.samples === 1 ? "is" : "are"} deleted. This cannot be undone.${goes}`,
+    confirm: `Delete ${sampleCount(r.samples)}`,
+  };
+}
+
+const sampleCount = (n: number) => `${count(n)} ${n === 1 ? "sample" : "samples"}`;
+
+function bytes(n: number): string {
+  if (n < 1000) return `${n} bytes`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = n / 1000;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value < 100 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }

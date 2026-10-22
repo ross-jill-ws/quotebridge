@@ -4,6 +4,7 @@ import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
 import { startHttpServer } from "./http/http-server.js";
+import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
 import { TerminalManager, type TerminalManagerOptions } from "./terminals/index.js";
@@ -23,7 +24,7 @@ export type ServerConfig = {
   terminals?: TerminalManagerOptions;
   /** The Settings view (GET and POST /api/settings); omitted, those endpoints answer 404. */
   settings?: AppSettingsOptions;
-  /** The app's database (clock rules); omitted, clock rules are kept in memory only. */
+  /** The app's database (clock rules, recording); omitted, clock rules are kept in memory only and nothing is recorded. */
   database?: AppDatabase;
   /** The PC's local time minus UTC at an instant, in minutes (reads the EA's sampled time); injectable for tests. */
   localOffsetMinutes?: (utcMs: number) => number;
@@ -41,17 +42,32 @@ export type RunningServer = {
 
 /** Rejects with PortInUseError when the EA or HTTP port is taken; nothing stays bound then. */
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
-  // Snapshots carry each market's clock rule, read when they are taken.
+  // Snapshots carry each market's clock rule and recording state, read when they are taken.
   let clockRules: ClockRules | undefined;
-  const bridge = new BridgeServer({ now: config.now, marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: false }) });
+  let recorder: Recorder | undefined;
+  const bridge = new BridgeServer({
+    now: config.now,
+    marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: recorder?.isRecording(market) ?? false }),
+  });
   // Before the first sample: the stored rules decide what later samples confirm or contradict.
   const rules = (clockRules = await ClockRules.open(bridge, config.database?.clockRules ?? memoryClockRuleStore(), {
     now: config.now,
     localOffsetMinutes: config.localOffsetMinutes,
   }));
   try {
+    // Before the first sample too: each market's last stored sample decides what the merge rule keeps.
+    if (config.database) {
+      recorder = await Recorder.open(bridge, config.database.recordings, {
+        now: config.now,
+        clockRule: (brokerServer) => rules.rule(brokerServer),
+        digits: (market) => bridge.snapshot().feeds.find((f) => f.market.brokerServer === market.brokerServer && f.market.symbol === market.symbol)?.digits,
+      });
+      const recording = recorder;
+      rules.onRuleChange((brokerServer, rule) => recording.ruleChanged(brokerServer, rule));
+    }
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
   } catch (e) {
+    await recorder?.close();
     await rules.close();
     throw e;
   }
@@ -61,10 +77,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules: rules, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await bridge.close();
+    await recorder?.close();
     await rules.close();
     throw e;
   }
@@ -85,6 +102,8 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       await http.close();
       candles.close();
       await bridge.close();
+      // No more samples arrive: the buffered ones are written before the host's CHECKPOINT (ADR 10).
+      await recorder?.close();
       await rules.close();
     },
   };

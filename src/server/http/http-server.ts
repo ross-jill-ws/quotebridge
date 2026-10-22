@@ -10,6 +10,7 @@ import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
 import { asPortInUse } from "../port-in-use.js";
+import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
@@ -23,6 +24,8 @@ export type HttpServerOptions = {
   bridge: BridgeServer;
   candles: CandleBuilder;
   clockRules: ClockRules;
+  /** Recording, when the server has a database. */
+  recorder?: Recorder;
   sessions: WindowSessions;
   dashboardFolder?: string;
   /** The terminal manager, when the server manages terminals. */
@@ -133,6 +136,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return;
     }
     if (url.pathname === "/api/clock-rules") return handleClockRules(req, res);
+    if (options.recorder && ["/api/markets/recording", "/api/recordings", "/api/recordings/delete"].includes(url.pathname)) return handleRecording(options.recorder, url, req, res);
     if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, req, res);
     const terminals = options.terminals?.();
     if (terminals) {
@@ -158,6 +162,29 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       json(res, 200, await options.clockRules.set(body));
     } catch (e) {
       if (!(e instanceof ClockRuleRequestError)) throw e;
+      json(res, e.status, { error: e.message });
+    }
+  }
+
+  /**
+   * Recording: POST /api/markets/recording switches a market on or off (the Feeds rows), GET /api/recordings lists
+   * what is recorded (Settings › Recording), POST /api/recordings/delete deletes a market's samples.
+   */
+  async function handleRecording(recorder: Recorder, url: URL, req: IncomingMessage, res: ServerResponse) {
+    const route = `${req.method} ${url.pathname}`;
+    try {
+      if (route === "GET /api/recordings") return json(res, 200, { recordings: await recorder.list() });
+      if (route !== "POST /api/markets/recording" && route !== "POST /api/recordings/delete") return json(res, 405, { error: "Method not allowed" });
+      let body: unknown;
+      try {
+        body = await readJson(req);
+      } catch {
+        return json(res, 400, { error: "Expected a JSON body." });
+      }
+      if (route === "POST /api/markets/recording") return json(res, 200, await recorder.setRecording(body));
+      json(res, 200, { recordings: await recorder.deleteSamples(body) });
+    } catch (e) {
+      if (!(e instanceof RecordingRequestError)) throw e;
       json(res, e.status, { error: e.message });
     }
   }

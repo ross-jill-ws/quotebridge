@@ -60,6 +60,22 @@ export function offsetAtBroker(rule: ClockRule, brokerMs: number): number {
   return offsetAtUtc(rule, brokerMs - winter * MINUTE - HOUR);
 }
 
+/**
+ * The rule's summers from `fromYear` to `toYear` as broker-clock intervals [from, to) in milliseconds: a broker time
+ * inside one has the summer offset, any other the winter offset (the skipped hour counts as winter, the repeated hour
+ * as summer, as in offsetAtBroker). Lets stored rows be converted in bulk, e.g. in SQL.
+ */
+export function brokerSummers(rule: ClockRule, fromYear: number, toYear: number): [number, number][] {
+  if (rule.dst === "none") return [];
+  const shift = (rule.winterOffsetMinutes + 60) * MINUTE;
+  const out: [number, number][] = [];
+  for (let year = fromYear; year <= toYear; year++) {
+    const [start, end] = summer(rule.dst, year);
+    out.push([start + shift, end + shift]);
+  }
+  return out;
+}
+
 export function utcToBroker(rule: ClockRule, utcMs: number): number {
   return utcMs + offsetAtUtc(rule, utcMs) * MINUTE;
 }
