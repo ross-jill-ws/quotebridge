@@ -177,16 +177,20 @@ test("older bars are put before the loaded ones, leaving out any the chart alrea
   assert.deepEqual(prependOlder([], [bar(100)]), [bar(100)]);
 });
 
-test("a fresh latest page replaces the loaded bars from its first bar on and keeps the older ones scrolled back to", () => {
-  const loaded = [bar(100), bar(200), bar(300), bar(400, 1)];
-  assert.deepEqual(mergeLatest(loaded, [bar(300, 2), bar(400, 3), bar(500, 4)]).map((c) => [c.time, c.close]), [
+test("a fresh latest page replaces the loaded bars from its first bar on and keeps the older ones scrolled back to, with whether older still exist", () => {
+  const loaded = { candles: [bar(100), bar(200), bar(300), bar(400, 1)], complete: true };
+  const merged = mergeLatest(loaded, { candles: [bar(300, 2), bar(400, 3), bar(500, 4)], complete: false });
+  assert.equal(merged.complete, true);
+  assert.deepEqual(merged.candles.map((c) => [c.time, c.close]), [
     [100, 1],
     [200, 1],
     [300, 2],
     [400, 3],
     [500, 4],
   ]);
-  assert.deepEqual(mergeLatest(loaded, []), [], "a feed with no bars any more");
+  assert.deepEqual(mergeLatest(loaded, { candles: [], complete: true }).candles, [], "a feed with no bars any more");
+  const notScrolled = mergeLatest({ candles: [bar(300)], complete: true }, { candles: [bar(300), bar(400)], complete: false });
+  assert.equal(notScrolled.complete, false, "nothing older was loaded: the page says");
 });
 
 test("older bars are asked for when fewer than 100 remain left of the view, until there are none", () => {

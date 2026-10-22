@@ -1,5 +1,5 @@
 // Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
-import { BridgeServer } from "./bridge/index.js";
+import { BridgeServer, marketKey } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
@@ -63,7 +63,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       recorder = await Recorder.open(bridge, config.database.recordings, {
         now: config.now,
         clockRule: (brokerServer) => rules.rule(brokerServer),
-        digits: (market) => bridge.snapshot().feeds.find((f) => f.market.brokerServer === market.brokerServer && f.market.symbol === market.symbol)?.digits,
+        digits: (market) => bridge.snapshot().feeds.find((f) => marketKey(f.market) === marketKey(market))?.digits,
       });
       const recording = recorder;
       rules.onRuleChange((brokerServer, rule) => recording.ruleChanged(brokerServer, rule));

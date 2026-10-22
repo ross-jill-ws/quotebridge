@@ -190,7 +190,9 @@ export class Recorder {
     try {
       await this.store.append(rows);
     } catch (e) {
-      console.error(`${rows.length} recorded samples could not be written`, e);
+      // The EA has been told they arrived: keep them for the next flush (an appender flush is all or nothing).
+      this.buffer = [...rows, ...this.buffer];
+      console.error(`${rows.length} recorded samples could not be written; trying again`, e);
       throw e;
     }
   }
@@ -201,12 +203,12 @@ export class Recorder {
     return next;
   }
 
-  /** Stops recording and writes what is buffered. */
+  /** Stops recording and writes what is buffered; samples that still cannot be written are reported and lost. */
   async close() {
     this.closed = true;
     this.unsubscribe();
     clearInterval(this.timer);
-    await this.flush();
+    await this.flush().catch(() => console.error(`${this.buffer.length} recorded samples were lost at the stop`));
   }
 }
 

@@ -48,7 +48,7 @@ export class ChartHistory {
     const live: Candle[] = [];
     for (const c of this.options.liveCandles(feed.feed, period)) {
       if (!hstLast || c.time > hstLast.time) live.push(c);
-      else if (c.time === hstLast.time) live.push({ time: c.time, open: hstLast.open, high: Math.max(hstLast.high, c.high), low: Math.min(hstLast.low, c.low), close: c.close });
+      else if (c.time === hstLast.time) live.push(combine(hstLast, c));
     }
     const liveBefore = live.filter((c) => c.time < brokerBefore);
     if (liveBefore.length >= limit || !hstLast) {
@@ -98,14 +98,13 @@ function rollupSource(m1: HstFile, period: Period): BarSource {
       const rolled = rollUp(page.bars, period);
       const joined = rolled.at(-1);
       if (joined && buckets[0]?.time === joined.time) {
-        const newer = buckets[0];
-        buckets[0] = { time: joined.time, open: joined.open, high: Math.max(joined.high, newer.high), low: Math.min(joined.low, newer.low), close: newer.close };
+        buckets[0] = combine(joined, buckets[0]);
         rolled.pop();
       }
       buckets = [...rolled, ...buckets];
       if (buckets.length > limit) return { bars: buckets.slice(-limit), complete: false };
-      if (page.complete || !page.bars.length) return { bars: buckets, complete: true };
-      cursor = page.bars[0].time;
+      if (page.complete || page.next === undefined) return { bars: buckets, complete: true };
+      cursor = page.next;
     }
   };
   return { last: async () => (await before(undefined, 1)).bars[0] ?? null, before };
@@ -117,11 +116,13 @@ function rollUp(bars: readonly HstBar[], period: Period): Candle[] {
   for (const bar of bars) {
     const time = bucketStart(bar.time, period);
     const last = out.at(-1);
-    if (last?.time === time) {
-      last.high = Math.max(last.high, bar.high);
-      last.low = Math.min(last.low, bar.low);
-      last.close = bar.close;
-    } else out.push({ time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+    if (last?.time === time) out[out.length - 1] = combine(last, bar);
+    else out.push({ time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
   }
   return out;
+}
+
+/** One bar from an earlier part of a bucket and a later one: the earlier open, the later close. */
+function combine(earlier: Candle, later: Candle): Candle {
+  return { time: earlier.time, open: earlier.open, high: Math.max(earlier.high, later.high), low: Math.min(earlier.low, later.low), close: later.close };
 }

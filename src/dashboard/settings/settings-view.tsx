@@ -253,7 +253,7 @@ function RecordingGroup({ timeShown }: { timeShown: TimeShown }) {
             <div key={row.key} class="setting-row recording-row">
               <div class="setting-text">
                 <span class="setting-label">
-                  {row.market} <span class="recording-server">{row.brokerServer}</span>
+                  {row.symbol} <span class="recording-server">{row.brokerServer}</span>
                 </span>
                 <span class="setting-hint">
                   <span class={`recording-state${recording.recording ? " on" : ""}`}>{row.state}</span> · {row.samples}

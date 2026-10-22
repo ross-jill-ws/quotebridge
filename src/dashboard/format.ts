@@ -11,6 +11,11 @@ export function duration(ms: number): string {
   return `${Math.floor(hours / 24)} d`;
 }
 
+/** Seconds read as UTC fields (a display clock's), to the minute: "2027-01-15 10:00". */
+export function minuteStamp(seconds: number): string {
+  return new Date(seconds * 1000).toISOString().slice(0, 16).replace("T", " ");
+}
+
 /** A whole number with thousands separators: "1,250". */
 export function count(n: number): string {
   return n.toLocaleString("en-US");

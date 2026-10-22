@@ -66,7 +66,7 @@ const RECORDED = {
 
 test("Settings › Recording lists each market with its state, sample count, range on the chosen clock and about-size", () => {
   const [row] = recordingRows([RECORDED], "broker", () => 0);
-  assert.equal(row.market, "EURUSD");
+  assert.equal(row.symbol, "EURUSD");
   assert.equal(row.brokerServer, "EasyForex-Demo");
   assert.equal(row.state, "Recording since 2027-01-15 10:00");
   assert.equal(row.samples, "1,234,567 samples");

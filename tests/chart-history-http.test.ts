@@ -182,3 +182,17 @@ test("a before that is not UTC seconds is refused", { timeout: 15000 }, async (t
   for (const before of ["-1", "1.5", "abc", "", "99999999999999"]) assert.equal((await get({ period: "M1", before })).status, 400, `before ${before}`);
   assert.equal((await get({ period: "M1", before: 1800000000 })).status, 200);
 });
+
+test("a roll-up pages on past a long run of M1 bars that cannot be right, to the first good bar", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  const first = Date.UTC(2027, 0, 4) / 1000;
+  const good = bars(first, MINUTE, 1440);
+  // A day and more of damaged records (high below low), longer than one read, then good bars again.
+  const damaged = bars(first + 1440 * MINUTE, MINUTE, 6000).map((b) => ({ ...b, high: b.low - 0.001 }));
+  const recent = bars(first + 7440 * MINUTE, MINUTE, 1440);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: [...good, ...damaged, ...recent] });
+
+  const d1 = await page("D1", 500);
+  assert.equal(d1.complete, true);
+  assert.equal(d1.candles[0].time, utc(first), "the first good day is reached");
+});

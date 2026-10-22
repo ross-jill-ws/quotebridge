@@ -4,6 +4,7 @@
 import type { Candle } from "../../server/candles/index.js";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
+import { minuteStamp } from "../format.js";
 import { PALETTE_SIZE, type IndicatorSpec } from "./indicators.js";
 
 const NONE = "—";
@@ -35,10 +36,10 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
   if (index < 0) index = candles.length - 1;
   const bar = candles[index];
   const price = (value: number | undefined, places: number) => (value === undefined ? NONE : value.toFixed(places));
-  const stamp = bar ? new Date(bar.time * 1000).toISOString() : "";
+  const stamp = bar ? minuteStamp(bar.time) : "";
   return {
     title: `${symbol}, ${period}`,
-    time: isIntraday(period) ? stamp.slice(0, 16).replace("T", " ") : stamp.slice(0, 10),
+    time: isIntraday(period) ? stamp : stamp.slice(0, 10),
     ohlc: (["open", "high", "low", "close"] as const).map((key) => ({ label: key[0].toUpperCase() as "O", value: price(bar?.[key], digits) })),
     indicators: indicators.map(({ id, label, colour, digits: places, values }) => ({ id, label, colour, value: price(values[index], places) })),
   };
@@ -143,10 +144,14 @@ export function prependOlder(candles: readonly Candle[], older: readonly Candle[
   return [...older.filter((c) => c.time < first), ...candles];
 }
 
-/** A fresh latest page: it replaces the loaded bars from its first bar on; the older ones scrolled back to stay. */
-export function mergeLatest(candles: readonly Candle[], page: readonly Candle[]): Candle[] {
-  if (!page.length) return [];
-  return [...candles.filter((c) => c.time < page[0].time), ...page];
+/**
+ * A fresh latest page: it replaces the loaded bars from its first bar on; the older ones scrolled back to stay, and
+ * with them whether older still exist.
+ */
+export function mergeLatest<P extends { candles: Candle[]; complete: boolean }>(loaded: { candles: readonly Candle[]; complete: boolean }, page: P): P {
+  const first = page.candles[0]?.time;
+  const older = first === undefined ? [] : loaded.candles.filter((c) => c.time < first);
+  return older.length ? { ...page, candles: [...older, ...page.candles], complete: loaded.complete } : page;
 }
 
 /** The note shows while the chart does not reach back before QuoteBridge started (`since`, epoch ms). */

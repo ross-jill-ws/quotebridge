@@ -1,6 +1,7 @@
-// The Charts view: one feed's chart history (the terminal's HST bars, then the live candles the server builds), loaded
-// further back as the trader scrolls, with the forming candle following the live quote; MetaTrader's conventions (symbol, period and OHLC top-left, M1–MN1, candles,
-// bars or line, Bid label, Ask line, indicator panes), drawn in the app's own design.
+// The Charts view: one feed's chart history (the terminal's HST bars, then the live candles the server builds),
+// loaded further back as the trader scrolls, with the forming candle following the live quote; MetaTrader's
+// conventions (symbol, period and OHLC top-left, M1–MN1, candles, bars or line, Bid label, Ask line, indicator panes),
+// drawn in the app's own design.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { BridgeSnapshot, FeedSnapshot } from "../../server/bridge/index.js";
 import type { Candle } from "../../server/candles/index.js";
@@ -49,7 +50,6 @@ type CandlesAnswer = {
   ask: number | null;
   clockRule: ClockRule | null;
   candles: Candle[];
-  source: "hst" | "live";
   complete: boolean;
 };
 
@@ -512,11 +512,7 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
       // The latest page again (a new bucket, a reconnect): the older bars scrolled back to stay.
       (answer) =>
         current &&
-        setData((old) => {
-          if (!same(old, answer)) return answer;
-          const keepsOlder = old!.candles.length > 0 && answer.candles.length > 0 && old!.candles[0].time < answer.candles[0].time;
-          return { ...answer, candles: mergeLatest(old!.candles, answer.candles), complete: keepsOlder ? old!.complete : answer.complete };
-        }),
+        setData((old) => (same(old, answer) ? mergeLatest(old!, answer) : answer)),
       () => current && setData(undefined),
     );
     return () => {

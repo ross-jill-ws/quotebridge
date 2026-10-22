@@ -1,5 +1,6 @@
 // The app's DuckDB database in the data folder: the schema-version table, then each migration in order.
-// Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and recorded samples. The WAL is never deleted or rewritten:
+// Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and their recorded
+// samples. The WAL is never deleted or rewritten:
 // if CHECKPOINT does not happen, DuckDB replays the WAL on the next open.
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";

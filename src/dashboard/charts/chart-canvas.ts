@@ -110,8 +110,8 @@ export class ChartCanvas {
     if (live) {
       for (let i = n - 1; i < candles.length; i++) this.main.update(this.point(candles[i]));
     } else {
-      // Bars prepended move every loaded bar's logical index on by as many: move the view with them.
-      const prepended = n > 0 ? candles.findIndex((c) => c.time === old[0].time) : -1;
+      // Bars prepended (the newest bar unchanged) move every loaded bar's logical index on by as many: move the view with them.
+      const prepended = n > 0 && candles.length > n && candles.at(-1)!.time === old[n - 1].time ? candles.length - n : 0;
       const range = prepended > 0 ? this.chart.timeScale().getVisibleLogicalRange() : null;
       this.main.setData(candles.map((c) => this.point(c)));
       if (range) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended });

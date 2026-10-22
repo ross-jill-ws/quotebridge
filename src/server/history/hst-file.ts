@@ -13,8 +13,11 @@ export type HstBar = { time: number; open: number; high: number; low: number; cl
 
 export type HstHeader = { version: 400 | 401; symbol: string; minutes: number; digits: number };
 
-/** A page of bars, oldest first; `complete` when the file holds no older bars. */
-export type HstPage = { bars: HstBar[]; complete: boolean };
+/**
+ * A page of bars, oldest first; `complete` when the file holds no older bars. `next` is the time to page on from: the
+ * oldest record read, even when it was left out as not right.
+ */
+export type HstPage = { bars: HstBar[]; complete: boolean; next: number | undefined };
 
 /** The path of a symbol's file for a period, in minutes. */
 export function hstPath(dataFolder: string, brokerServer: string, symbol: string, minutes: number): string {
@@ -74,7 +77,7 @@ export class HstFile {
       const start = Math.max(0, end - limit);
       const bars: HstBar[] = [];
       for (let at = start; at < end; at += READ_RECORDS) bars.push(...(await this.records(file, at, Math.min(READ_RECORDS, end - at))));
-      return { bars, complete: start === 0 };
+      return { bars, complete: start === 0, next: start < end ? await this.time(file, start) : before };
     });
   }
 

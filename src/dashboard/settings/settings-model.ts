@@ -4,7 +4,7 @@ import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView } from "../../server/settings/index.js";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { browserOffsetMinutes, displaySeconds } from "../display-clock.js";
-import { count } from "../format.js";
+import { count, minuteStamp } from "../format.js";
 
 export type PortRole = "ea" | "http";
 
@@ -49,7 +49,7 @@ export function portsNote(view: SettingsView): string | null {
 /** One market of Settings › Recording, as shown. */
 export type RecordingRow = {
   key: string;
-  market: string;
+  symbol: string;
   brokerServer: string;
   /** "Recording since 2027-01-15 10:00", or "Stopped". */
   state: string;
@@ -66,10 +66,10 @@ export type RecordingRow = {
 /** `localOffsetMinutes` is this computer's offset from UTC (injectable for tests). */
 export function recordingRows(recordings: readonly RecordingView[], shown: TimeShown, localOffsetMinutes = browserOffsetMinutes): RecordingRow[] {
   return recordings.map((r) => {
-    const when = (utcMs: number) => new Date(displaySeconds({ shown, rule: r.clockRule, localOffsetMinutes }, utcMs / 1000) * 1000).toISOString().slice(0, 16).replace("T", " ");
+    const when = (utcMs: number) => minuteStamp(displaySeconds({ shown, rule: r.clockRule, localOffsetMinutes }, utcMs / 1000));
     return {
       key: `${r.brokerServer}\n${r.symbol}`,
-      market: r.symbol,
+      symbol: r.symbol,
       brokerServer: r.brokerServer,
       state: r.recording ? (r.recordingSince === null ? "Recording" : `Recording since ${when(r.recordingSince)}`) : "Stopped",
       samples: r.samples === 0 ? "No samples yet" : sampleCount(r.samples),
