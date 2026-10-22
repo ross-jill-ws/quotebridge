@@ -14,6 +14,10 @@ const MAX_PEERS = 1000;
 /** A peer silent this long may be evicted to make room when the peer limit is reached. */
 const STALE_PEER_MS = 60000;
 
+/** New samples of a feed, or the feed forgotten (removed by the user, or its last chart evicted). */
+export type SampleEvent = { type: "samples"; feed: string; samples: Sample[] } | { type: "removed"; feed: string };
+export type SampleListener = (event: SampleEvent) => void;
+
 export type BridgeServerOptions = {
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
@@ -90,6 +94,7 @@ export class BridgeServer {
   private invalidMessages = 0;
   private operations: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
+  private readonly sampleListeners = new Set<SampleListener>();
 
   constructor(options: BridgeServerOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -113,6 +118,25 @@ export class BridgeServer {
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Calls `listener` with each feed's new samples as they arrive (replayed samples are not repeated),
+   * and with `removed` when a feed is forgotten. Returns an unsubscribe function.
+   */
+  onSamples(listener: SampleListener): () => void {
+    this.sampleListeners.add(listener);
+    return () => this.sampleListeners.delete(listener);
+  }
+
+  private emit(event: SampleEvent) {
+    for (const listener of this.sampleListeners) {
+      try {
+        listener(event);
+      } catch (e) {
+        console.error("Bridge sample listener failed", e);
+      }
+    }
   }
 
   private changed() {
@@ -191,6 +215,7 @@ export class BridgeServer {
         const stale = [...this.peers.values()].find((p) => this.now() - p.lastSeen > STALE_PEER_MS);
         if (!stale) throw Error("Peer limit reached");
         this.peers.delete(stale.session);
+        if (stale.feed !== feedKey(m) && ![...this.peers.values()].some((p) => p.feed === stale.feed)) this.emit({ type: "removed", feed: stale.feed });
       }
       const p: Peer = { ...old, ...m, feed: feedKey(m), route, lastSeen: this.now() };
       this.peers.set(m.session, p);
@@ -205,6 +230,8 @@ export class BridgeServer {
       }
       p.lastSeen = this.now();
       const latest = m.samples.at(-1)!;
+      const fresh = m.samples.filter((s) => !p.latest || s.seq > p.latest.seq);
+      if (fresh.length) this.emit({ type: "samples", feed: p.feed, samples: fresh });
       if (!p.latest || latest.seq > p.latest.seq) {
         if (!p.latest || latest.quoteTime !== p.latest.quoteTime) p.quoteUnchangedSince = this.now();
         p.latest = latest;
@@ -251,6 +278,7 @@ export class BridgeServer {
       if (known.online) throw Error("Feed is online; detach its EAs before removing it");
       this.owners.delete(feed);
       for (const [session, p] of this.peers) if (p.feed === feed) this.peers.delete(session);
+      this.emit({ type: "removed", feed });
       this.changed();
     });
   }

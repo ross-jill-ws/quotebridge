@@ -1,5 +1,6 @@
 // Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
 import { BridgeServer } from "./bridge/index.js";
+import { CandleBuilder } from "./candles/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { WindowSessions } from "./http/window-session.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
@@ -36,13 +37,15 @@ export type RunningServer = {
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
   const bridge = new BridgeServer({ now: config.now });
   await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
+  const candles = new CandleBuilder(bridge, config.now);
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
+    candles.close();
     await bridge.close();
     throw e;
   }
@@ -56,6 +59,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     async close() {
       await terminals?.close();
       await http.close();
+      candles.close();
       await bridge.close();
     },
   };

@@ -7,6 +7,7 @@ import type { Socket } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
+import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
@@ -19,6 +20,7 @@ export const DEFAULT_DASHBOARD_FOLDER = fileURLToPath(new URL("../../dashboard/"
 export type HttpServerOptions = {
   port: number;
   bridge: BridgeServer;
+  candles: CandleBuilder;
   sessions: WindowSessions;
   dashboardFolder?: string;
   /** The terminal manager, when the server manages terminals. */
@@ -114,6 +116,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });
 
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
+    if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
     if (url.pathname === "/api/feeds/remove" && req.method === "POST") {
       const body = await readJson(req).catch(() => undefined);
       const feed = (body as { feed?: unknown } | undefined)?.feed;
@@ -135,6 +138,21 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Unknown endpoint" });
     if (req.method === "GET" || req.method === "HEAD") return serveStatic(url.pathname, req, res);
     json(res, 405, { error: "Method not allowed" });
+  }
+
+  /** The Charts view's candles for one feed and period, with its latest ask: the latest `limit` (1–10,080), or all of them. */
+  function handleCandles(url: URL, res: ServerResponse) {
+    const feed = bridge.snapshot().feeds.find((f) => f.feed === url.searchParams.get("feed"));
+    if (!feed) return json(res, 404, { error: "Unknown feed" });
+    const period = url.searchParams.get("period");
+    if (!PERIODS.includes(period as Period)) return json(res, 400, { error: `Expected a period: ${PERIODS.join(", ")}` });
+    const limitText = url.searchParams.get("limit");
+    const limit = limitText === null ? undefined : Number(limitText);
+    if (limit !== undefined && !(/^\d+$/.test(limitText!) && limit >= 1 && limit <= MAX_M1_CANDLES)) {
+      return json(res, 400, { error: `Expected a limit from 1 to ${MAX_M1_CANDLES}` });
+    }
+    const candles = options.candles.candles(feed.feed, period as Period, limit);
+    json(res, 200, { feed: feed.feed, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), candles });
   }
 
   /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */
