@@ -212,6 +212,11 @@ export class TerminalManager {
     void this.scanning.then(() => this.emit());
   }
 
+  /** A known terminal's data folder (where its HST files are), as of the last scan. */
+  dataFolder(terminalId: string): string | undefined {
+    return this.entries.find((e) => e.terminalId === terminalId)?.dataFolder;
+  }
+
   /** Listeners run after anything the views show changed (scan, operation, settings). */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);

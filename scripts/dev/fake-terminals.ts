@@ -7,6 +7,7 @@ import type { RunningServer } from "../../src/server/index.js";
 import type { TerminalManagerOptions } from "../../src/server/terminals/index.js";
 import type { MetaEditorProcesses } from "../../src/shared/metaeditor/index.js";
 import { FakeEA } from "../../tests/fake-ea.js";
+import { writeHst, type FixtureBar } from "../../tests/hst-fixtures.js";
 import { brokerNow, localNow } from "./fake-feeds.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE } from "../../tests/installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor } from "../../tests/metaeditor-fixtures.js";
@@ -52,7 +53,8 @@ export async function fakeTerminalOptions(root: string, options: TerminalManager
 
 /**
  * After an install, a fake EA in each installed terminal (except Quiet Broker) says hello and sends an EURUSD sample
- * every 2 s, on a GMT+2/+3 broker clock, so the Terminals panel shows an inferred clock rule.
+ * every 2 s, on a GMT+2/+3 broker clock, so the Terminals panel shows an inferred clock rule; the terminal gets EURUSD
+ * history files for the chart.
  */
 export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => void {
   const eas = new Map<string, FakeEA>();
@@ -62,7 +64,11 @@ export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => 
     for (const t of state?.terminals ?? []) {
       if (!t.terminalId || t.name === QUIET || t.state !== "installed" || !t.managed) continue;
       let ea = eas.get(t.terminalId);
-      if (!ea) eas.set(t.terminalId, (ea = new FakeEA({ terminal: t.terminalId, symbol: "EURUSD", broker: t.name.split(" ")[0] }).connect(endpoint)));
+      if (!ea) {
+        const broker = t.name.split(" ")[0];
+        if (t.dataFolder) void writeFakeHistory(t.dataFolder, broker).catch((e) => console.error(`[dev] fake history for ${t.name} failed`, e));
+        eas.set(t.terminalId, (ea = new FakeEA({ terminal: t.terminalId, symbol: "EURUSD", broker }).connect(endpoint)));
+      }
       void ea.hello().catch(() => {});
       void ea.ticks([{ seq: ++seq, bid: 1.0842, ask: 1.0844, quoteTime: brokerNow(), sampledTime: localNow() }]).catch(() => {});
     }
@@ -72,3 +78,31 @@ export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => 
     eas.forEach((ea) => ea.close());
   };
 }
+
+/**
+ * EURUSD history files in a fake terminal's data folder, as MetaTrader keeps them: 2,000 H1 bars (v401) and three
+ * days of M1 bars (v400, which the other periods roll up from), a random walk ending at the fake EA's price.
+ */
+async function writeFakeHistory(dataFolder: string, broker: string) {
+  const now = brokerNow();
+  const walk = (count: number, step: number) => {
+    const out: FixtureBar[] = [];
+    let price = 1.0842;
+    let seed = count;
+    const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5;
+    for (let i = 0; i < count; i++) {
+      const close = price;
+      const open = close - random() * Math.sqrt(step) * 6e-5;
+      const high = Math.max(open, close) + Math.abs(random()) * Math.sqrt(step) * 3e-5;
+      const low = Math.min(open, close) - Math.abs(random()) * Math.sqrt(step) * 3e-5;
+      out.unshift({ time: 0, open: round(open), high: round(high), low: round(low), close: round(close) });
+      price = open;
+    }
+    const last = now - (now % step) - step;
+    return out.map((bar, i) => ({ ...bar, time: last - (count - 1 - i) * step }));
+  };
+  await writeHst(dataFolder, broker, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: walk(2000, 3600) });
+  await writeHst(dataFolder, broker, { version: 400, symbol: "EURUSD", minutes: 1, digits: 5, bars: walk(3 * 1440, 60) });
+}
+
+const round = (price: number) => Math.round(price * 1e5) / 1e5;

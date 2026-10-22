@@ -1,5 +1,5 @@
-// The Charts view: one feed's candles, built in memory by the server since the app started, with the forming
-// candle following the live quote; MetaTrader's conventions (symbol, period and OHLC top-left, M1–MN1, candles,
+// The Charts view: one feed's chart history (the terminal's HST bars, then the live candles the server builds), loaded
+// further back as the trader scrolls, with the forming candle following the live quote; MetaTrader's conventions (symbol, period and OHLC top-left, M1–MN1, candles,
 // bars or line, Bid label, Ask line, indicator panes), drawn in the app's own design.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { BridgeSnapshot, FeedSnapshot } from "../../server/bridge/index.js";
@@ -22,6 +22,11 @@ import {
   daySeparators,
   followQuote,
   isIndicatorPeriod,
+  mergeLatest,
+  PAGE_BARS,
+  prependOlder,
+  showsCandlesSince,
+  wantsOlder,
   MAX_INDICATOR_PERIOD,
   readChartMemory,
   type ChartMemory,
@@ -35,8 +40,18 @@ import { DEFAULT_INDICATORS, indicatorLabel, indicatorValues, nextColour, type I
 /** Per window (localStorage): the last symbol, period, chart type, Ask line and indicators. */
 const MEMORY_KEY = "quotebridge.chart";
 
-/** Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown. */
-type CandlesAnswer = { feed: string; period: Period; digits: number; since: number; ask: number | null; clockRule: ClockRule | null; candles: Candle[] };
+/** Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown; `complete`: no older bars exist. */
+type CandlesAnswer = {
+  feed: string;
+  period: Period;
+  digits: number;
+  since: number;
+  ask: number | null;
+  clockRule: ClockRule | null;
+  candles: Candle[];
+  source: "hst" | "live";
+  complete: boolean;
+};
 
 type Props = {
   live: Live;
@@ -56,7 +71,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   const feed = chosenFeed(snapshot, memory.feed, groups);
   const group = groups.find((g) => g.terminal === feed?.terminal);
 
-  const fetched = useCandles(feed, memory.period, live);
+  const { data: fetched, loadOlder } = useCandles(feed, memory.period, live);
   // Lightweight Charts has no time zones: it is given times shifted to the display clock (ADR 11).
   const rule = fetched?.clockRule ?? feed?.clockRule ?? null;
   const ruleKey = JSON.stringify(rule);
@@ -167,6 +182,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
         legend={legend}
         toLatest={toLatest}
         onCrosshair={setCrosshair}
+        onVisibleFrom={(index) => wantsOlder(index, fetched?.complete ?? true) && loadOlder()}
         onChangeIndicator={changeIndicator}
       />
 
@@ -175,7 +191,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
           <kbd>1</kbd>–<kbd>9</kbd> switch period
         </span>
         <span>Scroll to zoom, drag to pan</span>
-        {data && <span class="since">{candlesSince(data.since, Date.now())}</span>}
+        {fetched && showsCandlesSince(fetched.candles, fetched.since) && <span class="since">{candlesSince(fetched.since, Date.now())}</span>}
       </div>
     </section>
   );
@@ -259,11 +275,13 @@ type FrameProps = {
   /** Changes each time the user asks for the latest bar. */
   toLatest: number;
   onCrosshair: (time: number | undefined) => void;
+  /** The logical index of the leftmost visible bar, whenever the view moves. */
+  onVisibleFrom: (index: number) => void;
   onChangeIndicator: (id: string, settings: IndicatorSettings | null) => void;
 };
 
 /** The chart canvas with its legends: the price pane's top-left, and one at the top of each indicator pane. */
-function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, specs, legend, toLatest, onCrosshair, onChangeIndicator }: FrameProps) {
+function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, specs, legend, toLatest, onCrosshair, onVisibleFrom, onChangeIndicator }: FrameProps) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ChartCanvas>();
   const [paneTops, setPaneTops] = useState<Map<string, number>>(new Map());
@@ -274,9 +292,12 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, spe
   };
   /** The feed and period on the canvas: new ones scroll to the latest bar. */
   const shown = useRef("");
+  // The canvas is made once; it calls the latest handler.
+  const visibleFrom = useRef(onVisibleFrom);
+  visibleFrom.current = onVisibleFrom;
 
   useEffect(() => {
-    canvas.current = new ChartCanvas(host.current!, scheme, onCrosshair);
+    canvas.current = new ChartCanvas(host.current!, scheme, onCrosshair, (index) => visibleFrom.current(index));
     // Pane sizes change on a resize and when a separator is dragged.
     const observer = new ResizeObserver(layout);
     observer.observe(host.current!);
@@ -477,22 +498,47 @@ function feedFromHash(): string | undefined {
  * The feed's candles from /api/candles, fetched again when the feed or period changes, when a new bucket opens
  * and after a reconnect; between fetches the forming candle follows the live quote.
  */
-function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live): CandlesAnswer | undefined {
+function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live): { data?: CandlesAnswer; loadOlder: () => void } {
   const [data, setData] = useState<CandlesAnswer>();
   const [reload, setReload] = useState(0);
   const id = feed?.feed;
+  const url = (before?: number) => `/api/candles?feed=${encodeURIComponent(id!)}&period=${period}&limit=${PAGE_BARS}${before === undefined ? "" : `&before=${before}`}`;
+  const same = (a: CandlesAnswer | undefined, b: CandlesAnswer) => a?.feed === b.feed && a.period === b.period;
 
   useEffect(() => {
     if (!id || live.status !== "live") return;
     let current = true;
-    get<CandlesAnswer>(`/api/candles?feed=${encodeURIComponent(id)}&period=${period}`).then(
-      (answer) => current && setData(answer),
+    get<CandlesAnswer>(url()).then(
+      // The latest page again (a new bucket, a reconnect): the older bars scrolled back to stay.
+      (answer) =>
+        current &&
+        setData((old) => {
+          if (!same(old, answer)) return answer;
+          const keepsOlder = old!.candles.length > 0 && answer.candles.length > 0 && old!.candles[0].time < answer.candles[0].time;
+          return { ...answer, candles: mergeLatest(old!.candles, answer.candles), complete: keepsOlder ? old!.complete : answer.complete };
+        }),
       () => current && setData(undefined),
     );
     return () => {
       current = false;
     };
   }, [id, period, reload, live.status]);
+
+  // The chart asks as it scrolls; one page at a time, for what is shown now.
+  const shown = useRef(data);
+  shown.current = data && data.feed === id && data.period === period ? data : undefined;
+  const loading = useRef(false);
+  const loadOlder = () => {
+    const now = shown.current;
+    if (!now || now.complete || !now.candles.length || loading.current) return;
+    loading.current = true;
+    get<CandlesAnswer>(url(now.candles[0].time))
+      .then(
+        (page) => setData((d) => (d && same(d, page) ? { ...d, candles: prependOlder(d.candles, page.candles), complete: page.complete } : d)),
+        () => {},
+      )
+      .finally(() => (loading.current = false));
+  };
 
   const latest = feed?.latest;
   // Every snapshot is a new object: follow the quote only when it moved.
@@ -503,7 +549,7 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
     if (next.newBucket) setReload((n) => n + 1);
   }, [latest?.bid, latest?.ask, latest?.quoteTime]);
 
-  return data && data.feed === id && data.period === period ? data : undefined;
+  return { data: shown.current, loadOlder };
 }
 
 /** Light or dark as the page shows it now: the Theme setting's data-theme, else the Windows colour scheme. */

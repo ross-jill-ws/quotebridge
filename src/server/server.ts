@@ -3,6 +3,7 @@ import { BridgeServer } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
+import { ChartHistory } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
@@ -26,6 +27,8 @@ export type ServerConfig = {
   settings?: AppSettingsOptions;
   /** The app's database (clock rules, recording); omitted, clock rules are kept in memory only and nothing is recorded. */
   database?: AppDatabase;
+  /** A terminal's data folder, for its HST files; defaults to the terminal manager's (none without one). Injectable for tests. */
+  terminalDataFolder?: (terminalId: string) => string | undefined;
   /** The PC's local time minus UTC at an instant, in minutes (reads the EA's sampled time); injectable for tests. */
   localOffsetMinutes?: (utcMs: number) => number;
 };
@@ -71,13 +74,18 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     await rules.close();
     throw e;
   }
-  const candles = new CandleBuilder(bridge, { now: config.now, clockRule: (brokerServer) => rules.rule(brokerServer) });
+  const candles = new CandleBuilder(bridge, { now: config.now });
+  const history = new ChartHistory({
+    dataFolder: config.terminalDataFolder ?? ((terminalId) => terminals?.dataFolder(terminalId)),
+    liveCandles: (feed, period) => candles.candles(feed, period),
+    clockRule: (brokerServer) => rules.rule(brokerServer),
+  });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
     await bridge.close();

@@ -1,5 +1,6 @@
 // The Charts view's model (pure): the legend at the crosshair or the latest bar, the forming candle that
-// follows the live quote, day separators, what the view remembers, and since when it has candles.
+// follows the live quote, day separators, paging back through the chart history, what the view remembers, and since
+// when it has candles.
 import type { Candle } from "../../server/candles/index.js";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
@@ -116,12 +117,39 @@ function isIndicator(value: unknown): value is IndicatorSpec {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Candles are built in memory from the app's start (`since`, epoch ms), in this computer's clock: the chart's own times are broker time. */
+/** Live candles are built in memory from the app's start (`since`, epoch ms), given in this computer's clock. */
 export function candlesSince(since: number, now: number): string {
   const start = new Date(since);
   const pad = (n: number) => String(n).padStart(2, "0");
   const clock = `${pad(start.getHours())}:${pad(start.getMinutes())}`;
   const sameDay = start.toDateString() === new Date(now).toDateString();
   const when = sameDay ? clock : `${start.getDate()} ${MONTHS[start.getMonth()]} ${clock}`;
-  return `Candles since ${when} (this computer's clock), when QuoteBridge started. Recording arrives in a later version.`;
+  return `Candles since ${when} (this computer's clock), when QuoteBridge started.`;
+}
+
+/** Older bars are fetched when fewer than this many remain left of the visible range. */
+export const OLDER_WHEN_FEWER_THAN = 100;
+/** Bars per page of chart history. */
+export const PAGE_BARS = 500;
+
+/** `fromIndex`: the logical index of the leftmost visible bar (negative past the first bar). */
+export function wantsOlder(fromIndex: number, complete: boolean): boolean {
+  return !complete && fromIndex < OLDER_WHEN_FEWER_THAN;
+}
+
+/** Older bars before the loaded ones; any the chart already has are left out. */
+export function prependOlder(candles: readonly Candle[], older: readonly Candle[]): Candle[] {
+  const first = candles[0]?.time ?? Infinity;
+  return [...older.filter((c) => c.time < first), ...candles];
+}
+
+/** A fresh latest page: it replaces the loaded bars from its first bar on; the older ones scrolled back to stay. */
+export function mergeLatest(candles: readonly Candle[], page: readonly Candle[]): Candle[] {
+  if (!page.length) return [];
+  return [...candles.filter((c) => c.time < page[0].time), ...page];
+}
+
+/** The note shows while the chart does not reach back before QuoteBridge started (`since`, epoch ms). */
+export function showsCandlesSince(candles: readonly Candle[], since: number): boolean {
+  return !candles.length || candles[0].time * 1000 >= since;
 }

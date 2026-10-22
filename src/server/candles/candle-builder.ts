@@ -1,14 +1,13 @@
 // In-memory candles: every feed's samples folded into M1 bid candles, bucketed by quote time. Quote time is the
-// broker clock as the EA reports it: candles break on it, as MetaTrader's do, and are handed out with their UTC start
-// from the broker server's clock rule (ADR 11). A feed's candles restart when its market changes. Nothing is written to disk.
-import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
+// broker clock as the EA reports it: candles break on it, as MetaTrader's do (the chart history hands them out in UTC,
+// ADR 11). A feed's candles restart when its market changes. Nothing is written to disk.
 import { bucketStart, PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeServer, type Market, type SampleEvent } from "../bridge/index.js";
 
 /** At most 7 days of M1 candles per feed; the oldest are dropped first. */
 export const MAX_M1_CANDLES = 10080;
 
-/** `time` is the bucket's start in seconds: of the broker clock while building, UTC once handed out. */
+/** `time` is the bucket's start in seconds: of the broker clock here, UTC once the chart history hands it out. */
 export type Candle = { time: number; open: number; high: number; low: number; close: number };
 
 type M1Candle = Candle & { samples: number };
@@ -19,8 +18,6 @@ type FeedCandles = { market: Market; m1: M1Candle[]; ask?: number; lastQuoteTime
 export type CandleBuilderOptions = {
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
-  /** A broker server's clock rule, or null while unknown. */
-  clockRule?: (brokerServer: string) => ClockRule | null;
 };
 
 /** Takes a later part of the same bucket into `candle`. */
@@ -35,11 +32,9 @@ export class CandleBuilder {
   private readonly unsubscribe: () => void;
   /** When this server began building candles, in epoch milliseconds. */
   readonly since: number;
-  private readonly clockRule: (brokerServer: string) => ClockRule | null;
 
   constructor(bridge: BridgeServer, options: CandleBuilderOptions = {}) {
     this.since = (options.now ?? Date.now)();
-    this.clockRule = options.clockRule ?? (() => null);
     this.unsubscribe = bridge.onSamples((event) => this.handle(event));
   }
 
@@ -68,11 +63,8 @@ export class CandleBuilder {
     }
   }
 
-  /**
-   * A feed's candles of one period, oldest first, with their UTC start (broker seconds as they are while the broker
-   * server's rule is unknown); the latest `limit` when given.
-   */
-  candles(feed: string, period: Period, limit?: number): Candle[] {
+  /** A feed's candles of one period in broker seconds, oldest first. */
+  candles(feed: string, period: Period): Candle[] {
     const candles = this.feeds.get(feed);
     const out: Candle[] = [];
     for (const m1 of candles?.m1 ?? []) {
@@ -81,8 +73,7 @@ export class CandleBuilder {
       if (last?.time === time) extend(last, m1.high, m1.low, m1.close);
       else out.push({ time, open: m1.open, high: m1.high, low: m1.low, close: m1.close });
     }
-    const rule = (candles && this.clockRule(candles.market.brokerServer)) ?? UNKNOWN_RULE;
-    return (limit === undefined ? out : out.slice(-limit)).map((c) => ({ ...c, time: brokerToUtc(rule, c.time * 1000) / 1000 }));
+    return out;
   }
 
   /** A feed's latest ask, for the Ask line; null before its first sample. */

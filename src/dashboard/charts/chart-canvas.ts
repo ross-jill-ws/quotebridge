@@ -56,7 +56,8 @@ export class ChartCanvas {
   private changedFrom?: number;
   private readonly indicators = new Map<string, IndicatorSeries>();
 
-  constructor(container: HTMLElement, scheme: ChartScheme, onCrosshair: (time: number | undefined) => void) {
+  /** `onVisibleFrom` gets the logical index of the leftmost visible bar whenever the view moves (negative past the first bar). */
+  constructor(container: HTMLElement, scheme: ChartScheme, onCrosshair: (time: number | undefined) => void, onVisibleFrom: (index: number) => void) {
     this.scheme = scheme;
     this.chart = createChart(container, {
       autoSize: true,
@@ -67,6 +68,7 @@ export class ChartCanvas {
       crosshair: { mode: CrosshairMode.Normal },
     });
     this.chart.subscribeCrosshairMove((param) => onCrosshair(param.time === undefined ? undefined : (param.time as number)));
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => range && onVisibleFrom(range.from));
     // Archivo may still be loading; draw the scales again once it is there.
     void document.fonts?.ready.then(() => this.chart.applyOptions({ layout: { fontFamily: FONT } }));
     this.createMain();
@@ -95,7 +97,8 @@ export class ChartCanvas {
 
   /**
    * New candles: a list that only moved its forming candle (same bucket, earlier candles untouched) or opened one
-   * after it is updated in place; anything else (another period, a fetch) is set again.
+   * after it is updated in place; anything else (another period, a fetch) is set again. Older bars put before the
+   * loaded ones leave the view where it was.
    */
   setCandles(candles: readonly Candle[], separators: readonly number[]) {
     const old = this.candles;
@@ -107,7 +110,11 @@ export class ChartCanvas {
     if (live) {
       for (let i = n - 1; i < candles.length; i++) this.main.update(this.point(candles[i]));
     } else {
+      // Bars prepended move every loaded bar's logical index on by as many: move the view with them.
+      const prepended = n > 0 ? candles.findIndex((c) => c.time === old[0].time) : -1;
+      const range = prepended > 0 ? this.chart.timeScale().getVisibleLogicalRange() : null;
       this.main.setData(candles.map((c) => this.point(c)));
+      if (range) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended });
     }
     this.separators.set(separators);
     const last = candles.at(-1);

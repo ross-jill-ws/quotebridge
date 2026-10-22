@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
+import type { ChartHistory } from "../history/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
@@ -23,6 +24,7 @@ export type HttpServerOptions = {
   port: number;
   bridge: BridgeServer;
   candles: CandleBuilder;
+  history: ChartHistory;
   clockRules: ClockRules;
   /** Recording, when the server has a database. */
   recorder?: Recorder;
@@ -190,11 +192,13 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   }
 
   /**
-   * The Charts view's candles for one feed and period, with its latest ask. Candle `time` is its start in UTC seconds
-   * (ADR 11); `clockRule` is the broker server's, null while unknown (times are then broker seconds as they are), and
-   * `since` is this server's start in epoch milliseconds. The latest `limit` (1–10,080), or all of them.
+   * The Charts view's candles for one feed and period, with its latest ask: a page of the chart history, the latest
+   * `limit` (1–10,080; 10,080 when not given) older than `before` (UTC seconds; the latest when not given). Candle
+   * `time` is its start in UTC seconds (ADR 11); `clockRule` is the broker server's, null while unknown (times are
+   * then broker seconds as they are); `source` is "hst" or "live"; `complete` is true when no older bars exist;
+   * `since` is this server's start in epoch milliseconds.
    */
-  function handleCandles(url: URL, res: ServerResponse) {
+  async function handleCandles(url: URL, res: ServerResponse) {
     const feed = bridge.snapshot().feeds.find((f) => f.feed === url.searchParams.get("feed"));
     if (!feed) return json(res, 404, { error: "Unknown feed" });
     const period = url.searchParams.get("period");
@@ -204,8 +208,20 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (limit !== undefined && !(/^\d+$/.test(limitText!) && limit >= 1 && limit <= MAX_M1_CANDLES)) {
       return json(res, 400, { error: `Expected a limit from 1 to ${MAX_M1_CANDLES}` });
     }
-    const candles = options.candles.candles(feed.feed, period as Period, limit);
-    json(res, 200, { feed: feed.feed, market: feed.market, period, digits: feed.digits, since: options.candles.since, ask: options.candles.ask(feed.feed), clockRule: feed.clockRule, candles });
+    const beforeText = url.searchParams.get("before");
+    const before = beforeText === null ? undefined : Number(beforeText);
+    if (before !== undefined && !(/^\d{1,12}$/.test(beforeText!) && Number.isSafeInteger(before))) return json(res, 400, { error: "Expected before as UTC seconds" });
+    const page = await options.history.page(feed, period as Period, limit ?? MAX_M1_CANDLES, before);
+    json(res, 200, {
+      feed: feed.feed,
+      market: feed.market,
+      period,
+      digits: feed.digits,
+      since: options.candles.since,
+      ask: options.candles.ask(feed.feed),
+      clockRule: feed.clockRule,
+      ...page,
+    });
   }
 
   /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */

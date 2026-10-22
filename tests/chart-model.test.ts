@@ -1,7 +1,7 @@
 // The Charts view's pure models: colour schemes, the legend, the forming candle, day separators and view memory.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { candlesSince, chartLegend, daySeparators, followQuote, readChartMemory } from "../src/dashboard/charts/chart-model.js";
+import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, readChartMemory, showsCandlesSince, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { indicatorLabel, nextColour } from "../src/dashboard/charts/indicators.js";
 
@@ -140,8 +140,8 @@ test("the view remembers its symbol, period, type, Ask line and indicators, and 
 
 test("the chart says since when it has candles, with the date once that is not today", () => {
   const start = new Date(2026, 9, 22, 9, 26, 40).getTime();
-  assert.equal(candlesSince(start, new Date(2026, 9, 22, 15, 0).getTime()), "Candles since 09:26 (this computer's clock), when QuoteBridge started. Recording arrives in a later version.");
-  assert.equal(candlesSince(start, new Date(2026, 9, 23, 8, 0).getTime()), "Candles since 22 Oct 09:26 (this computer's clock), when QuoteBridge started. Recording arrives in a later version.");
+  assert.equal(candlesSince(start, new Date(2026, 9, 22, 15, 0).getTime()), "Candles since 09:26 (this computer's clock), when QuoteBridge started.");
+  assert.equal(candlesSince(start, new Date(2026, 9, 23, 8, 0).getTime()), "Candles since 22 Oct 09:26 (this computer's clock), when QuoteBridge started.");
 });
 
 test("candles are UTC but break on the broker clock: a D1 quote at 10:00 on a GMT+2 broker falls in the bar that opened at 22:00 UTC the day before", () => {
@@ -163,4 +163,42 @@ test("the legend gives the bar's time as the chart shows it: date and minutes in
   assert.equal(chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [], time: 7200 }).time, "1970-01-01 02:00");
   assert.equal(chartLegend({ symbol: "AUDUSD.a", period: "D1", digits: 5, candles: BARS, indicators: [] }).time, "1970-01-01");
   assert.equal(chartLegend({ symbol: "GOLD", period: "M1", digits: 2, candles: [], indicators: [] }).time, "");
+});
+
+const bar = (time: number, close = 1) => ({ time, open: close, high: close, low: close, close });
+
+test("older bars are put before the loaded ones, leaving out any the chart already has", () => {
+  assert.deepEqual(prependOlder([bar(300), bar(400)], [bar(100), bar(200), bar(300, 9)]).map((c) => [c.time, c.close]), [
+    [100, 1],
+    [200, 1],
+    [300, 1],
+    [400, 1],
+  ]);
+  assert.deepEqual(prependOlder([], [bar(100)]), [bar(100)]);
+});
+
+test("a fresh latest page replaces the loaded bars from its first bar on and keeps the older ones scrolled back to", () => {
+  const loaded = [bar(100), bar(200), bar(300), bar(400, 1)];
+  assert.deepEqual(mergeLatest(loaded, [bar(300, 2), bar(400, 3), bar(500, 4)]).map((c) => [c.time, c.close]), [
+    [100, 1],
+    [200, 1],
+    [300, 2],
+    [400, 3],
+    [500, 4],
+  ]);
+  assert.deepEqual(mergeLatest(loaded, []), [], "a feed with no bars any more");
+});
+
+test("older bars are asked for when fewer than 100 remain left of the view, until there are none", () => {
+  assert.equal(wantsOlder(99, false), true);
+  assert.equal(wantsOlder(100, false), false);
+  assert.equal(wantsOlder(-20, false), true, "scrolled past the first bar");
+  assert.equal(wantsOlder(10, true), false, "complete");
+});
+
+test("the Candles since note goes once the chart reaches back before QuoteBridge started", () => {
+  const since = Date.UTC(2027, 0, 15, 9, 26);
+  assert.equal(showsCandlesSince([], since), true);
+  assert.equal(showsCandlesSince([bar(Date.UTC(2027, 0, 15, 9, 26) / 1000)], since), true);
+  assert.equal(showsCandlesSince([bar(Date.UTC(2027, 0, 15, 9, 25) / 1000)], since), false);
 });
