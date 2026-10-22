@@ -3,7 +3,7 @@ import { BridgeServer, marketKey } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
-import { ChartHistory, HistoryCatalog } from "./history/index.js";
+import { ChartHistory, HistoryCatalog, HistorySaver } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
@@ -48,6 +48,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   // Snapshots carry each market's clock rule and recording state, read when they are taken.
   let clockRules: ClockRules | undefined;
   let recorder: Recorder | undefined;
+  let saver: HistorySaver | undefined;
   const bridge = new BridgeServer({
     now: config.now,
     marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: recorder?.isRecording(market) ?? false }),
@@ -66,7 +67,9 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         digits: (market) => bridge.snapshot().feeds.find((f) => marketKey(f.market) === marketKey(market))?.digits,
       });
       const recording = recorder;
+      const saved = config.database.savedBars;
       rules.onRuleChange((brokerServer, rule) => recording.ruleChanged(brokerServer, rule));
+      rules.onRuleChange((brokerServer, rule) => saved.recomputeUtc(brokerServer, rule));
     }
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
   } catch (e) {
@@ -75,27 +78,45 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     throw e;
   }
   const candles = new CandleBuilder(bridge, { now: config.now });
+  const dataFolder = config.terminalDataFolder ?? ((terminalId: string) => terminals?.dataFolder(terminalId));
+  const saved = config.database?.savedBars;
+  if (saved && recorder) {
+    const recording = recorder;
+    saver = new HistorySaver({
+      store: saved,
+      snapshot: () => bridge.snapshot(),
+      dataFolder,
+      clockRule: (brokerServer) => rules.rule(brokerServer),
+      marketId: (market, digits) => recording.ensureMarket(market, digits),
+      recorded: () => recording.storedMarkets().filter((m) => m.recording),
+      now: config.now,
+    });
+  }
   const history = new ChartHistory({
-    dataFolder: config.terminalDataFolder ?? ((terminalId) => terminals?.dataFolder(terminalId)),
+    dataFolder,
     liveCandles: (feed, period) => candles.candles(feed, period),
     clockRule: (brokerServer) => rules.rule(brokerServer),
+    savedBars: saved && ((market, period, before, limit) => saved.before(market, period, before, limit)),
   });
   const catalog = new HistoryCatalog({
     snapshot: () => bridge.snapshot(),
-    dataFolder: config.terminalDataFolder ?? ((terminalId) => terminals?.dataFolder(terminalId)),
+    dataFolder,
     terminalName: (terminalId) => terminals?.name(terminalId),
     clockRule: (brokerServer) => rules.rule(brokerServer),
     storedMarkets: () => recorder?.storedMarkets() ?? [],
     isRecording: (market) => recorder?.isRecording(market) ?? false,
+    saved,
+    saving: (market) => saver?.progress(market) ?? null,
   });
   const sessions = new WindowSessions();
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
     candles.close();
+    await saver?.close();
     await bridge.close();
     await recorder?.close();
     await rules.close();
@@ -117,6 +138,8 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       await terminals?.close();
       await http.close();
       candles.close();
+      // Before the host's CHECKPOINT: a save stops after the page it is writing.
+      await saver?.close();
       await bridge.close();
       // No more samples arrive: the buffered ones are written before the host's CHECKPOINT (ADR 10).
       await recorder?.close();

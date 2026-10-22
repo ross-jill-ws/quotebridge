@@ -13,6 +13,18 @@ export type SampleSummary = { marketId: number; samples: number; first: number; 
 
 const YEAR_MS = 365.25 * 86400_000;
 
+/**
+ * SQL for the broker clock's offset from UTC in minutes at the row's `broker_seconds`, for rows between broker seconds
+ * `first` and `last`: stored UTC times are recomputed from it when a rule changes.
+ */
+export function offsetMinutesSql(rule: ClockRule, first: number, last: number): string {
+  const fromYear = new Date(first * 1000 - YEAR_MS).getUTCFullYear();
+  const toYear = new Date(last * 1000 + YEAR_MS).getUTCFullYear();
+  // The summers are whole numbers computed here, not user input.
+  const summer = brokerSummers(rule, fromYear, toYear).map(([from, to]) => `(broker_seconds * 1000 >= ${from} AND broker_seconds * 1000 < ${to})`);
+  return summer.length ? `CASE WHEN ${summer.join(" OR ")} THEN ${rule.winterOffsetMinutes + 60} ELSE ${rule.winterOffsetMinutes} END` : String(rule.winterOffsetMinutes);
+}
+
 export class RecordingStore {
   constructor(private readonly connection: DuckDBConnection) {}
 
@@ -92,11 +104,7 @@ export class RecordingStore {
       )
     ).getRowObjectsJS()[0];
     if (span?.first === null || span?.first === undefined) return;
-    const fromYear = new Date(Number(span.first) * 1000 - YEAR_MS).getUTCFullYear();
-    const toYear = new Date(Number(span.last) * 1000 + YEAR_MS).getUTCFullYear();
-    // The summers are whole numbers computed here, not user input.
-    const summer = brokerSummers(rule, fromYear, toYear).map(([from, to]) => `(broker_seconds * 1000 >= ${from} AND broker_seconds * 1000 < ${to})`);
-    const offset = summer.length ? `CASE WHEN ${summer.join(" OR ")} THEN ${rule.winterOffsetMinutes + 60} ELSE ${rule.winterOffsetMinutes} END` : String(rule.winterOffsetMinutes);
+    const offset = offsetMinutesSql(rule, Number(span.first), Number(span.last));
     await this.connection.run("BEGIN TRANSACTION");
     try {
       await this.connection.run(

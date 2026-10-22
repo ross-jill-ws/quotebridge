@@ -83,7 +83,7 @@ export class Recorder {
     return recorder;
   }
 
-  /** Every market stored (recorded or once recorded). */
+  /** Every market stored (recorded or once recorded, or with saved history). */
   storedMarkets(): StoredMarket[] {
     return [...this.markets.values()];
   }
@@ -115,6 +115,18 @@ export class Recorder {
         stored.recordingSince = since;
       }
       return { ...market, recording: on };
+    });
+  }
+
+  /** A market's ID, adding it (not recorded) when new: saved history belongs to a market, as samples do. */
+  ensureMarket(market: Market, digits: number | null): Promise<number> {
+    return this.serial(async () => {
+      const stored = this.markets.get(marketKey(market));
+      if (stored && (stored.digits !== null || digits === null)) return stored.id;
+      const id = await this.store.addMarket(market.brokerServer, market.symbol, digits);
+      if (stored) stored.digits = digits;
+      else this.markets.set(marketKey(market), { id, ...market, digits, recording: false, recordingSince: null });
+      return id;
     });
   }
 

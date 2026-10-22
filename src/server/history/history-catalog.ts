@@ -1,13 +1,16 @@
 // The History page's catalog: every market the app knows (its feeds, recorded markets, and the symbols in the HST
 // folders of the terminals logged into a broker server), with each period's HST file and saved bars. A period's HST
-// comes from whichever terminal on that broker server holds the newest bar. Times are handed out in UTC (ADR 11).
+// comes from whichever terminal on that broker server holds the newest bar; a download continues into the saved bars
+// older than that file's first bar. Times are handed out in UTC (ADR 11).
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeSnapshot, type Market } from "../bridge/index.js";
 import { PERIOD_MINUTES } from "./chart-history.js";
+import type { SaveProgress } from "./history-saver.js";
 import { HstFile, hstPath, type HstBar } from "./hst-file.js";
+import type { SavedBarStore } from "./saved-store.js";
 
 /** What a period holds: a bar count and the first and last bar's start (UTC seconds; broker seconds while read). */
 export type HistorySpan = { bars: number; first: number; last: number };
@@ -23,6 +26,8 @@ export type HistoryMarket = {
   /** The terminals logged into the broker server. */
   terminals: { terminalId: string; name: string }[];
   recording: boolean;
+  /** A queued or running save of its history, or null. */
+  saving: SaveProgress | null;
   clockRule: ClockRule | null;
   /** Periods with an HST file or saved bars, in MetaTrader's order. */
   periods: HistoryPeriod[];
@@ -41,6 +46,10 @@ export type HistoryCatalogOptions = {
   /** Markets the app has stored (recorded or once recorded). */
   storedMarkets: () => KnownMarket[];
   isRecording: (market: Market) => boolean;
+  /** Saved history, when the server has a database. */
+  saved?: SavedBarStore;
+  /** A queued or running save of a market's history, or null. */
+  saving?: (market: Market) => SaveProgress | null;
 };
 
 type KnownMarket = Market & { digits: number | null };
@@ -64,6 +73,12 @@ export class HistoryCatalog {
     };
     for (const feed of snapshot.feeds) add(feed.market, feed.digits);
     for (const m of this.options.storedMarkets()) add(m, m.digits);
+    const saved = new Map<string, Map<Period, HistorySpan>>();
+    for (const s of (await this.options.saved?.spans()) ?? []) {
+      add(s, null);
+      const periods = saved.get(marketKey(s)) ?? new Map<Period, HistorySpan>();
+      saved.set(marketKey(s), periods.set(s.period, { bars: s.bars, first: s.first, last: s.last }));
+    }
     const files = new Map<string, Map<Period, PeriodFile>>();
     for (const [brokerServer, terminals] of servers) {
       for (const [symbol, periods] of await this.scan(brokerServer, terminals)) {
@@ -77,6 +92,7 @@ export class HistoryCatalog {
         const rule = this.options.clockRule(m.brokerServer);
         const toUtc = (seconds: number) => brokerToUtc(rule ?? UNKNOWN_RULE, seconds * 1000) / 1000;
         const found = files.get(marketKey(m));
+        const kept = saved.get(marketKey(m));
         return {
           market: marketKey(m),
           brokerServer: m.brokerServer,
@@ -84,10 +100,13 @@ export class HistoryCatalog {
           digits: m.digits,
           terminals: (servers.get(m.brokerServer) ?? []).map((terminalId) => ({ terminalId, name: this.options.terminalName(terminalId) ?? terminalId })),
           recording: this.options.isRecording(m),
+          saving: this.options.saving?.(m) ?? null,
           clockRule: rule,
           periods: PERIODS.flatMap((period) => {
             const span = found?.get(period)?.span;
-            return span ? [{ period, hst: { bars: span.bars, first: toUtc(span.first), last: toUtc(span.last) }, saved: null }] : [];
+            const hst = span ? { bars: span.bars, first: toUtc(span.first), last: toUtc(span.last) } : null;
+            const keptSpan = kept?.get(period) ?? null;
+            return hst || keptSpan ? [{ period, hst, saved: keptSpan }] : [];
           }),
         };
       });
@@ -103,7 +122,16 @@ export class HistoryCatalog {
       const span = file?.header.minutes === minutes ? await file.span() : null;
       if (file && span && newer(span, best)) best = { file, span };
     }
-    return best && { digits: best.file.header.digits, clockRule: this.options.clockRule(market.brokerServer), pages: best.file.pages() };
+    const saved = this.options.saved;
+    const older = saved ? (await saved.before(market, period, best?.span.first, 1)).bars.length > 0 : false;
+    if (!best && !older) return null;
+    const digits = best?.file.header.digits ?? this.options.storedMarkets().find((m) => marketKey(m) === marketKey(market))?.digits ?? 5;
+    const file = best?.file;
+    async function* pages() {
+      if (older) yield* saved!.pages(market, period, best?.span.first);
+      if (file) yield* file.pages();
+    }
+    return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };
   }
 
   /** Per symbol, per period: the terminals' HST file holding the newest bar. */

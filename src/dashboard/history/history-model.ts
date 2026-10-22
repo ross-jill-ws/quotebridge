@@ -1,4 +1,4 @@
-// The History page's view model (pure): a group per market (its terminals and recording state) with a row per period:
+// The History page's view model (pure): a group per market (its terminals, recording state and saving) with a row per period:
 // what the terminal's HST file holds and what the app has saved, on the clock the Time shown setting chooses, and the
 // period's CSV and HST downloads. The search keeps markets whose symbol or broker server contains it.
 import type { HistoryMarket, HistorySpan } from "../../server/history/index.js";
@@ -26,8 +26,12 @@ export type HistoryGroup = {
   symbol: string;
   /** "EasyForex-Demo · EasyForex MT4", or "… · no terminal on this server". */
   where: string;
-  /** "Recording" or "Not recorded". */
+  /** "Recording · auto-saved" or "Not recorded". */
   state: string;
+  /** Whether to offer Save this history: not recorded (recorded markets are saved by themselves), with an HST file, no save running. */
+  canSave: boolean;
+  /** "Saving… 42%" while a save is queued or running; null otherwise. */
+  saving: string | null;
   rows: HistoryRow[];
   /** Shown instead of rows when the market has no history; null when it has. */
   empty: string | null;
@@ -48,7 +52,9 @@ export function historyGroups(markets: readonly HistoryMarket[], { shown, query,
         id: `history-${m.market.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
         symbol: m.symbol,
         where: `${m.brokerServer} · ${terminals}`,
-        state: m.recording ? "Recording" : "Not recorded",
+        state: m.recording ? "Recording · auto-saved" : "Not recorded",
+        canSave: !m.recording && !m.saving && m.periods.some((p) => p.hst),
+        saving: m.saving && (m.saving.total ? `Saving… ${Math.min(99, Math.floor((100 * m.saving.done) / m.saving.total))}%` : "Saving…"),
         rows: m.periods.map((p) => ({
           period: p.period,
           hst: spanText(p.hst, p.period, clock),

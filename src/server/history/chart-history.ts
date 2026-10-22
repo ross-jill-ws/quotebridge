@@ -1,10 +1,11 @@
 // Chart history: the bars a chart shows, newest first in pages. Closed bars come from the terminal's HST file for the
 // period (rolled up from its M1 file when the period has none); the live candles join on after the file's last bar,
-// and the bar at its last time takes HST's open with the live high, low and close, as it is still forming. With no
-// HST there are live candles only. Times are handed out in UTC from the broker server's clock rule (ADR 11).
+// and the bar at its last time takes HST's open with the live high, low and close, as it is still forming. Older than
+// HST's first bar, saved history continues (it holds every closed bar when there is no HST). With neither there are
+// live candles only. Times are handed out in UTC from the broker server's clock rule (ADR 11).
 import { brokerToUtc, UNKNOWN_RULE, utcToBroker, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, type Period } from "../../shared/periods.js";
-import type { FeedSnapshot } from "../bridge/index.js";
+import type { FeedSnapshot, Market } from "../bridge/index.js";
 import type { Candle } from "../candles/index.js";
 import { HstFile, hstPath, type HstBar } from "./hst-file.js";
 
@@ -14,8 +15,8 @@ export const PERIOD_MINUTES: Record<Period, number> = { M1: 1, M5: 5, M15: 15, M
 /** M1 bars read at a time while rolling a period up. */
 const ROLLUP_PAGE = 5000;
 
-/** A page of candles, oldest first, with UTC times. `source`: "hst" when it holds HST bars, else "live". */
-export type HistoryPage = { candles: Candle[]; source: "hst" | "live"; complete: boolean };
+/** A page of candles, oldest first, with UTC times. `source`: "hst" when it holds HST bars, else "saved" when it holds saved ones, else "live". */
+export type HistoryPage = { candles: Candle[]; source: "hst" | "saved" | "live"; complete: boolean };
 
 export type ChartHistoryOptions = {
   /** A terminal's data folder, where its HST files are; undefined when unknown. */
@@ -24,13 +25,21 @@ export type ChartHistoryOptions = {
   liveCandles: (feed: string, period: Period) => Candle[];
   /** A broker server's clock rule, or null while unknown. */
   clockRule: (brokerServer: string) => ClockRule | null;
+  /** Up to `limit` saved bars of a market's period older than `before` (broker seconds), oldest first; omitted without a database. */
+  savedBars?: (market: Market, period: Period, before: number | undefined, limit: number) => Promise<{ bars: Candle[]; complete: boolean }>;
 };
 
 /** Closed bars, oldest first, in broker seconds. */
 interface BarSource {
   last(): Promise<Candle | null>;
   /** Up to `limit` bars older than `before` (all when undefined); `complete` when none older remain. */
-  before(before: number | undefined, limit: number): Promise<{ bars: Candle[]; complete: boolean }>;
+  before(before: number | undefined, limit: number): Promise<{ bars: Candle[]; complete: boolean; source: "hst" | "saved" }>;
+}
+
+/** An HST file's bars, or bars rolled up from one. */
+interface HstSource extends BarSource {
+  /** The oldest bar's start, or null when there is none. */
+  first(): Promise<number | null>;
 }
 
 export class ChartHistory {
@@ -57,11 +66,20 @@ export class ChartHistory {
     // HST's closed bars, older than the live part and than `before`.
     const cut = Math.min(brokerBefore, live[0]?.time ?? Infinity);
     const closed = await source!.before(cut === Infinity ? undefined : cut, limit - liveBefore.length);
-    return { candles: [...closed.bars, ...liveBefore].map(toUtc), source: closed.bars.length ? "hst" : "live", complete: closed.complete };
+    return { candles: [...closed.bars, ...liveBefore].map(toUtc), source: closed.bars.length ? closed.source : "live", complete: closed.complete };
+  }
+
+  /** HST, continued by saved history; else saved history alone, when it holds any; else none. */
+  private async source(feed: FeedSnapshot, period: Period): Promise<BarSource | null> {
+    const read = this.options.savedBars;
+    const saved = read ? savedSource((before, limit) => read(feed.market, period, before, limit)) : null;
+    const hst = await this.hstSource(feed, period);
+    if (hst) return saved ? chain(hst, saved) : hst;
+    return saved && (await saved.last()) ? saved : null;
   }
 
   /** The period's HST file, else its M1 file rolled up, else none. */
-  private async source(feed: FeedSnapshot, period: Period): Promise<BarSource | null> {
+  private async hstSource(feed: FeedSnapshot, period: Period): Promise<HstSource | null> {
     const folder = this.options.dataFolder(feed.terminal);
     if (!folder) return null;
     const file = (minutes: number) => HstFile.open(hstPath(folder, feed.market.brokerServer, feed.market.symbol, minutes));
@@ -74,21 +92,22 @@ export class ChartHistory {
 
 const candle = ({ time, open, high, low, close }: HstBar): Candle => ({ time, open, high, low, close });
 
-function fileSource(file: HstFile): BarSource {
+function fileSource(file: HstFile): HstSource {
   return {
+    first: async () => (await file.span())?.first ?? null,
     last: async () => {
       const bar = await file.last();
       return bar && candle(bar);
     },
     before: async (before, limit) => {
       const page = await file.before(before, limit);
-      return { bars: page.bars.map(candle), complete: page.complete };
+      return { bars: page.bars.map(candle), complete: page.complete, source: "hst" };
     },
   };
 }
 
 /** A period built from M1 bars: each bucket of the broker clock, as the live candles are. */
-function rollupSource(m1: HstFile, period: Period): BarSource {
+function rollupSource(m1: HstFile, period: Period): HstSource {
   const before: BarSource["before"] = async (until, limit) => {
     // Buckets read so far, oldest first; the oldest may still be missing earlier M1 bars until one older is seen.
     let buckets: Candle[] = [];
@@ -102,12 +121,39 @@ function rollupSource(m1: HstFile, period: Period): BarSource {
         rolled.pop();
       }
       buckets = [...rolled, ...buckets];
-      if (buckets.length > limit) return { bars: buckets.slice(-limit), complete: false };
-      if (page.complete || page.next === undefined) return { bars: buckets, complete: true };
+      if (buckets.length > limit) return { bars: buckets.slice(-limit), complete: false, source: "hst" };
+      if (page.complete || page.next === undefined) return { bars: buckets, complete: true, source: "hst" };
       cursor = page.next;
     }
   };
-  return { last: async () => (await before(undefined, 1)).bars[0] ?? null, before };
+  const first = async () => {
+    const oldest = (await m1.span())?.first;
+    return oldest === undefined ? null : bucketStart(oldest, period);
+  };
+  return { first, last: async () => (await before(undefined, 1)).bars[0] ?? null, before };
+}
+
+/** Saved history alone. */
+function savedSource(read: (before: number | undefined, limit: number) => Promise<{ bars: Candle[]; complete: boolean }>): BarSource {
+  return {
+    last: async () => (await read(undefined, 1)).bars[0] ?? null,
+    before: async (before, limit) => ({ ...(await read(before, limit)), source: "saved" }),
+  };
+}
+
+/** HST's bars, then the saved ones older than HST's first bar. */
+function chain(hst: HstSource, saved: BarSource): BarSource {
+  return {
+    last: async () => (await hst.last()) ?? (await saved.last()),
+    before: async (before, limit) => {
+      const page = await hst.before(before, limit);
+      if (!page.complete) return page;
+      const first = await hst.first();
+      const cut = Math.min(before ?? Infinity, first ?? Infinity);
+      const rest = await saved.before(cut === Infinity ? undefined : cut, limit - page.bars.length);
+      return { bars: [...rest.bars, ...page.bars], complete: rest.complete, source: page.bars.length || !rest.bars.length ? "hst" : "saved" };
+    },
+  };
 }
 
 /** M1 bars, oldest first, into the period's buckets. */

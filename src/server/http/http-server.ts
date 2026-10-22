@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
-import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog } from "../history/index.js";
+import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HistorySaver } from "../history/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
@@ -27,6 +27,8 @@ export type HttpServerOptions = {
   history: ChartHistory;
   /** The History page's markets and downloads. */
   catalog: HistoryCatalog;
+  /** Saved history's saver, when the server has a database. */
+  saver?: HistorySaver;
   clockRules: ClockRules;
   /** Recording, when the server has a database. */
   recorder?: Recorder;
@@ -198,7 +200,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
    * The Charts view's candles for one feed and period, with its latest ask: a page of the chart history, the latest
    * `limit` (1–10,080; 10,080 when not given) older than `before` (UTC seconds; the latest when not given). Candle
    * `time` is its start in UTC seconds (ADR 11); `clockRule` is the broker server's, null while unknown (times are
-   * then broker seconds as they are); `source` is "hst" or "live"; `complete` is true when no older bars exist;
+   * then broker seconds as they are); `source` is "hst", "saved" or "live"; `complete` is true when no older bars exist;
    * `since` is this server's start in epoch milliseconds.
    */
   async function handleCandles(url: URL, res: ServerResponse) {
@@ -229,9 +231,18 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
 
   /**
    * The History page: GET /api/history lists every market with its periods; /api/history/csv and /api/history/hst
-   * download everything available for `market` (its key, as listed) and `period`.
+   * download everything available for `market` (its key, as listed) and `period`; POST /api/history/save { market }
+   * saves a market's history once (202; the list shows its progress).
    */
   async function handleHistory(url: URL, req: IncomingMessage, res: ServerResponse) {
+    if (url.pathname === "/api/history/save" && options.saver) {
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+      const body = await readJson(req).catch(() => undefined);
+      const market = parseMarket(typeof (body as { market?: unknown } | undefined)?.market === "string" ? (body as { market: string }).market : null);
+      if (!market) return json(res, 400, { error: 'Expected market as ["<broker server>","<symbol>"]' });
+      if (!(await options.saver.request(market))) return json(res, 404, { error: `No HST file of ${market.symbol} on ${market.brokerServer} is on this computer.` });
+      return json(res, 202, { market: JSON.stringify([market.brokerServer, market.symbol]), saving: options.saver.progress(market) });
+    }
     if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
     if (url.pathname === "/api/history") return json(res, 200, { markets: await options.catalog.list() });
     const format = url.pathname === "/api/history/csv" ? "csv" : url.pathname === "/api/history/hst" ? "hst" : undefined;

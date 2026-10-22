@@ -2017,3 +2017,8 @@ a.path {
   margin: 0;
   padding: 12px 18px;
 }
+
+.history-saving {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}

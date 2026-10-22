@@ -20,6 +20,7 @@ const EURUSD: HistoryMarket = {
     { terminalId: "mt4-b", name: "EasyForex MT4 (2)" },
   ],
   recording: true,
+  saving: null,
   clockRule: RULE,
   periods: [
     { period: "H1", hst: { bars: 1250, first: EIGHT - 1249 * HOUR, last: EIGHT }, saved: null },
@@ -34,6 +35,7 @@ const GBPUSD: HistoryMarket = {
   digits: 5,
   terminals: [],
   recording: false,
+  saving: null,
   clockRule: null,
   periods: [],
 };
@@ -42,7 +44,7 @@ test("a group per market: symbol, broker server and terminals, recording state",
   const [eurusd, gbpusd] = historyGroups([EURUSD, GBPUSD], { shown: "broker", query: "", localOffsetMinutes: () => 0 });
   assert.equal(eurusd.symbol, "EURUSD");
   assert.equal(eurusd.where, "EasyForex-Demo · EasyForex MT4, EasyForex MT4 (2)");
-  assert.equal(eurusd.state, "Recording");
+  assert.equal(eurusd.state, "Recording · auto-saved");
   assert.equal(gbpusd.where, "ICMarkets-Live07 · no terminal on this server");
   assert.equal(gbpusd.state, "Not recorded");
   assert.equal(gbpusd.empty, "No history on this computer yet.");
@@ -71,6 +73,24 @@ test("a row with saved bars only has them, and no HST", () => {
   const [row] = historyGroups([saved], { shown: "utc", query: "", localOffsetMinutes: () => 0 })[0].rows;
   assert.equal(row.hst, null);
   assert.deepEqual(row.saved, { bars: "2 bars", range: "2027-01-15 07:59 to 2027-01-15 08:00" });
+});
+
+test("a market not recorded offers Save this history while it has HST; a running save shows its progress instead", () => {
+  const notRecorded: HistoryMarket = { ...EURUSD, recording: false };
+  const groups = (m: HistoryMarket) => historyGroups([m], { shown: "broker", query: "", localOffsetMinutes: () => 0 })[0];
+  assert.equal(groups(notRecorded).state, "Not recorded");
+  assert.equal(groups(notRecorded).canSave, true);
+  assert.equal(groups(notRecorded).saving, null);
+  assert.equal(groups(EURUSD).canSave, false, "recorded markets are saved by themselves");
+
+  const savedOnly: HistoryMarket = { ...GBPUSD, periods: [{ period: "M1", hst: null, saved: { bars: 2, first: EIGHT - 60, last: EIGHT } }] };
+  assert.equal(groups(savedOnly).canSave, false, "nothing to save without an HST file");
+
+  const running = groups({ ...notRecorded, saving: { done: 420, total: 1000 } });
+  assert.equal(running.saving, "Saving… 42%");
+  assert.equal(running.canSave, false);
+  assert.equal(groups({ ...notRecorded, saving: { done: 0, total: 0 } }).saving, "Saving…");
+  assert.equal(groups({ ...EURUSD, saving: { done: 999, total: 1000 } }).saving, "Saving… 99%", "never 100% while running");
 });
 
 test("the search keeps markets whose symbol or broker server contains it, ignoring case", () => {

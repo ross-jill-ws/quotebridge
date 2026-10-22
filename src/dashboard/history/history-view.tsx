@@ -1,14 +1,16 @@
 // The History page: a group per market with a row per period (what the HST file holds, what the app has saved) and the
-// period's CSV and HST downloads, filtered by symbol or broker server.
+// period's CSV and HST downloads, filtered by symbol or broker server. A market not recorded offers Save this history.
 import { useEffect, useState } from "preact/hooks";
 import type { HistoryMarket } from "../../server/history/index.js";
 import type { TimeShown } from "../../shared/settings-store.js";
-import { get } from "../api.js";
+import { get, post } from "../api.js";
 import { browserOffsetMinutes } from "../display-clock.js";
 import { historyGroups, type SpanText } from "./history-model.js";
 
 /** HST files grow as MetaTrader writes them: the list is read again this often while the page is open. */
 const HISTORY_REFRESH_MS = 30_000;
+/** While a save runs, its progress is read this often. */
+const SAVING_REFRESH_MS = 1000;
 
 const TIMES_IN: Record<TimeShown, string> = { broker: "broker time", local: "local time", utc: "UTC" };
 
@@ -16,7 +18,9 @@ export function HistoryView({ timeShown }: { timeShown: TimeShown }) {
   const [markets, setMarkets] = useState<HistoryMarket[]>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [reload, setReload] = useState(0);
 
+  const saving = markets?.some((m) => m.saving) ?? false;
   useEffect(() => {
     const load = () =>
       get<{ markets: HistoryMarket[] }>("/api/history").then(
@@ -27,9 +31,15 @@ export function HistoryView({ timeShown }: { timeShown: TimeShown }) {
         (e: Error) => setError(e.message),
       );
     load();
-    const timer = setInterval(load, HISTORY_REFRESH_MS);
+    const timer = setInterval(load, saving ? SAVING_REFRESH_MS : HISTORY_REFRESH_MS);
     return () => clearInterval(timer);
-  }, []);
+  }, [saving, reload]);
+
+  const save = (market: string) =>
+    post("/api/history/save", { market }).then(
+      () => setReload((n) => n + 1),
+      (e: Error) => setError(e.message),
+    );
 
   const groups = markets ? historyGroups(markets, { shown: timeShown, query, localOffsetMinutes: browserOffsetMinutes }) : [];
   return (
@@ -72,7 +82,20 @@ export function HistoryView({ timeShown }: { timeShown: TimeShown }) {
             <header class="group-head">
               <h2 id={g.id}>{g.symbol}</h2>
               <span class="tid">{g.where}</span>
-              <span class="group-state">{g.state}</span>
+              <span class="group-state">
+                {g.state}
+                {g.saving ? (
+                  <span class="history-saving" role="status">
+                    {g.saving}
+                  </span>
+                ) : (
+                  g.canSave && (
+                    <button class="button small" onClick={() => save(g.key)}>
+                      Save this history
+                    </button>
+                  )
+                )}
+              </span>
             </header>
             {g.empty ? (
               <p class="history-empty muted">{g.empty}</p>
