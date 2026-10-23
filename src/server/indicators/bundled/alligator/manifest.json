@@ -1,0 +1,56 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.alligator",
+  "version": "1.0.0",
+  "name": "Alligator",
+  "description": "Bill Williams' Alligator, as MetaTrader's: smoothed moving averages of the median price for the jaw, teeth and lips, each shifted forward onto later bars. The lines stop at the last bar.",
+  "license": "MIT",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Median price (high + low) / 2",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "median",
+      "history": { "bars": 1200 }
+    }
+  ],
+  "parameters": [
+    { "id": "jaw", "label": "Jaw period", "type": "integer", "default": 13, "min": 1, "max": 500 },
+    { "id": "jawShift", "label": "Jaw shift", "type": "integer", "default": 8, "min": 0, "max": 100 },
+    { "id": "teeth", "label": "Teeth period", "type": "integer", "default": 8, "min": 1, "max": 500 },
+    { "id": "teethShift", "label": "Teeth shift", "type": "integer", "default": 5, "min": 0, "max": 100 },
+    { "id": "lips", "label": "Lips period", "type": "integer", "default": 5, "min": 1, "max": 500 },
+    { "id": "lipsShift", "label": "Lips shift", "type": "integer", "default": 3, "min": 0, "max": 100 }
+  ],
+  "outputs": [
+    {
+      "id": "jaw",
+      "label": "Jaw",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "overlay",
+      "color": "#6aa8ea",
+      "unit": { "input": "source" }
+    },
+    {
+      "id": "teeth",
+      "label": "Teeth",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "overlay",
+      "color": "#ff5e6e",
+      "unit": { "input": "source" }
+    },
+    {
+      "id": "lips",
+      "label": "Lips",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "overlay",
+      "color": "#2ee6a0",
+      "unit": { "input": "source" }
+    }
+  ]
+}

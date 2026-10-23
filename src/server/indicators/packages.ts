@@ -34,9 +34,13 @@ export async function packagesIn(folder: string, bundled: boolean): Promise<Indi
   );
 }
 
-/** The packages that ship with the app. */
-export function bundledPackages(): Promise<IndicatorPackage[]> {
-  return packagesIn(BUNDLED_FOLDER, true);
+/** The bundled packages in the order menus list them: the Milestone 2 two first, then as the legacy app had them. */
+const BUNDLED_ORDER = ["quotebridge.ma", "quotebridge.rsi", "quotebridge.bollinger", "quotebridge.macd", "quotebridge.ao", "quotebridge.ac", "quotebridge.alligator", "quotebridge.eo"];
+
+/** The packages that ship with the app, in BUNDLED_ORDER. */
+export async function bundledPackages(): Promise<IndicatorPackage[]> {
+  const rank = (p: IndicatorPackage) => BUNDLED_ORDER.indexOf(p.manifest.id) >>> 0;
+  return (await packagesIn(BUNDLED_FOLDER, true)).sort((a, b) => rank(a) - rank(b));
 }
 
 /** The packages the app has: the bundled ones, then any in an extra folder (tests). */

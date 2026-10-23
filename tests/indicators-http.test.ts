@@ -235,7 +235,7 @@ test("the live stream tells a window when the values of a key it shows have chan
   assert.deepEqual(await changed, [key]);
 });
 
-test("the package list has the bundled Moving average and RSI with their manifests", { timeout: 20000 }, async (t) => {
+test("the package list has the bundled packages with their manifests, the Moving average and RSI first", { timeout: 20000 }, async (t) => {
   const { origin, cookie } = await start(t, { extraIndicatorPackages: undefined });
   const res = await fetch(`${origin}/api/indicators/packages`, { headers: { cookie } });
   assert.equal(res.status, 200);
@@ -245,6 +245,8 @@ test("the package list has the bundled Moving average and RSI with their manifes
     [
       ["quotebridge.ma", "Moving average", true, true],
       ["quotebridge.rsi", "RSI", true, true],
+      ["quotebridge.bollinger", "Bollinger Bands", true, true],
+      ["quotebridge.alligator", "Alligator", true, true],
     ],
   );
 });

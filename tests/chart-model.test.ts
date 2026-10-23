@@ -6,7 +6,17 @@ import { test } from "node:test";
 import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, latestView, PAGE_BARS, readChartMemory, showsCandlesSince, viewAfterSet, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
-import { checkSettings, indicatorDigits, indicatorLabel, nextColour, valuesByCandle } from "../src/dashboard/charts/indicators.js";
+import {
+  checkSettings,
+  drawnIndicators,
+  indicatorDigits,
+  indicatorLabel,
+  newColours,
+  valuesByCandle,
+  withColour,
+  type IndicatorValuesAnswer,
+  type PackageInfo,
+} from "../src/dashboard/charts/indicators.js";
 import type { Manifest } from "../src/shared/indicator-manifest.js";
 
 test("Default candles are filled Uptick vivid and Downtick vivid on the surface colour, following the theme", () => {
@@ -60,8 +70,8 @@ const BARS = [
   { time: 7200, open: 0.65143, high: 0.652, low: 0.6514, close: 0.65188 },
   { time: 10800, open: 0.65188, high: 0.6519, low: 0.65102, close: 0.6511 },
 ];
-const MA = { id: "a", label: "Moving average 2 Simple", colour: "#b7791f", digits: 5, values: [undefined, 0.651657, 0.65149] };
-const RSI = { id: "b", label: "RSI 14", colour: "#2f6fb3", digits: 2, values: [undefined, undefined, 41.456] };
+const MA = { id: "a", label: "Moving average 2 Simple", digits: 5, outputs: [{ id: "ma", colour: "#b7791f", values: [undefined, 0.651657, 0.65149] }] };
+const RSI = { id: "b", label: "RSI 14", digits: 2, outputs: [{ id: "rsi", colour: "#2f6fb3", values: [undefined, undefined, 41.456] }] };
 
 test("the legend shows the symbol, period and the latest bar's OHLC with the feed's digits", () => {
   const legend = chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [MA, RSI] });
@@ -73,22 +83,22 @@ test("the legend shows the symbol, period and the latest bar's OHLC with the fee
     { label: "C", value: "0.65110" },
   ]);
   assert.deepEqual(legend.indicators, [
-    { id: "a", label: "Moving average 2 Simple", colour: "#b7791f", value: "0.65149" },
-    { id: "b", label: "RSI 14", colour: "#2f6fb3", value: "41.46" },
+    { id: "a", label: "Moving average 2 Simple", outputs: [{ id: "ma", colour: "#b7791f", value: "0.65149" }] },
+    { id: "b", label: "RSI 14", outputs: [{ id: "rsi", colour: "#2f6fb3", value: "41.46" }] },
   ]);
 });
 
 test("an indicator that failed says so with the reason, its last good values greyed", () => {
   const failed = { ...RSI, failed: "The calculation took longer than 500 ms." };
   const legend = chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [MA, failed] });
-  assert.deepEqual(legend.indicators[1], { id: "b", label: "RSI 14", colour: "#2f6fb3", value: "41.46", failed: "The calculation took longer than 500 ms." });
+  assert.deepEqual(legend.indicators[1], { id: "b", label: "RSI 14", outputs: [{ id: "rsi", colour: "#2f6fb3", value: "41.46" }], failed: "The calculation took longer than 500 ms." });
   assert.equal(legend.indicators[0].failed, undefined);
 });
 
 test("at the crosshair the legend follows the bar under it, and shows a dash where an indicator has no value yet", () => {
   const legend = chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [MA, RSI], time: 7200 });
   assert.deepEqual(legend.ohlc.map((p) => p.value), ["0.65143", "0.65200", "0.65140", "0.65188"]);
-  assert.deepEqual(legend.indicators.map((i) => i.value), ["0.65166", "—"]);
+  assert.deepEqual(legend.indicators.map((i) => i.outputs[0].value), ["0.65166", "—"]);
 });
 
 test("a crosshair time without a bar, or no bars at all, falls back to the latest bar or dashes", () => {
@@ -97,7 +107,7 @@ test("a crosshair time without a bar, or no bars at all, falls back to the lates
   const empty = chartLegend({ symbol: "GOLD", period: "M1", digits: 2, candles: [], indicators: [MA] });
   assert.equal(empty.title, "GOLD, M1");
   assert.deepEqual(empty.ohlc.map((p) => p.value), ["—", "—", "—", "—"]);
-  assert.equal(empty.indicators[0].value, "—");
+  assert.equal(empty.indicators[0].outputs[0].value, "—");
 });
 
 const manifest = (folder: string): Manifest => JSON.parse(readFileSync(new URL(folder, import.meta.url), "utf8"));
@@ -112,14 +122,82 @@ test("an indicator is named by its package and parameters, a choice by its label
   assert.equal(indicatorLabel(MACD_MANIFEST, { fast: 12, slow: 26, signal: 9 }), "MACD 12 26 9");
 });
 
-test("a new indicator takes the first palette colour no other indicator's outputs use", () => {
+const BOLLINGER_MANIFEST = manifest("../src/server/indicators/bundled/bollinger/manifest.json");
+const ALLIGATOR_MANIFEST = manifest("../src/server/indicators/bundled/alligator/manifest.json");
+
+test("each line of a new indicator takes the least-used palette colour, first in palette order", () => {
   const using = (...colours: number[]) => colours.map((c, i) => ({ colours: { [`o${i}`]: c } }));
-  assert.equal(nextColour([]), 0);
-  assert.equal(nextColour(using(0, 1)), 2);
-  assert.equal(nextColour(using(1)), 0);
-  assert.equal(nextColour(using(0, 1, 2, 3)), 0);
-  assert.equal(nextColour(using(0, 1, 2, 3, 0)), 1);
-  assert.equal(nextColour([{ colours: { a: 0, b: 1 } }]), 2);
+  assert.deepEqual(newColours(MA_MANIFEST, []), { ma: 0 });
+  assert.deepEqual(newColours(MA_MANIFEST, using(0, 1)), { ma: 2 });
+  assert.deepEqual(newColours(MA_MANIFEST, using(1)), { ma: 0 });
+  assert.deepEqual(newColours(MA_MANIFEST, using(0, 1, 2, 3, 0)), { ma: 1 });
+  // Each line counts the ones before it.
+  assert.deepEqual(newColours(BOLLINGER_MANIFEST, []), { middle: 0, upper: 1, lower: 2 });
+  assert.deepEqual(newColours(BOLLINGER_MANIFEST, [{ colours: { ma: 0 } }]), { middle: 1, upper: 2, lower: 3 });
+  assert.deepEqual(newColours(ALLIGATOR_MANIFEST, [{ colours: { ma: 0 } }, { colours: { middle: 1, upper: 2, lower: 3 } }]), { jaw: 0, teeth: 1, lips: 2 });
+});
+
+const LIGHT = chartScheme("default", "light");
+const info = (m: Manifest): PackageInfo => ({ manifest: m, bundled: true, enabled: true });
+const PACKAGES = new Map([MA_MANIFEST, RSI_MANIFEST, BOLLINGER_MANIFEST, ALLIGATOR_MANIFEST].map((m) => [m.id, info(m)]));
+/** The server's answer with these outputs' values at BARS' times. */
+const answer = (outputs: Record<string, (number | null)[]>, change: Partial<IndicatorValuesAnswer> = {}): IndicatorValuesAnswer => ({
+  key: "k",
+  package: "",
+  version: "1.0.0",
+  outputs: Object.fromEntries(Object.entries(outputs).map(([id, values]) => [id, values.map((value, i) => ({ time: BARS[i].time, value }))])),
+  complete: false,
+  failed: null,
+  stale: false,
+  ...change,
+});
+const BANDS = { id: "bb", package: "quotebridge.bollinger", parameters: { period: 20, deviations: 2 }, colours: { middle: 0, upper: 1, lower: 2 } };
+const BAND_VALUES = answer({ middle: [null, 0.6515, 0.65151], upper: [null, 0.6523, 0.652349], lower: [null, 0.6507, 0.650671] });
+const legendOf = (drawn: ReturnType<typeof drawnIndicators>, time?: number) => chartLegend({ symbol: "EURUSD", period: "H1", digits: 5, candles: BARS, indicators: drawn.lines, time }).indicators;
+
+test("an indicator with several outputs reads each output's label and value in its colour, in the market's digits", () => {
+  const drawn = drawnIndicators([BANDS], PACKAGES, new Map([["bb", BAND_VALUES]]), BARS, 5, LIGHT);
+  assert.deepEqual(legendOf(drawn), [
+    {
+      id: "bb",
+      label: "Bollinger Bands 20 2",
+      outputs: [
+        { id: "middle", label: "Middle", colour: LIGHT.series[0], value: "0.65151" },
+        { id: "upper", label: "Upper", colour: LIGHT.series[1], value: "0.65235" },
+        { id: "lower", label: "Lower", colour: LIGHT.series[2], value: "0.65067" },
+      ],
+    },
+  ]);
+  assert.deepEqual(legendOf(drawn, 3600)[0].outputs.map((o) => o.value), ["—", "—", "—"]);
+  // The canvas gets every line on the price pane, in the same colours.
+  assert.deepEqual(drawn.draws[0].outputs.map((o) => [o.id, o.render, o.colour]), [
+    ["middle", "line", LIGHT.series[0]],
+    ["upper", "line", LIGHT.series[1]],
+    ["lower", "line", LIGHT.series[2]],
+  ]);
+  assert.equal(drawn.draws[0].pane, false);
+  assert.equal(drawn.draws[0].digits, 5);
+});
+
+test("an indicator with one output is read by its name alone, its value after it", () => {
+  const sma = { id: "a", package: "quotebridge.ma", parameters: { period: 2, type: "simple" }, colours: { ma: 3 } };
+  const drawn = drawnIndicators([sma], PACKAGES, new Map([["a", answer({ ma: [null, 0.651657, 0.65149] })]]), BARS, 5, LIGHT);
+  assert.deepEqual(legendOf(drawn), [{ id: "a", label: "Moving average 2 Simple", outputs: [{ id: "ma", colour: LIGHT.series[3], value: "0.65149" }] }]);
+});
+
+test("a colour chosen from the legend is kept in the view memory and drawn in its place", () => {
+  const chosen = withColour(BANDS, "upper", 3);
+  assert.deepEqual(chosen.colours, { middle: 0, upper: 3, lower: 2 });
+  assert.deepEqual(readChartMemory(JSON.stringify({ indicators: [chosen] })).indicators, [chosen]);
+  const drawn = drawnIndicators([chosen], PACKAGES, new Map([["bb", BAND_VALUES]]), BARS, 5, chartScheme("default", "dark"));
+  assert.deepEqual(legendOf(drawn)[0].outputs.map((o) => o.colour), ["#e8b44a", "#a3afc2", "#b08cf0"]);
+});
+
+test("a failed indicator's last good values are greyed, every output alike", () => {
+  const drawn = drawnIndicators([BANDS], PACKAGES, new Map([["bb", { ...BAND_VALUES, failed: "The calculation threw: no", stale: true }]]), BARS, 5, LIGHT);
+  const [row] = legendOf(drawn);
+  assert.equal(row.failed, "The calculation threw: no");
+  assert.deepEqual(row.outputs.map((o) => o.colour), [LIGHT.level, LIGHT.level, LIGHT.level]);
 });
 
 test("values on a fixed range read in 2 decimals, others in the market's digits", () => {

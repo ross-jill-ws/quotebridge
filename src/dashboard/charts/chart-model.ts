@@ -9,8 +9,17 @@ import { fromMilestone2, isIndicatorSpec, MAX_INDICATORS, type IndicatorSpec } f
 
 const NONE = "—";
 
-/** One indicator's line, with a value per candle; `failed`: why its last computation failed (the values are the last good ones). */
-export type IndicatorLine = { id: string; label: string; colour: string; digits: number; values: readonly (number | undefined)[]; failed?: string };
+/**
+ * One indicator's legend row: each output with its colour and a value per candle (a label when there are several);
+ * `failed`: why its last computation failed (the values are the last good ones).
+ */
+export type IndicatorLine = {
+  id: string;
+  label: string;
+  digits: number;
+  outputs: readonly { id: string; label?: string; colour: string; values: readonly (number | undefined)[] }[];
+  failed?: string;
+};
 
 export type LegendInput = {
   symbol: string;
@@ -28,7 +37,7 @@ export type Legend = {
   /** The bar's time on the chart's clock: "2027-01-15 10:00", or the date alone for D1 and longer; empty without a bar. */
   time: string;
   ohlc: { label: "O" | "H" | "L" | "C"; value: string }[];
-  indicators: { id: string; label: string; colour: string; value: string; failed?: string }[];
+  indicators: { id: string; label: string; outputs: { id: string; label?: string; colour: string; value: string }[]; failed?: string }[];
 };
 
 export function chartLegend({ symbol, period, digits, candles, indicators, time }: LegendInput): Legend {
@@ -41,7 +50,12 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
     title: `${symbol}, ${period}`,
     time: isIntraday(period) ? stamp : stamp.slice(0, 10),
     ohlc: (["open", "high", "low", "close"] as const).map((key) => ({ label: key[0].toUpperCase() as "O", value: price(bar?.[key], digits) })),
-    indicators: indicators.map(({ id, label, colour, digits: places, values, failed }) => ({ id, label, colour, value: price(values[index], places), ...(failed === undefined ? {} : { failed }) })),
+    indicators: indicators.map(({ id, label, digits: places, outputs, failed }) => ({
+      id,
+      label,
+      outputs: outputs.map((o) => ({ id: o.id, ...(o.label === undefined ? {} : { label: o.label }), colour: o.colour, value: price(o.values[index], places) })),
+      ...(failed === undefined ? {} : { failed }),
+    })),
   };
 }
 

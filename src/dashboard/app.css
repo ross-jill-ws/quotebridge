@@ -2030,11 +2030,69 @@ a.path {
   gap: 6px;
 }
 
-.chart-legend .ind i {
-  display: inline-block;
-  width: 12px;
-  height: 2.5px;
+.chart-legend .ind-label {
+  margin-right: 2px;
+}
+
+.chart-legend .ind-output {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+}
+
+.chart-legend .ind-name {
+  opacity: 0.75;
+}
+
+.chart-legend .ind .value {
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An output's colour; a click picks another. A wider hit area than the mark itself. */
+.chart-legend .swatch {
+  pointer-events: auto;
+  width: 14px;
+  height: 4px;
+  padding: 0;
+  border: 0;
   border-radius: 2px;
+  background-clip: content-box;
+  cursor: pointer;
+  outline-offset: 3px;
+}
+
+.chart-legend .swatch:hover {
+  box-shadow: 0 0 0 3px rgb(127 127 127 / 22%);
+}
+
+.chart-legend .swatch-menu {
+  pointer-events: auto;
+  position: absolute;
+  left: -6px;
+  top: calc(100% + 4px);
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(23 32 51 / 16%);
+}
+
+.chart-legend .swatch-menu .swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.chart-legend .swatch-menu .swatch[aria-checked="true"] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--ink-2);
 }
 
 /* A failed indicator keeps its last good values, greyed; the reason follows its name. */

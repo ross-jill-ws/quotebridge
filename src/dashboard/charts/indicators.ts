@@ -2,6 +2,8 @@
 // remembers them; the label, digits and settings form drawn from the package's manifest. The values themselves come
 // from the server (ADR 12): the browser only draws them.
 import type { Candle } from "../../server/candles/index.js";
+import type { ChartScheme } from "./chart-scheme.js";
+import type { IndicatorLine } from "./chart-model.js";
 import type { IndicatorValuesAnswer, ValuePoint } from "../../server/indicators/index.js";
 import { ManifestError, parameterValues, valuesFromText, type Manifest, type ParameterValues } from "../../shared/indicator-manifest.js";
 
@@ -28,11 +30,25 @@ export function indicatorLabel(manifest: Manifest, parameters: ParameterValues):
   return [manifest.name, ...values].join(" ");
 }
 
-/** The palette colour for a new indicator: the least used by every output already drawn, first in palette order. */
-export function nextColour(indicators: readonly { colours: Record<string, number> }[]): number {
+/**
+ * A new indicator's palette colours: each output takes the colour least used by the outputs already drawn and the
+ * ones before it, first in palette order.
+ */
+export function newColours(manifest: Manifest, indicators: readonly { colours: Record<string, number> }[]): Record<string, number> {
   const uses = Array<number>(PALETTE_SIZE).fill(0);
   for (const i of indicators) for (const c of Object.values(i.colours)) uses[c % PALETTE_SIZE]++;
-  return uses.indexOf(Math.min(...uses));
+  const colours: Record<string, number> = {};
+  for (const o of manifest.outputs) {
+    const colour = uses.indexOf(Math.min(...uses));
+    colours[o.id] = colour;
+    uses[colour]++;
+  }
+  return colours;
+}
+
+/** The indicator with one output's colour changed (from the legend). */
+export function withColour(spec: IndicatorSpec, output: string, colour: number): IndicatorSpec {
+  return { ...spec, colours: { ...spec.colours, [output]: colour } };
 }
 
 /** A fixed-range pane (RSI's 0–100) reads in 2 decimals; anything else in the market's digits. */
@@ -78,4 +94,63 @@ export function isIndicatorSpec(value: unknown): value is IndicatorSpec {
     record(i.parameters, (v) => (typeof v === "number" && Number.isFinite(v)) || typeof v === "string") &&
     record(i.colours, (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v < PALETTE_SIZE)
   );
+}
+
+/**
+ * An indicator to draw, from its package's manifest: on the price pane or its own, with dashed levels and a fixed
+ * range there; each output with its colour and one value per candle. `key` names the settings its values were
+ * computed with: other settings draw every point again.
+ */
+export type IndicatorDraw = {
+  id: string;
+  key: string;
+  pane: boolean;
+  levels: readonly number[];
+  range?: { min: number; max: number };
+  digits: number;
+  outputs: readonly { id: string; render: "line" | "histogram"; colour: string; values: readonly (number | undefined)[] }[];
+};
+
+/**
+ * Each indicator's draw for the canvas and line for the legend: its outputs' values at the candles (UTC, as fetched),
+ * in their palette colours, greyed while the values are stale. Indicators whose package or values are not here yet
+ * are left out.
+ */
+export function drawnIndicators(
+  specs: readonly IndicatorSpec[],
+  packages: ReadonlyMap<string, PackageInfo>,
+  values: ReadonlyMap<string, IndicatorValuesAnswer>,
+  candles: readonly Candle[],
+  digits: number,
+  scheme: ChartScheme,
+): { draws: IndicatorDraw[]; lines: IndicatorLine[] } {
+  const draws: IndicatorDraw[] = [];
+  const lines: IndicatorLine[] = [];
+  for (const spec of specs) {
+    const manifest = packages.get(spec.package)?.manifest;
+    const answer = values.get(spec.id);
+    if (!manifest || !answer) continue;
+    const places = indicatorDigits(manifest, digits);
+    const colourOf = (output: string) => (answer.stale ? scheme.level : scheme.series[(spec.colours[output] ?? 0) % scheme.series.length]);
+    const outputs = manifest.outputs.map((o) => ({ id: o.id, render: o.render, colour: colourOf(o.id), values: valuesByCandle(candles, answer.outputs[o.id]) }));
+    draws.push({
+      id: spec.id,
+      key: JSON.stringify([spec.package, answer.version, spec.parameters]),
+      pane: manifest.outputs[0].placement === "pane",
+      levels: manifest.levels ?? [],
+      range: manifest.range,
+      digits: places,
+      outputs,
+    });
+    // One output is read by the indicator's name; several by their own labels.
+    const labelled = manifest.outputs.length > 1;
+    lines.push({
+      id: spec.id,
+      label: indicatorLabel(manifest, spec.parameters),
+      digits: places,
+      outputs: outputs.map((o, n) => ({ id: o.id, ...(labelled ? { label: manifest.outputs[n].label } : {}), colour: o.colour, values: o.values })),
+      ...(answer.failed === null ? {} : { failed: answer.failed }),
+    });
+  }
+  return { draws, lines };
 }

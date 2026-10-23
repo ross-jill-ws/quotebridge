@@ -15,7 +15,7 @@ import { duration } from "../format.js";
 import { Price } from "../price.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
-import { ChartCanvas, type IndicatorDraw } from "./chart-canvas.js";
+import { ChartCanvas } from "./chart-canvas.js";
 import {
   candlesSince,
   chartLegend,
@@ -30,17 +30,16 @@ import {
   readChartMemory,
   type ChartMemory,
   type ChartType,
-  type IndicatorLine,
   type Legend,
 } from "./chart-model.js";
 import { chartScheme, type ChartScheme, type ColourMode } from "./chart-scheme.js";
 import {
   checkSettings,
-  indicatorDigits,
-  indicatorLabel,
+  drawnIndicators,
   MAX_INDICATORS,
-  nextColour,
-  valuesByCandle,
+  newColours,
+  withColour,
+  type IndicatorDraw,
   type IndicatorSpec,
   type IndicatorValuesAnswer,
   type PackageInfo,
@@ -135,11 +134,10 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   const latest = feed?.latest;
   const spread = latest && feed ? Math.round((latest.ask - latest.bid) * 10 ** feed.digits) : undefined;
   const lastHeard = feed && !feed.online ? duration(snapshot.time - feed.lastSeen) : undefined;
-  const changeIndicator = (id: string, parameters: ParameterValues | null) =>
-    setMemory({ indicators: memory.indicators.flatMap((i) => (i.id !== id ? [i] : parameters ? [{ ...i, parameters }] : [])) });
+  const changeIndicator = (id: string, change: IndicatorSpec | null) =>
+    setMemory({ indicators: memory.indicators.flatMap((i) => (i.id !== id ? [i] : change ? [change] : [])) });
   const addIndicator = (manifest: Manifest) => {
-    const colour = nextColour(memory.indicators);
-    const colours = Object.fromEntries(manifest.outputs.map((o) => [o.id, colour]));
+    const colours = newColours(manifest, memory.indicators);
     setMemory({ indicators: [...memory.indicators, { id: newId(), package: manifest.id, parameters: defaultValues(manifest), colours }] });
   };
 
@@ -309,7 +307,8 @@ type FrameProps = {
   onCrosshair: (time: number | undefined) => void;
   /** The logical index of the leftmost visible bar, whenever the view moves. */
   onVisibleFrom: (index: number) => void;
-  onChangeIndicator: (id: string, parameters: ParameterValues | null) => void;
+  /** The indicator changed (its parameters or colours), or null to remove it. */
+  onChangeIndicator: (id: string, change: IndicatorSpec | null) => void;
 };
 
 /** The chart canvas with its legends: the price pane's top-left, and one at the top of each indicator pane. */
@@ -380,7 +379,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, p
             ))}
           </div>
           {pricePane.map((row) => (
-            <IndicatorRow key={row.id} row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} onChange={onChangeIndicator} />
+            <IndicatorRow key={row.id} row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} series={scheme.series} onChange={onChangeIndicator} />
           ))}
         </div>
       )}
@@ -388,7 +387,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, p
         .filter((row) => paneTops.has(row.id))
         .map((row) => (
           <div key={row.id} class="chart-legend sub" style={{ top: `${paneTops.get(row.id)! + 6}px` }}>
-            <IndicatorRow row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} onChange={onChangeIndicator} />
+            <IndicatorRow row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} series={scheme.series} onChange={onChangeIndicator} />
           </div>
         ))}
       {data && data.candles.length === 0 && <p class="chart-empty">No quotes for this feed yet. The first candle opens with its next quote.</p>}
@@ -401,25 +400,63 @@ function sameTops(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>
   return a.size === b.size && [...a].every(([id, top]) => b.get(id) === top);
 }
 
-/** An indicator's legend row: its colour, name and value, Failed with the reason, edit and remove. */
+/**
+ * An indicator's legend row: its name and parameters, each output's value in its colour (a click on the swatch picks
+ * another), Failed with the reason, edit and remove.
+ */
 function IndicatorRow({
   row,
   spec,
   manifest,
+  series,
   onChange,
 }: {
   row: Legend["indicators"][number];
   spec?: IndicatorSpec;
   manifest?: Manifest;
-  onChange: (id: string, parameters: ParameterValues | null) => void;
+  series: ChartScheme["series"];
+  onChange: (id: string, change: IndicatorSpec | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState<string>();
   return (
     <div class={`ind${row.failed ? " failed" : ""}`}>
-      <i style={{ background: row.colour }} aria-hidden="true" />
-      <span>
-        {row.label} <span class="value">{row.value}</span>
-      </span>
+      <span class="ind-label">{row.label}</span>
+      {row.outputs.map((o) => (
+        <span key={o.id} class="ind-output">
+          <button
+            class="swatch"
+            style={{ background: o.colour }}
+            title={`Colour of ${o.label ?? row.label}`}
+            aria-label={`Colour of ${o.label ?? row.label}`}
+            aria-expanded={picking === o.id}
+            onClick={() => setPicking(picking === o.id ? undefined : o.id)}
+          />
+          {o.label && <span class="ind-name">{o.label}</span>}
+          <span class="value" style={{ color: o.colour }}>
+            {o.value}
+          </span>
+          {picking === o.id && spec && (
+            <span class="swatch-menu" role="menu" aria-label={`Colours for ${o.label ?? row.label}`}>
+              {series.map((colour, n) => (
+                <button
+                  key={n}
+                  role="menuitemradio"
+                  aria-checked={spec.colours[o.id] === n}
+                  class="swatch"
+                  style={{ background: colour }}
+                  title={SERIES_NAMES[n]}
+                  aria-label={SERIES_NAMES[n]}
+                  onClick={() => {
+                    setPicking(undefined);
+                    onChange(row.id, withColour(spec, o.id, n));
+                  }}
+                />
+              ))}
+            </span>
+          )}
+        </span>
+      ))}
       {row.failed && (
         <span class="ind-failed" role="status" title={row.failed}>
           Failed: {row.failed}
@@ -441,13 +478,16 @@ function IndicatorRow({
           parameters={spec.parameters}
           onDone={(parameters) => {
             setEditing(false);
-            if (parameters) onChange(row.id, parameters);
+            if (parameters) onChange(row.id, { ...spec, parameters });
           }}
         />
       )}
     </div>
   );
 }
+
+/** The series palette's colours, in its order. */
+const SERIES_NAMES = ["Gold", "Azure", "Violet", "Slate"];
 
 /** The settings form, generated from the package's manifest: each parameter by its label, with its range or choices. */
 function IndicatorForm({ manifest, parameters, onDone }: { manifest: Manifest; parameters: ParameterValues; onDone: (parameters: ParameterValues | null) => void }) {
@@ -492,49 +532,6 @@ function IndicatorForm({ manifest, parameters, onDone }: { manifest: Manifest; p
       {!checked.ok && <span class="bad-text">{checked.error}</span>}
     </form>
   );
-}
-
-/**
- * Each indicator's draw for the canvas and line for the legend: its outputs' values at the candles (UTC, as fetched),
- * in its palette colours, greyed while its values are stale. Indicators whose package or values are not here yet are
- * left out.
- */
-function drawnIndicators(
-  specs: readonly IndicatorSpec[],
-  packages: ReadonlyMap<string, PackageInfo>,
-  values: ReadonlyMap<string, IndicatorValuesAnswer>,
-  candles: readonly Candle[],
-  digits: number,
-  scheme: ChartScheme,
-): { draws: IndicatorDraw[]; lines: IndicatorLine[] } {
-  const draws: IndicatorDraw[] = [];
-  const lines: IndicatorLine[] = [];
-  for (const spec of specs) {
-    const manifest = packages.get(spec.package)?.manifest;
-    const answer = values.get(spec.id);
-    if (!manifest || !answer) continue;
-    const places = indicatorDigits(manifest, digits);
-    const colourOf = (output: string) => (answer.stale ? scheme.level : scheme.series[(spec.colours[output] ?? 0) % scheme.series.length]);
-    const outputs = manifest.outputs.map((o) => ({ id: o.id, render: o.render, colour: colourOf(o.id), values: valuesByCandle(candles, answer.outputs[o.id]) }));
-    draws.push({
-      id: spec.id,
-      key: JSON.stringify([spec.package, answer.version, spec.parameters]),
-      pane: manifest.outputs[0].placement === "pane",
-      levels: manifest.levels ?? [],
-      range: manifest.range,
-      digits: places,
-      outputs,
-    });
-    lines.push({
-      id: spec.id,
-      label: indicatorLabel(manifest, spec.parameters),
-      colour: outputs[0].colour,
-      digits: places,
-      values: outputs[0].values,
-      ...(answer.failed === null ? {} : { failed: answer.failed }),
-    });
-  }
-  return { draws, lines };
 }
 
 /** The packages the server has, by id; fetched again after a reconnect. */

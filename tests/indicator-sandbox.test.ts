@@ -70,6 +70,55 @@ test("RSI is 100 when prices only rose and 50 when they never moved, as MetaTrad
   assert.deepEqual(values(await rsi([3, 2, 1, 0.5], 3), "rsi"), [null, null, null, 0]);
 });
 
+const bollinger = (closes: number[], period: number, deviations: number) => engine.run(pkg("quotebridge.bollinger"), barsOf(closes), { period, deviations });
+
+test("Bollinger bands are the simple average of n closes, plus and minus k population standard deviations", async () => {
+  // 2, 4, 4, 4, 5, 5, 7, 9: mean 5, population standard deviation 2 (the sample one would be 2.14).
+  const result = await bollinger([2, 4, 4, 4, 5, 5, 7, 9], 8, 2);
+  assert.deepEqual(values(result, "middle"), [...Array(7).fill(null), 5]);
+  assert.deepEqual(values(result, "upper"), [...Array(7).fill(null), 9]);
+  assert.deepEqual(values(result, "lower"), [...Array(7).fill(null), 1]);
+  // Period 2 over 1, 3, 5: means 2 and 4, each with a deviation of 1; k = 1.5.
+  const short = await bollinger([1, 3, 5], 2, 1.5);
+  assert.deepEqual(values(short, "middle"), [null, 2, 4]);
+  assert.deepEqual(values(short, "upper"), [null, 3.5, 5.5]);
+  assert.deepEqual(values(short, "lower"), [null, 0.5, 2.5]);
+});
+
+/** Bars one minute apart around these median prices: high one above, low one below, the close elsewhere. */
+const barsAround = (medians: readonly number[]) => medians.map((m, i) => ({ time: 60 * (i + 1), high: m + 1, low: m - 1, close: m + 0.5 }));
+
+test("the Alligator's lines are smoothed averages of the median price, each shifted forward onto later bars", async () => {
+  const p = { jaw: 3, jawShift: 2, teeth: 2, teethShift: 1, lips: 1, lipsShift: 0 };
+  const result = await engine.run(pkg("quotebridge.alligator"), barsAround([2, 4, 6, 8, 10, 12]), p);
+  // Jaw, period 3: the first value is the mean of 2, 4, 6 = 4, then (previous·2 + median)/3: (4·2 + 8)/3 = 16/3;
+  // shifted 2 bars on, the first lands on the fifth bar.
+  assert.deepEqual(values(result, "jaw"), [null, null, null, null, 4, Number((16 / 3).toFixed(10))]);
+  // Teeth, period 2: 3, then (3 + 6)/2 = 4.5, (4.5 + 8)/2 = 6.25, (6.25 + 10)/2 = 8.125; shifted 1.
+  assert.deepEqual(values(result, "teeth"), [null, null, 3, 4.5, 6.25, 8.125]);
+  // Lips, period 1, no shift: the median itself, not the close.
+  assert.deepEqual(values(result, "lips"), [2, 4, 6, 8, 10, 12]);
+  // Nothing is put past the last bar.
+  assert.ok(result.ok && Object.values(result.outputs).every((points) => points.length === 6 && points.at(-1)!.time === 360));
+});
+
+test("the Alligator defaults to MT4's 13/8, 8/5 and 5/3, with labelled parameters", () => {
+  const { manifest } = pkg("quotebridge.alligator");
+  assert.deepEqual(
+    manifest.parameters.map((p) => [p.id, p.label, p.default]),
+    [
+      ["jaw", "Jaw period", 13],
+      ["jawShift", "Jaw shift", 8],
+      ["teeth", "Teeth period", 8],
+      ["teethShift", "Teeth shift", 5],
+      ["lips", "Lips period", 5],
+      ["lipsShift", "Lips shift", 3],
+    ],
+  );
+  assert.equal(manifest.inputs[0].field, "median");
+  assert.equal(pkg("quotebridge.bollinger").manifest.outputs.every((o) => o.placement === "overlay"), true);
+});
+
 test("RSI declares its 0–100 range and dashed 30 and 70 levels; the Moving average draws on the price pane", () => {
   const { manifest } = pkg("quotebridge.rsi");
   assert.deepEqual(manifest.range, { min: 0, max: 100 });
@@ -79,7 +128,7 @@ test("RSI declares its 0–100 range and dashed 30 and 70 levels; the Moving ave
 });
 
 test("the bundled packages are MIT-licensed and carry their four files", () => {
-  for (const id of ["quotebridge.ma", "quotebridge.rsi"]) {
+  for (const id of ["quotebridge.ma", "quotebridge.rsi", "quotebridge.bollinger", "quotebridge.alligator"]) {
     const p = pkg(id);
     assert.equal(p.manifest.license, "MIT");
     assert.match(p.licence, /MIT License/);

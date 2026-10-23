@@ -24,25 +24,11 @@ import type { Candle } from "../../server/candles/index.js";
 import { latestView, RIGHT_OFFSET, viewAfterSet, type ChartType, type LogicalRange } from "./chart-model.js";
 import { COLOUR_TOKENS } from "../colour-tokens.js";
 import type { ChartScheme } from "./chart-scheme.js";
+import type { IndicatorDraw } from "./indicators.js";
 
 const FONT = "Archivo, Segoe UI, sans-serif";
 /** The price pane's share against each indicator pane's 1. */
 const PRICE_PANE_STRETCH = 3;
-
-/**
- * An indicator to draw, from its package's manifest: on the price pane or its own, with dashed levels and a fixed
- * range there; each output with its colour and one value per candle. `key` names the settings its values were
- * computed with: other settings draw every point again.
- */
-export type IndicatorDraw = {
-  id: string;
-  key: string;
-  pane: boolean;
-  levels: readonly number[];
-  range?: { min: number; max: number };
-  digits: number;
-  outputs: readonly { id: string; render: "line" | "histogram"; colour: string; values: readonly (number | undefined)[] }[];
-};
 
 type OutputSeries = { id: string; series: ISeriesApi<"Line" | "Histogram">; values: readonly (number | undefined)[] };
 type IndicatorSeries = { key: string; pane: boolean; outputs: OutputSeries[]; levels: IPriceLine[] };
