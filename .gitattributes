@@ -1,0 +1,11 @@
+# Text files are LF in the repository and on disk, whatever core.autocrlf says.
+* text=auto eol=lf
+
+*.dll binary
+*.ex4 binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.ico binary

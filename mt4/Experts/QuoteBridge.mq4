@@ -9,6 +9,8 @@ input string ServerEndpoint="tcp://127.0.0.1:5555";
 input string TerminalId="mt4-main";
 input int SamplingMilliseconds=500;
 input int BufferCapacity=1200;
+// These globals survive a chart or parameter change (OnDeinit then OnInit, without unloading): their initialisers run
+// only when the EA loads. Each one is either reset in OnInit or deliberately kept (the sample queue, the counters).
 int context=0,socket=0,head=0,count=0;
 string session,rows[],quoteStatus="no-quote";
 long sequences[],nextSequence=0,dropped=0,inflightLast=0;

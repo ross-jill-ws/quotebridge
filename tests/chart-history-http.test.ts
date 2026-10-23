@@ -1,12 +1,14 @@
 // Chart history over HTTP: /api/candles pages backwards through the terminal's HST files (v400 and v401), rolls a
 // period up from its fill file (M1, or D1 for W1 and MN1) when it has no file or a stale one, joins the live candles on
-// (HST wins for closed bars), falls back to live candles without HST, and says when no older bars exist. Real server, fake EAs, HST files in a temp folder.
+// (HST wins for closed bars), falls back to live candles without HST, and says when no older bars exist. Real server,
+// fake EAs, HST files in a temp folder.
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer, type ServerConfig } from "../src/server/index.js";
+import { brokerToUtc, type ClockRule } from "../src/shared/clock.js";
 import { FakeClock, FakeEA } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { appendHst, bars, writeHst } from "./hst-fixtures.js";
@@ -21,8 +23,10 @@ const TERMINAL = "mt4-aaaaaaaaaaaa";
 const NOW = Date.UTC(2027, 0, 15, 8);
 /** Broker seconds of 15 January 2027 10:00. */
 const TEN = Date.UTC(2027, 0, 15, 10) / 1000;
-/** Broker seconds to UTC seconds on this broker in winter. */
-const utc = (broker: number) => broker - 2 * HOUR;
+/** The broker's clock rule, as `start` registers it: GMT+2 in winter, US daylight-saving dates. */
+const RULE: ClockRule = { winterOffsetMinutes: 120, dst: "us" };
+/** Broker seconds to UTC seconds on this broker, summer or winter (the clock module has its own tests). */
+const utc = (broker: number) => brokerToUtc(RULE, broker * 1000) / 1000;
 
 type Page = { candles: { time: number; open: number; high: number; low: number; close: number }[]; source: string; complete: boolean };
 
@@ -47,7 +51,7 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
   const rule = await fetch(`${origin}/api/clock-rules`, {
     method: "POST",
     headers: { cookie, origin, "content-type": "application/json" },
-    body: JSON.stringify({ brokerServer: BROKER, winterOffsetMinutes: 120, dst: "us" }),
+    body: JSON.stringify({ brokerServer: BROKER, ...RULE }),
   });
   assert.equal(rule.status, 200);
   const chart = new FakeEA({ terminal: TERMINAL, broker: BROKER, symbol: "EURUSD" }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
