@@ -8,8 +8,8 @@ export type ReloadServer = {
   url: string;
   /** Every open page reloads. */
   reload(): void;
-  /** Every open page goes to `url` (a new sign-in link after a server restart). Returns how many pages were told. */
-  navigate(url: string): number;
+  /** Every open page goes to `url` (a new sign-in link after a server restart). */
+  navigate(url: string): void;
   /** The stream the app's main process subscribes to (QUOTEBRIDGE_DEV_CONTROL). */
   controlUrl: string;
   control(command: "restart-server" | "quit" | "sign-in-link"): void;
@@ -41,14 +41,13 @@ export async function startReloadServer(port: number): Promise<ReloadServer> {
   });
   const send = (to: Set<ServerResponse>, event: string, data = "") => {
     for (const res of to) res.write(`event: ${event}\ndata: ${data}\n\n`);
-    return to.size;
   };
   return {
     url: `http://127.0.0.1:${port}/events`,
-    reload: () => void send(pages, "reload"),
+    reload: () => send(pages, "reload"),
     navigate: (url) => send(pages, "navigate", url),
     controlUrl: `http://127.0.0.1:${port}/control`,
-    control: (command) => void send(apps, command),
+    control: (command) => send(apps, command),
     close: () =>
       new Promise((resolve) => {
         for (const res of [...pages, ...apps]) res.end();

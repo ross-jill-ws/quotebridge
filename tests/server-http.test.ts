@@ -1,5 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { get } from "node:http";
 import { createServer } from "node:net";
 import { describeFeed } from "../src/dashboard/feeds/feed-row.js";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
@@ -223,6 +224,22 @@ test("a feed going offline reaches the live WebSocket without any EA message", {
   clock.advance(7000);
 
   assert.equal((await until((s) => s.feeds[0]?.online === false)).feeds.length, 1);
+});
+
+test("a dev server for a browser tab needs no sign-in, but still only its own origin may connect or change things", { timeout: 10000 }, async (t) => {
+  const { origin } = await start(t, { openDashboard: true });
+
+  for (const path of ["/", "/api/state"]) assert.equal((await fetch(origin + path)).status, 200, path);
+  const { ws } = await openLive(origin);
+  ws.close();
+  await assert.rejects(openLive(origin, { origin: "http://127.0.0.1:1" }), { status: 403 });
+  const res = await fetch(origin + "/api/feeds/remove", { method: "POST", headers: { origin: "http://127.0.0.1:1", "content-type": "application/json" }, body: JSON.stringify({ feed: "x" }) });
+  assert.equal(res.status, 403);
+  // fetch cannot send another Host (DNS rebinding): node:http can.
+  const rebound = await new Promise<number | undefined>((resolve, reject) =>
+    get(origin + "/api/state", { headers: { host: "evil.example" } }, (r) => resolve(r.resume().statusCode)).on("error", reject),
+  );
+  assert.equal(rebound, 400);
 });
 
 test("a page on another origin cannot use the session: live WebSocket and changes are refused", { timeout: 10000 }, async (t) => {

@@ -141,7 +141,7 @@ function runBrowser() {
   const bridgeBundle = bridgeBundleFolders({ isPackaged: false, appPath: root, resourcesPath: "" }, process.env);
   const supervisor = new Supervisor({
     launch: (): ServerProcess => {
-      const child = fork(SERVER_BUNDLE, [], { env: { ...process.env, ...serverEnv }, stdio: ["ignore", "inherit", "inherit", "ipc"] });
+      const child = fork(SERVER_BUNDLE, [], { env: { ...process.env, ...serverEnv, QUOTEBRIDGE_DEV_OPEN_DASHBOARD: "1" }, stdio: ["ignore", "inherit", "inherit", "ipc"] });
       return {
         transport: ipcTransport<ServerMessage, HostMessage>(child),
         onExit: (listener) => void child.once("exit", listener),
@@ -150,24 +150,26 @@ function runBrowser() {
     },
     config: () => ({ eaPort: ports.ea, httpPort: ports.http, dataFolder, bridgeBundle }),
   });
-  const signIn = (url: string) => {
-    log(`dashboard: ${url}\n      (one-time link; press Enter for another; q and Enter or Ctrl+C to stop)`);
-    signInFile.set(url).catch((e: Error) => log(`sign-in link file: ${e.message}`));
-  };
-  const newSignIn = () => void supervisor.issueWindowToken().then(signIn, (e: Error) => log(e.message));
+  // The dev server opens the dashboard to a browser tab without a sign-in (QUOTEBRIDGE_DEV_OPEN_DASHBOARD).
+  let dashboardUrl: string | undefined;
+  const showUrl = () => dashboardUrl && log(`dashboard: ${dashboardUrl}\n      (no sign-in needed; q and Enter or Ctrl+C to stop)`);
   supervisor.onEvent((event) => {
     if (event.type === "state") {
       const { state, lastError } = event.status;
       log(`server ${state}${lastError && state !== "running" ? ` (${lastError.message})` : ""}`);
     } else if (event.type === "window-url") {
-      // Pages lost their session with the old server: they follow the new link, and one of them uses it up.
-      if (reload.navigate(event.url) > 0) newSignIn();
-      else signIn(event.url);
+      // The window token in the event's link is not needed. After a restart, open pages reload to reach the new server.
+      const url = `${new URL(event.url).origin}/`;
+      if (url === dashboardUrl) return reload.reload();
+      // First start, or a new HTTP port: open pages follow.
+      if (dashboardUrl) reload.navigate(url);
+      dashboardUrl = url;
+      showUrl();
     }
   });
   supervisor.start();
   return {
-    onEnter: newSignIn,
+    onEnter: showUrl,
     restartServer: async () => {
       log("server rebuilt; restarting it");
       await supervisor.restart();

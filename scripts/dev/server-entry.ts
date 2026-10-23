@@ -25,6 +25,8 @@ if (!transport) {
 const dashboardFolder = process.env.QUOTEBRIDGE_DEV_DASHBOARD_FOLDER;
 const fakes = process.env.QUOTEBRIDGE_DEV_FAKES === "1";
 const real = process.env.QUOTEBRIDGE_DEV_REAL === "1";
+/** Set by the runner for a browser tab only; the app window keeps its one-time sign-in. */
+const openDashboard = process.env.QUOTEBRIDGE_DEV_OPEN_DASHBOARD === "1";
 
 /** The bundled dashboard path resolves from this bundle's folder, so the runner names the dev build's. */
 const withDashboard: HostTransport<HostMessage, ServerMessage> = {
@@ -33,6 +35,7 @@ const withDashboard: HostTransport<HostMessage, ServerMessage> = {
 };
 
 runServerHost(withDashboard, {
+  openDashboard,
   ...(fakes
     ? { terminals: (options) => fakeTerminalOptions(join(options.appDataFolder, "fake-terminals"), options) }
     : real

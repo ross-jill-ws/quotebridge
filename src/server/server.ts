@@ -18,6 +18,11 @@ export type ServerConfig = {
   httpPort: number;
   /** One-time token the app window exchanges for its session (ADR 5). */
   windowToken: string;
+  /**
+   * `npm run dev` in a browser tab only: every request counts as signed in, so the dashboard opens without a
+   * one-time link. The host and origin checks still apply. Never set by the app.
+   */
+  openDashboard?: boolean;
   /** Folder holding the dashboard bundle; defaults to the bundled dashboard (a placeholder page until it is built). */
   dashboardFolder?: string;
   /** Clock in epoch milliseconds; injectable for tests. */
@@ -111,7 +116,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     saved,
     saving: (market) => saver?.progress(market) ?? null,
   });
-  const sessions = new WindowSessions();
+  const sessions = new WindowSessions({ open: config.openDashboard });
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;

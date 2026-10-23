@@ -17,6 +17,8 @@ export type ServerHostOptions = {
   onStopped?: () => void;
   /** Adjusts the terminal manager's options (`npm run dev` swaps in fake terminals and a fake MetaEditor). */
   terminals?: (options: TerminalManagerOptions) => TerminalManagerOptions | Promise<TerminalManagerOptions>;
+  /** `npm run dev` in a browser tab: the dashboard needs no sign-in (ServerConfig.openDashboard). */
+  openDashboard?: boolean;
   /** Called once the server runs; the returned function is called when it stops (`npm run dev`'s fake EAs). */
   onRunning?: (server: RunningServer, config: ServerStartConfig) => (() => void) | void;
 };
@@ -55,6 +57,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         eaPort: config.eaPort,
         httpPort: config.httpPort,
         windowToken: config.windowToken,
+        openDashboard: options.openDashboard,
         dashboardFolder: config.dashboardFolder,
         now: options.now,
         database,

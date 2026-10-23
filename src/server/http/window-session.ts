@@ -14,6 +14,9 @@ export class WindowSessions {
   private readonly tokens: Buffer[] = [];
   private readonly sessions = new Set<string>();
 
+  /** `open`: every request counts as signed in (`npm run dev` in a browser tab; see ServerConfig.openDashboard). */
+  constructor(private readonly options: { open?: boolean } = {}) {}
+
   /** Accepts another one-time token, e.g. for a window opened after a server restart. */
   addToken(token: string) {
     if (token.length < 16) throw Error("Window token too short");
@@ -33,6 +36,7 @@ export class WindowSessions {
 
   /** The request's session cookie (named by `sessionCookie`) names a live session. */
   authenticated(headers: IncomingHttpHeaders, cookie: string) {
+    if (this.options.open) return true;
     const values = (headers.cookie ?? "")
       .split(";")
       .map((s) => s.trim())
