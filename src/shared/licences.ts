@@ -33,6 +33,11 @@ export const BUNDLED_WORKS: readonly BundledWork[] = [
     ],
     link: { label: "tradingview.com", url: TRADINGVIEW_URL },
   },
+  {
+    name: "QuickJS",
+    licence: "runs indicator packages, © 2017–2021 Fabrice Bellard and Charlie Gordon; quickjs-emscripten © 2019–2024 Jake Teton-Landis. MIT License",
+    texts: [{ label: "Licence", path: "licences/QuickJS-LICENSE.txt" }],
+  },
 ];
 
 /** Every licence text the dashboard must carry. */

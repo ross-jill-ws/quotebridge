@@ -7,7 +7,8 @@
 // - the native Node modules (ZeroMQ, DuckDB) are unpacked from the asar archive;
 // - the dashboard in the asar archive holds the Archivo font and every file its stylesheet uses, and
 //   neither its page nor its stylesheet loads anything from the network;
-// - the dashboard carries the licence texts of the works it bundles (About › Licences).
+// - the dashboard carries the licence texts of the works it bundles (About › Licences);
+// - the archive holds the commit's bundled indicator packages and QuickJS's engine (ADR 12).
 //
 // Usage: tsx scripts/release/verify-package.ts <win-unpacked folder> [git ref, default HEAD]
 import { execFile } from "node:child_process";
@@ -90,6 +91,7 @@ export async function verifyPackage(options: VerifyOptions): Promise<string[]> {
   }
 
   problems.push(...(await checkDashboard(join(resources, "app.asar"))));
+  problems.push(...(await checkIndicators(join(resources, "app.asar"), options)));
 
   // ADR 3: no compiled EA anywhere in the package.
   const ex4 = (await filesUnder(options.appFolder))
@@ -130,6 +132,28 @@ async function checkDashboard(asarFile: string): Promise<string[]> {
   for (const path of [...LICENCE_TEXTS].sort()) {
     if (!archive.file(DASHBOARD + path)?.length) problems.push(`The dashboard does not carry a licence text: ${DASHBOARD}${path}`);
   }
+  return problems;
+}
+
+const BUNDLED_PACKAGES = "src/server/indicators/bundled/";
+/** The WebAssembly build of QuickJS the indicator engine loads. */
+export const QUICKJS_WASM = "node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm";
+
+/** Every bundled package file at the ref, beside the built indicators module, and QuickJS's engine. */
+async function checkIndicators(asarFile: string, options: VerifyOptions): Promise<string[]> {
+  let archive: AsarArchive;
+  try {
+    archive = await readAsar(asarFile);
+  } catch {
+    return []; // checkDashboard reports the archive.
+  }
+  const problems: string[] = [];
+  const files = (await git(options.repoFolder, "ls-tree", "-r", "--name-only", options.ref, "--", BUNDLED_PACKAGES)).split("\n").filter(Boolean);
+  for (const path of files) {
+    const packed = path.replace("src/server/", "dist/server/");
+    if (!archive.file(packed)?.length) problems.push(`A bundled indicator package file is missing from the archive: ${packed}`);
+  }
+  if (!archive.file(QUICKJS_WASM)?.length) problems.push(`QuickJS's engine is missing from the archive: ${QUICKJS_WASM}`);
   return problems;
 }
 
@@ -202,5 +226,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const problem of problems) console.error(`✖ ${problem}`);
     process.exit(1);
   }
-  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked, dashboard font and licence texts bundled.`);
+  console.log(`✔ ${appFolder}: bridge files match ${ref}, DLL and notices present, no .ex4, native modules unpacked, dashboard font and licence texts bundled, indicator packages and QuickJS in the archive.`);
 }

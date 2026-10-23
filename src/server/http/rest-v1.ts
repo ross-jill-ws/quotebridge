@@ -4,7 +4,7 @@
 // saved data, which answers with no terminal running. What later milestones bring answers 501 naming the milestone.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
-import { PERIODS, type Period } from "../../shared/periods.js";
+import { PAGE_BARS, PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeServer, type FeedSnapshot, type Market } from "../bridge/index.js";
 import type { Candle, CandleBuilder } from "../candles/index.js";
 import { CSV_HEADER, csvRows, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HstBar } from "../history/index.js";
@@ -139,7 +139,7 @@ export class RestV1 {
    */
   private async candles(symbol: string, q: URLSearchParams) {
     const period = parsePeriod(q.get("period"));
-    const count = integer(q.get("count"), "count", 1, 5000, 900);
+    const count = integer(q.get("count"), "count", 1, 5000, PAGE_BARS);
     const mode = q.get("source") || "auto";
     if (mode !== "auto" && mode !== "live" && mode !== "history") throw new RestRequestError(400, "source must be auto, live or history");
     const resolved =

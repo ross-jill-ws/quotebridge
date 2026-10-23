@@ -5,6 +5,7 @@ import {
   CandlestickSeries,
   createChart,
   CrosshairMode,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   type IChartApi,
@@ -23,20 +24,28 @@ import type { Candle } from "../../server/candles/index.js";
 import { latestView, RIGHT_OFFSET, viewAfterSet, type ChartType, type LogicalRange } from "./chart-model.js";
 import { COLOUR_TOKENS } from "../colour-tokens.js";
 import type { ChartScheme } from "./chart-scheme.js";
-import type { IndicatorSpec } from "./indicators.js";
 
 const FONT = "Archivo, Segoe UI, sans-serif";
 /** The price pane's share against each indicator pane's 1. */
 const PRICE_PANE_STRETCH = 3;
-const RSI_LEVELS = [30, 70];
-/** RSI values and their scale show two decimal places. */
-export const RSI_DIGITS = 2;
 
-/** An indicator to draw: its spec, colour and one value per candle. */
-export type IndicatorDraw = { spec: IndicatorSpec; colour: string; values: readonly (number | undefined)[] };
+/**
+ * An indicator to draw, from its package's manifest: on the price pane or its own, with dashed levels and a fixed
+ * range there; each output with its colour and one value per candle. `key` names the settings its values were
+ * computed with: other settings draw every point again.
+ */
+export type IndicatorDraw = {
+  id: string;
+  key: string;
+  pane: boolean;
+  levels: readonly number[];
+  range?: { min: number; max: number };
+  digits: number;
+  outputs: readonly { id: string; render: "line" | "histogram"; colour: string; values: readonly (number | undefined)[] }[];
+};
 
-/** `key`: the settings its values were computed with. */
-type IndicatorSeries = { kind: IndicatorSpec["kind"]; key: string; series: ISeriesApi<"Line">; levels: IPriceLine[] };
+type OutputSeries = { id: string; series: ISeriesApi<"Line" | "Histogram">; values: readonly (number | undefined)[] };
+type IndicatorSeries = { key: string; pane: boolean; outputs: OutputSeries[]; levels: IPriceLine[] };
 
 const time = (seconds: number) => seconds as UTCTimestamp;
 
@@ -94,7 +103,7 @@ export class ChartCanvas {
   setDigits(digits: number) {
     this.digits = digits;
     this.main.applyOptions({ priceFormat: priceFormat(digits) });
-    for (const { kind, series } of this.indicators.values()) if (kind === "ma") series.applyOptions({ priceFormat: priceFormat(digits) });
+    for (const { pane, outputs } of this.indicators.values()) if (!pane) for (const { series } of outputs) series.applyOptions({ priceFormat: priceFormat(digits) });
   }
 
   /**
@@ -129,31 +138,40 @@ export class ChartCanvas {
   }
 
   /**
-   * The indicators to draw, with their values for the current candles. A new RSI opens a pane below the others.
-   * After a live candle update only the changed points are drawn again.
+   * The indicators to draw, with their values for the current candles. A pane indicator opens a pane below the others.
+   * When only the last points changed (the forming candle), only they are drawn again.
    */
   setIndicators(draws: readonly IndicatorDraw[]) {
-    const wanted = new Set(draws.map((d) => d.spec.id));
+    const wanted = new Set(draws.map((d) => d.id));
     for (const [id, drawn] of this.indicators) {
       if (wanted.has(id)) continue;
-      this.chart.removeSeries(drawn.series);
+      this.removeIndicator(drawn);
       this.indicators.delete(id);
     }
-    for (const { spec, colour, values } of draws) {
-      const key = JSON.stringify([spec.kind, spec.period, spec.kind === "ma" ? spec.type : ""]);
-      let drawn = this.indicators.get(spec.id);
-      const same = drawn?.key === key;
-      if (!drawn) {
-        drawn = this.createIndicator(spec, key);
-        this.indicators.set(spec.id, drawn);
+    for (const draw of draws) {
+      let drawn = this.indicators.get(draw.id);
+      // Another package or other outputs: drawn afresh.
+      if (drawn && (drawn.pane !== draw.pane || drawn.outputs.map((o) => o.id).join() !== draw.outputs.map((o) => o.id).join())) {
+        this.removeIndicator(drawn);
+        drawn = undefined;
       }
-      drawn.key = key;
-      drawn.series.applyOptions({ color: colour });
-      const points = this.candles.map((c, i): WhitespaceData<Time> | { time: Time; value: number } =>
-        values[i] === undefined ? { time: time(c.time) } : { time: time(c.time), value: values[i]! },
-      );
-      if (same && this.changedFrom !== undefined) for (const point of points.slice(this.changedFrom)) drawn.series.update(point);
-      else drawn.series.setData(points);
+      const same = drawn?.key === draw.key;
+      if (!drawn) {
+        drawn = this.createIndicator(draw);
+        this.indicators.set(draw.id, drawn);
+      }
+      drawn.key = draw.key;
+      draw.outputs.forEach((output, n) => {
+        const target = drawn.outputs[n];
+        target.series.applyOptions({ color: output.colour });
+        const points = this.candles.map((c, i): WhitespaceData<Time> | { time: Time; value: number } =>
+          output.values[i] === undefined ? { time: time(c.time) } : { time: time(c.time), value: output.values[i]! },
+        );
+        const from = this.changedFrom;
+        if (same && from !== undefined && firstDifference(target.values, output.values) >= from) for (const point of points.slice(from)) target.series.update(point);
+        else target.series.setData(points);
+        target.values = output.values;
+      });
     }
   }
 
@@ -161,9 +179,9 @@ export class ChartCanvas {
   paneTops(): Map<string, number> {
     const heights = this.chart.panes().map((p) => p.getHeight());
     const tops = new Map<string, number>();
-    for (const [id, { kind, series }] of this.indicators) {
-      if (kind !== "rsi") continue;
-      const index = series.getPane().paneIndex();
+    for (const [id, { pane, outputs }] of this.indicators) {
+      if (!pane) continue;
+      const index = outputs[0].series.getPane().paneIndex();
       // Each separator between panes is 1 px.
       tops.set(id, heights.slice(0, index).reduce((sum, h) => sum + h + 1, 0));
     }
@@ -184,30 +202,35 @@ export class ChartCanvas {
     this.chart.remove();
   }
 
-  private createIndicator(spec: IndicatorSpec, key: string): IndicatorSeries {
-    const pane = spec.kind === "rsi" ? this.chart.panes().length : 0;
-    const series = this.chart.addSeries(
-      LineSeries,
-      {
-        lineWidth: 2,
+  private createIndicator(draw: IndicatorDraw): IndicatorSeries {
+    const pane = draw.pane ? this.chart.panes().length : 0;
+    const { range } = draw;
+    const outputs = draw.outputs.map(({ id, render }): OutputSeries => {
+      const options = {
         priceLineVisible: false,
-        lastValueVisible: spec.kind === "rsi",
-        crosshairMarkerVisible: false,
-        priceFormat: priceFormat(spec.kind === "rsi" ? RSI_DIGITS : this.digits),
-        ...(spec.kind === "rsi" ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) } : {}),
-      },
-      pane,
+        lastValueVisible: draw.pane,
+        priceFormat: priceFormat(draw.digits),
+        ...(range ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: range.min, maxValue: range.max } }) } : {}),
+      };
+      const series =
+        render === "histogram"
+          ? this.chart.addSeries(HistogramSeries, options, pane)
+          : this.chart.addSeries(LineSeries, { ...options, lineWidth: 2, crosshairMarkerVisible: false }, pane);
+      return { id, series, values: [] };
+    });
+    const levels = draw.levels.map((price) =>
+      outputs[0].series.createPriceLine({ price, color: this.scheme.level, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "" }),
     );
-    const levels =
-      spec.kind === "rsi"
-        ? RSI_LEVELS.map((price) => series.createPriceLine({ price, color: this.scheme.level, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "" }))
-        : [];
-    if (spec.kind === "rsi") {
+    if (draw.pane) {
       const panes = this.chart.panes();
       panes[0].setStretchFactor(PRICE_PANE_STRETCH);
       panes[pane]?.setStretchFactor(1);
     }
-    return { kind: spec.kind, key, series, levels };
+    return { key: draw.key, pane: draw.pane, outputs, levels };
+  }
+
+  private removeIndicator(drawn: IndicatorSeries) {
+    for (const { series } of drawn.outputs) this.chart.removeSeries(series);
   }
 
   private createMain() {
@@ -263,6 +286,13 @@ export class ChartCanvas {
     for (const { levels } of this.indicators.values()) for (const level of levels) level.applyOptions({ color: s.level });
     this.separators.colour = s.line;
   }
+}
+
+/** The first index where two value lists differ; the shorter's length when one only goes on from the other. */
+function firstDifference(a: readonly (number | undefined)[], b: readonly (number | undefined)[]) {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+  return n;
 }
 
 /** The same bar, though perhaps another object (display times are recomputed). */

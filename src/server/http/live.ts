@@ -1,28 +1,38 @@
 // Live WebSocket: a bridge snapshot on connect, then a new one whenever it changes, at most every 500 ms per socket.
+// A window also sends the indicator keys its charts show ({"type":"show","keys":[…]}), and hears when their values
+// change ({"type":"indicators","changed":[…]}); it then fetches them again.
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BridgeServer, BridgeSnapshot } from "../bridge/index.js";
+import type { IndicatorValues } from "../indicators/index.js";
 
 export const LIVE_INTERVAL_MS = 500;
 const MAX_CLIENTS = 100;
+/** A window shows at most this many indicator keys (8 per chart, several charts). */
+const MAX_SHOWN_KEYS = 64;
 /** A socket this far behind is not reading; drop it rather than buffer without bound. */
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 
-type Client = { ws: WebSocket; lastSentAt: number; lastKey?: string; timer?: NodeJS.Timeout };
+type Client = { ws: WebSocket; lastSentAt: number; lastKey?: string; timer?: NodeJS.Timeout; shows: Set<string> };
 
 /** Snapshots that differ only in their `time` are the same state. */
 const stateKey = (snapshot: BridgeSnapshot) => JSON.stringify({ ...snapshot, time: 0 });
 
 export class LiveSnapshots {
-  private readonly wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+  private readonly wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   private readonly clients = new Set<Client>();
   private readonly unsubscribe: () => void;
+  private readonly unsubscribeIndicators?: () => void;
   /** Time-based changes (online to offline, stale) raise no change signal; look for them on a timer. */
   private readonly sweep: NodeJS.Timeout;
 
-  constructor(private readonly bridge: BridgeServer) {
+  constructor(
+    private readonly bridge: BridgeServer,
+    private readonly indicators?: IndicatorValues,
+  ) {
     this.unsubscribe = bridge.onChange(() => this.scheduleAll());
+    this.unsubscribeIndicators = indicators?.onChange((key) => this.indicatorChanged(key));
     this.sweep = setInterval(() => this.scheduleAll(), LIVE_INTERVAL_MS);
   }
 
@@ -33,15 +43,43 @@ export class LiveSnapshots {
   /** Completes an authenticated upgrade to /live. */
   accept(req: IncomingMessage, socket: Duplex, head: Buffer) {
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const client: Client = { ws, lastSentAt: -Infinity };
+      const client: Client = { ws, lastSentAt: -Infinity, shows: new Set() };
       this.clients.add(client);
       ws.on("error", () => ws.terminate());
+      ws.on("message", (data) => this.received(client, data));
       ws.on("close", () => {
         clearTimeout(client.timer);
+        this.indicators?.show(client, []);
         this.clients.delete(client);
       });
       this.send(client);
     });
+  }
+
+  /** A window's message: the indicator keys it shows. Anything else is ignored. */
+  private received(client: Client, data: unknown) {
+    let message: unknown;
+    try {
+      message = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    const { type, keys } = (message ?? {}) as { type?: unknown; keys?: unknown };
+    if (type !== "show" || !Array.isArray(keys)) return;
+    const shown = keys.filter((k): k is string => typeof k === "string" && k.length <= 2000).slice(0, MAX_SHOWN_KEYS);
+    client.shows = new Set(shown);
+    this.indicators?.show(client, shown);
+  }
+
+  private indicatorChanged(key: string) {
+    for (const client of this.clients) {
+      if (!client.shows.has(key) || client.ws.readyState !== WebSocket.OPEN) continue;
+      if (client.ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+        client.ws.terminate();
+        continue;
+      }
+      client.ws.send(JSON.stringify({ type: "indicators", changed: [key] }));
+    }
   }
 
   private scheduleAll() {
@@ -68,6 +106,7 @@ export class LiveSnapshots {
 
   close() {
     this.unsubscribe();
+    this.unsubscribeIndicators?.();
     clearInterval(this.sweep);
     for (const client of this.clients) {
       clearTimeout(client.timer);

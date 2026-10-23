@@ -1,7 +1,8 @@
 // Release check on the unpacked app (electron-builder's win-unpacked folder): the bundled bridge
 // files are the tagged commit's EA sources, the DLL with its notices is there, no .ex4 ships, and
 // the native modules are outside the asar archive, and the dashboard in the archive carries its font
-// and loads nothing from the network. Seam: files on disk plus a real git repository.
+// and loads nothing from the network; the bundled indicator packages and QuickJS's engine are in the archive.
+// Seam: files on disk plus a real git repository.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -17,6 +18,11 @@ const EA_FILES: Record<string, string> = {
   "mt4/Include/QuoteBridgeTrading.mqh": "// trading\n",
   "mt4/Templates/QuoteBridge.tpl": "<chart>\n</chart>\n",
 };
+
+/** A bundled indicator package as the commit holds it. */
+const PACKAGE_FILES: Record<string, string> = Object.fromEntries(
+  ["manifest.json", "calculate.js", "README.md", "LICENSE"].map((name) => [`src/server/indicators/bundled/ma/${name}`, `${name}\n`]),
+);
 
 /** A minimal 32-bit PE header: "MZ", e_lfanew at 0x3C, "PE\0\0", then the machine type. */
 function peFile(machine: number): Buffer {
@@ -72,6 +78,8 @@ const DASHBOARD: Record<string, string | Buffer> = {
   "dist/dashboard/app.js": 'const source = "https://github.com/example/quotebridge";',
   "dist/dashboard/fonts/archivo-latin.woff2": WOFF2,
   ...Object.fromEntries(LICENCE_TEXTS.map((path) => [`dist/dashboard/${path}`, "Licence text"])),
+  ...Object.fromEntries(Object.entries(PACKAGE_FILES).map(([path, text]) => [path.replace("src/server/", "dist/server/"), text])),
+  "node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm": "\0asm",
 };
 
 /** A repository whose HEAD holds the EA sources, and a clean unpacked app built from it. */
@@ -81,7 +89,7 @@ function fixture(t: { after(fn: () => void): void }) {
   const repo = join(root, "repo");
   mkdirSync(repo);
   git(repo, "init", "-q");
-  for (const [path, text] of Object.entries(EA_FILES)) write(join(repo, path), text);
+  for (const [path, text] of Object.entries({ ...EA_FILES, ...PACKAGE_FILES })) write(join(repo, path), text);
   git(repo, "add", ".");
   git(repo, "commit", "-q", "-m", "EA");
 
@@ -209,5 +217,19 @@ test("the dashboard must carry the licence texts of the works it bundles", async
   assert.deepEqual(await verifyPackage({ appFolder: f.app, repoFolder: f.repo, ref: f.ref }), [
     "The dashboard does not carry a licence text: dist/dashboard/licences/Archivo-OFL.txt",
     "The dashboard does not carry a licence text: dist/dashboard/licences/lightweight-charts-NOTICE.txt",
+  ]);
+});
+
+test("the bundled indicator packages and QuickJS's engine must be in the archive", async (t) => {
+  const f = fixture(t);
+  const {
+    "dist/server/indicators/bundled/ma/calculate.js": _,
+    "node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm": __,
+    ...without
+  } = DASHBOARD;
+  writeAsar(f.asar, without);
+  assert.deepEqual(await verifyPackage({ appFolder: f.app, repoFolder: f.repo, ref: f.ref }), [
+    "A bundled indicator package file is missing from the archive: dist/server/indicators/bundled/ma/calculate.js",
+    "QuickJS's engine is missing from the archive: node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm",
   ]);
 });

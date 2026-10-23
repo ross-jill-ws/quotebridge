@@ -6,7 +6,8 @@ import { test } from "node:test";
 import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, latestView, PAGE_BARS, readChartMemory, showsCandlesSince, viewAfterSet, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
-import { indicatorLabel, nextColour } from "../src/dashboard/charts/indicators.js";
+import { checkSettings, indicatorDigits, indicatorLabel, nextColour, valuesByCandle } from "../src/dashboard/charts/indicators.js";
+import type { Manifest } from "../src/shared/indicator-manifest.js";
 
 test("Default candles are filled Uptick vivid and Downtick vivid on the surface colour, following the theme", () => {
   const light = chartScheme("default", "light");
@@ -59,7 +60,7 @@ const BARS = [
   { time: 7200, open: 0.65143, high: 0.652, low: 0.6514, close: 0.65188 },
   { time: 10800, open: 0.65188, high: 0.6519, low: 0.65102, close: 0.6511 },
 ];
-const MA = { id: "a", label: "SMA 2", colour: "#b7791f", digits: 5, values: [undefined, 0.651657, 0.65149] };
+const MA = { id: "a", label: "Moving average 2 Simple", colour: "#b7791f", digits: 5, values: [undefined, 0.651657, 0.65149] };
 const RSI = { id: "b", label: "RSI 14", colour: "#2f6fb3", digits: 2, values: [undefined, undefined, 41.456] };
 
 test("the legend shows the symbol, period and the latest bar's OHLC with the feed's digits", () => {
@@ -72,9 +73,16 @@ test("the legend shows the symbol, period and the latest bar's OHLC with the fee
     { label: "C", value: "0.65110" },
   ]);
   assert.deepEqual(legend.indicators, [
-    { id: "a", label: "SMA 2", colour: "#b7791f", value: "0.65149" },
+    { id: "a", label: "Moving average 2 Simple", colour: "#b7791f", value: "0.65149" },
     { id: "b", label: "RSI 14", colour: "#2f6fb3", value: "41.46" },
   ]);
+});
+
+test("an indicator that failed says so with the reason, its last good values greyed", () => {
+  const failed = { ...RSI, failed: "The calculation took longer than 500 ms." };
+  const legend = chartLegend({ symbol: "AUDUSD.a", period: "H1", digits: 5, candles: BARS, indicators: [MA, failed] });
+  assert.deepEqual(legend.indicators[1], { id: "b", label: "RSI 14", colour: "#2f6fb3", value: "41.46", failed: "The calculation took longer than 500 ms." });
+  assert.equal(legend.indicators[0].failed, undefined);
 });
 
 test("at the crosshair the legend follows the bar under it, and shows a dash where an indicator has no value yet", () => {
@@ -92,15 +100,53 @@ test("a crosshair time without a bar, or no bars at all, falls back to the lates
   assert.equal(empty.indicators[0].value, "—");
 });
 
-test("indicators are named by kind and period, and take the first palette colour no other indicator uses", () => {
-  assert.equal(indicatorLabel({ kind: "ma", period: 20, type: "simple" }), "SMA 20");
-  assert.equal(indicatorLabel({ kind: "ma", period: 50, type: "exponential" }), "EMA 50");
-  assert.equal(indicatorLabel({ kind: "rsi", period: 14 }), "RSI 14");
+const manifest = (folder: string): Manifest => JSON.parse(readFileSync(new URL(folder, import.meta.url), "utf8"));
+const MA_MANIFEST = manifest("../src/server/indicators/bundled/ma/manifest.json");
+const RSI_MANIFEST = manifest("../src/server/indicators/bundled/rsi/manifest.json");
+const MACD_MANIFEST = manifest("./fixtures/legacy-macd-manifest.json");
+
+test("an indicator is named by its package and parameters, a choice by its label", () => {
+  assert.equal(indicatorLabel(MA_MANIFEST, { period: 20, type: "simple" }), "Moving average 20 Simple");
+  assert.equal(indicatorLabel(MA_MANIFEST, { period: 50, type: "exponential" }), "Moving average 50 Exponential");
+  assert.equal(indicatorLabel(RSI_MANIFEST, { period: 14 }), "RSI 14");
+  assert.equal(indicatorLabel(MACD_MANIFEST, { fast: 12, slow: 26, signal: 9 }), "MACD 12 26 9");
+});
+
+test("a new indicator takes the first palette colour no other indicator's outputs use", () => {
+  const using = (...colours: number[]) => colours.map((c, i) => ({ colours: { [`o${i}`]: c } }));
   assert.equal(nextColour([]), 0);
-  assert.equal(nextColour([{ colour: 0 }, { colour: 1 }]), 2);
-  assert.equal(nextColour([{ colour: 1 }]), 0);
-  assert.equal(nextColour([{ colour: 0 }, { colour: 1 }, { colour: 2 }, { colour: 3 }]), 0);
-  assert.equal(nextColour([{ colour: 0 }, { colour: 1 }, { colour: 2 }, { colour: 3 }, { colour: 0 }]), 1);
+  assert.equal(nextColour(using(0, 1)), 2);
+  assert.equal(nextColour(using(1)), 0);
+  assert.equal(nextColour(using(0, 1, 2, 3)), 0);
+  assert.equal(nextColour(using(0, 1, 2, 3, 0)), 1);
+  assert.equal(nextColour([{ colours: { a: 0, b: 1 } }]), 2);
+});
+
+test("values on a fixed range read in 2 decimals, others in the market's digits", () => {
+  assert.equal(indicatorDigits(RSI_MANIFEST, 5), 2);
+  assert.equal(indicatorDigits(MA_MANIFEST, 5), 5);
+  assert.equal(indicatorDigits(MA_MANIFEST, 3), 3);
+});
+
+test("the server's values are put at their candles; a candle without one has none", () => {
+  const points = [
+    { time: 7200, value: 0.6516 },
+    { time: 10800, value: null },
+    { time: 99999, value: 1 },
+  ];
+  assert.deepEqual(valuesByCandle(BARS, points), [undefined, 0.6516, undefined]);
+  assert.deepEqual(valuesByCandle(BARS, undefined), [undefined, undefined, undefined]);
+});
+
+test("the settings form takes values within each parameter's range, a choice among its values, and fast below slow", () => {
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "50", type: "exponential" }), { ok: true, values: { period: 50, type: "exponential" } });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: " 7 ", type: "simple" }), { ok: true, values: { period: 7, type: "simple" } });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "0", type: "simple" }), { ok: false, error: "Period must be a whole number from 1 to 500." });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "501", type: "simple" }), { ok: false, error: "Period must be a whole number from 1 to 500." });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "2.5", type: "simple" }), { ok: false, error: "Period must be a whole number from 1 to 500." });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "", type: "simple" }), { ok: false, error: "Period must be a whole number from 1 to 500." });
+  assert.deepEqual(checkSettings(MA_MANIFEST, { period: "20", type: "weighted" }), { ok: false, error: "Type must be one of simple, exponential." });
+  assert.deepEqual(checkSettings(MACD_MANIFEST, { fast: "26", slow: "12", signal: "9" }), { ok: false, error: "fast must be less than slow." });
 });
 
 const H = 3600;
@@ -135,19 +181,38 @@ test("intraday periods get a separator at the first bar of each new day; daily a
 });
 
 test("the view remembers its symbol, period, type, Ask line and indicators, and reads anything else as the defaults", () => {
-  const stored = { feed: "t1|CMC|AUDUSD.a", period: "H4", type: "bars", askLine: true, indicators: [{ id: "x", colour: 1, kind: "rsi", period: 9 }] };
+  const stored = { feed: "t1|CMC|AUDUSD.a", period: "H4", type: "bars", askLine: true, indicators: [{ id: "x", package: "quotebridge.rsi", parameters: { period: 9 }, colours: { rsi: 1 } }] };
   assert.deepEqual(readChartMemory(JSON.stringify(stored)), stored);
   const defaults = { period: "M1", type: "candles", askLine: false, indicators: [] };
   assert.deepEqual(readChartMemory(null), defaults);
   assert.deepEqual(readChartMemory("not json"), defaults);
   assert.deepEqual(readChartMemory(JSON.stringify({ period: "H2", type: "area", askLine: "yes", indicators: "none" })), defaults);
   const mixed = [
-    { id: "a", colour: 0, kind: "ma", period: 20, type: "exponential" },
-    { id: "b", colour: 0, kind: "ma", period: 0, type: "simple" },
-    { id: "c", colour: 9, kind: "rsi", period: 14 },
-    { id: "d", colour: 2, kind: "macd", period: 12 },
+    { id: "a", package: "quotebridge.ma", parameters: { period: 20, type: "exponential" }, colours: { ma: 0 } },
+    { id: "b", package: "quotebridge.ma", parameters: { period: {} }, colours: { ma: 0 } },
+    { id: "c", package: "quotebridge.rsi", parameters: { period: 14 }, colours: { rsi: 9 } },
+    { id: "d", package: 7, parameters: {}, colours: {} },
+    { package: "quotebridge.rsi", parameters: {}, colours: {} },
   ];
   assert.deepEqual(readChartMemory(JSON.stringify({ indicators: mixed })).indicators, [mixed[0]]);
+});
+
+test("Milestone 2's indicators are read as their packages: ma with its period and type, rsi with its period", () => {
+  const m2 = [
+    { id: "a", colour: 0, kind: "ma", period: 20, type: "exponential" },
+    { id: "b", colour: 2, kind: "rsi", period: 9 },
+    { id: "c", colour: 0, kind: "ma", period: 0, type: "simple" },
+    { id: "d", colour: 2, kind: "macd", period: 12 },
+  ];
+  assert.deepEqual(readChartMemory(JSON.stringify({ indicators: m2 })).indicators, [
+    { id: "a", package: "quotebridge.ma", parameters: { period: 20, type: "exponential" }, colours: { ma: 0 } },
+    { id: "b", package: "quotebridge.rsi", parameters: { period: 9 }, colours: { rsi: 2 } },
+  ]);
+});
+
+test("a chart keeps at most 8 indicators, the same package several times", () => {
+  const many = Array.from({ length: 10 }, (_, i) => ({ id: `i${i}`, package: "quotebridge.ma", parameters: { period: 10 + i, type: "simple" }, colours: { ma: i % 4 } }));
+  assert.deepEqual(readChartMemory(JSON.stringify({ indicators: many })).indicators, many.slice(0, 8));
 });
 
 test("the chart says since when it has candles, with the date once that is not today", () => {

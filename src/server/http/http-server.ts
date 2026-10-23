@@ -13,7 +13,10 @@ import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
 import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HistorySaver } from "../history/index.js";
+import { MAX_BARS, type IndicatorPackages, type IndicatorValues } from "../indicators/index.js";
 import { asPortInUse } from "../port-in-use.js";
+import { defaultValues, ManifestError, MAX_HISTORY_BARS, parameterValues, valuesFromText } from "../../shared/indicator-manifest.js";
+import { PAGE_BARS } from "../../shared/periods.js";
 import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
@@ -45,7 +48,12 @@ export type HttpServerOptions = {
   terminals?: () => TerminalManager | undefined;
   /** The Settings view's model, when the server has a settings store. */
   settings?: AppSettings;
+  /** Indicator packages and their cached values. */
+  indicators?: { packages: IndicatorPackages; values: IndicatorValues };
 };
+
+/** The most values one chart request asks for: a run's bars, less the most warm-up a package may declare. */
+export const MAX_INDICATOR_LIMIT = MAX_BARS - MAX_HISTORY_BARS;
 
 export type HttpServer = {
   /** e.g. "http://127.0.0.1:43123", the only origin the app window uses. */
@@ -90,7 +98,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       else res.destroy();
     });
   });
-  const live = new LiveSnapshots(bridge);
+  const live = new LiveSnapshots(bridge, options.indicators?.values);
   const rest = new RestV1({
     bridge,
     candles: options.candles,
@@ -168,6 +176,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) return handleApiKeys(options.apiKeys, url, req, res);
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
     if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
+    if (options.indicators && url.pathname === "/api/indicators/packages" && req.method === "GET") return handlePackages(options.indicators.packages, res);
+    if (options.indicators && url.pathname === "/api/indicators/values" && req.method === "GET") return handleIndicatorValues(options.indicators, url, res);
     if (url.pathname === "/api/feeds/remove" && req.method === "POST") {
       const body = await readJson(req).catch(() => undefined);
       const feed = (body as { feed?: unknown } | undefined)?.feed;
@@ -296,6 +306,41 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       clockRule: feed.clockRule,
       ...page,
     });
+  }
+
+  /** The indicator packages: their manifests, and whether each is bundled and enabled. */
+  function handlePackages(packages: IndicatorPackages, res: ServerResponse) {
+    json(res, 200, { packages: packages.list().map((p) => ({ manifest: p.manifest, bundled: p.bundled, enabled: true })) });
+  }
+
+  /**
+   * A chart's indicator values: the package's (`package`, its id) for `feed` and `period` with parameters `p.<id>`
+   * (their defaults when left out), over the candles page `limit` (1–45,000; 900 when not given) older than `before`
+   * (UTC seconds; the latest when not given). See IndicatorValuesAnswer.
+   */
+  async function handleIndicatorValues(indicators: NonNullable<HttpServerOptions["indicators"]>, url: URL, res: ServerResponse) {
+    const query = url.searchParams;
+    const feed = bridge.snapshot().feeds.find((f) => f.feed === query.get("feed"));
+    if (!feed) return json(res, 404, { error: "Unknown feed" });
+    const period = query.get("period");
+    if (!PERIODS.includes(period as Period)) return json(res, 400, { error: `Expected a period: ${PERIODS.join(", ")}` });
+    const pkg = indicators.packages.get(query.get("package") ?? "");
+    if (!pkg) return json(res, 404, { error: `Unknown indicator package. Packages: ${indicators.packages.list().map((p) => p.manifest.id).join(", ")}` });
+    const limitText = query.get("limit");
+    const limit = limitText === null ? PAGE_BARS : Number(limitText);
+    if (limitText !== null && !(/^\d+$/.test(limitText) && limit >= 1 && limit <= MAX_INDICATOR_LIMIT)) return json(res, 400, { error: `Expected a limit from 1 to ${MAX_INDICATOR_LIMIT}` });
+    const beforeText = query.get("before");
+    const before = beforeText === null ? undefined : Number(beforeText);
+    if (before !== undefined && !(/^\d{1,12}$/.test(beforeText!) && Number.isSafeInteger(before))) return json(res, 400, { error: "Expected before as UTC seconds" });
+    const texts = Object.fromEntries([...query].filter(([name]) => name.startsWith("p.")).map(([name, text]) => [name.slice(2), text]));
+    let parameters;
+    try {
+      parameters = parameterValues(pkg.manifest, { ...defaultValues(pkg.manifest), ...valuesFromText(pkg.manifest, texts) });
+    } catch (e) {
+      if (!(e instanceof ManifestError)) throw e;
+      return json(res, 400, { error: e.message });
+    }
+    json(res, 200, await indicators.values.values(feed, period as Period, pkg, parameters, limit, before));
   }
 
   /**

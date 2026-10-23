@@ -6,6 +6,7 @@ import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
 import { ChartHistory, EaBarFetcher, HistoryCatalog, HistorySaver, PERIOD_OF } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
+import { IndicatorEngine, IndicatorPackages, IndicatorValues } from "./indicators/index.js";
 import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
@@ -37,6 +38,8 @@ export type ServerConfig = {
   terminalDataFolder?: (terminalId: string) => string | undefined;
   /** The PC's local time minus UTC at an instant, in minutes (reads the EA's sampled time); injectable for tests. */
   localOffsetMinutes?: (utcMs: number) => number;
+  /** A folder of indicator packages (one subfolder each) the app has beside the bundled ones; for tests. */
+  extraIndicatorPackages?: string;
 };
 
 export type RunningServer = {
@@ -132,13 +135,26 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     saved,
     saving: (market) => saver?.progress(market) ?? null,
   });
+  const packages = await IndicatorPackages.open(config.extraIndicatorPackages);
+  const engine = new IndicatorEngine();
+  const indicatorValues = new IndicatorValues({
+    page: (feed, period, limit, before) => history.page(feed, period, limit, before),
+    engine,
+    feed: (feedId, market) => {
+      const feeds = bridge.snapshot().feeds;
+      return feeds.find((f) => f.feed === feedId) ?? feeds.find((f) => marketKey(f.market) === marketKey(market));
+    },
+    now: config.now,
+  });
   const sessions = new WindowSessions({ open: config.openDashboard });
   const settings = config.settings ? new AppSettings(config.settings, { ea: config.eaPort, http: config.httpPort }) : undefined;
   sessions.addToken(config.windowToken);
   let http;
   try {
-    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
+    http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues } });
   } catch (e) {
+    indicatorValues.close();
+    await engine.close();
     stopFilling();
     candles.close();
     eaBars?.close();
@@ -163,6 +179,8 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     async close() {
       await terminals?.close();
       await http.close();
+      indicatorValues.close();
+      await engine.close();
       stopFilling();
       candles.close();
       eaBars?.close();

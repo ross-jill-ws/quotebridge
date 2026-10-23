@@ -1,4 +1,5 @@
-// The dashboard's live client: snapshots from /live, reconnect with backoff, session end, stop.
+// The dashboard's live client: snapshots from /live, reconnect with backoff, session end, stop; the indicator keys a
+// window shows, and the server's notices that their values changed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LiveClient, type LiveSocket, type LiveStatus } from "../src/dashboard/live-client.js";
@@ -10,6 +11,10 @@ class FakeSocket implements LiveSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  sent: string[] = [];
+  send(data: string) {
+    this.sent.push(data);
+  }
   open() {
     this.onopen?.();
   }
@@ -58,6 +63,7 @@ class FakeTimers {
 function setup(options: { sessionValid?: () => Promise<boolean> } = {}) {
   const sockets: FakeSocket[] = [];
   const snapshots: unknown[] = [];
+  const changed: string[][] = [];
   const statuses: LiveStatus[] = [];
   const timers = new FakeTimers();
   const client = new LiveClient({
@@ -67,11 +73,12 @@ function setup(options: { sessionValid?: () => Promise<boolean> } = {}) {
       return socket;
     },
     onSnapshot: (s) => snapshots.push(s),
+    onIndicators: (keys) => changed.push(keys),
     onStatus: (s) => statuses.push(s),
     sessionValid: options.sessionValid ?? (async () => true),
     timers,
   });
-  return { client, sockets, snapshots, statuses, timers, latest: () => sockets.at(-1)! };
+  return { client, sockets, snapshots, changed, statuses, timers, latest: () => sockets.at(-1)! };
 }
 
 /** Lets pending promise callbacks run. */
@@ -178,4 +185,31 @@ test("a message that is not JSON is skipped; later snapshots still arrive", () =
   latest().message("not json");
   latest().message({ time: 3, feeds: [] });
   assert.deepEqual(snapshots, [{ time: 3, feeds: [] }]);
+});
+
+test("the window tells the server which indicator keys it shows, once connected and again after a reconnect", async () => {
+  const { client, latest, timers } = setup();
+  client.start();
+  client.show(["a", "b"]);
+  assert.deepEqual(latest().sent, [], "nothing is sent before the socket opens");
+  latest().open();
+  assert.deepEqual(latest().sent.map((m) => JSON.parse(m)), [{ type: "show", keys: ["a", "b"] }]);
+  client.show(["b"]);
+  assert.deepEqual(JSON.parse(latest().sent.at(-1)!), { type: "show", keys: ["b"] });
+
+  latest().drop();
+  await settle();
+  timers.advance(1000);
+  latest().open();
+  assert.deepEqual(latest().sent.map((m) => JSON.parse(m)), [{ type: "show", keys: ["b"] }]);
+});
+
+test("the server's notice that indicator values changed is passed on apart from the snapshots", () => {
+  const { client, latest, snapshots, changed } = setup();
+  client.start();
+  latest().open();
+  latest().message({ type: "indicators", changed: ["a"] });
+  latest().message({ time: 1, feeds: [] });
+  assert.deepEqual(changed, [["a"]]);
+  assert.deepEqual(snapshots, [{ time: 1, feeds: [] }]);
 });

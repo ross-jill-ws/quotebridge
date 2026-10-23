@@ -2037,6 +2037,34 @@ a.path {
   border-radius: 2px;
 }
 
+/* A failed indicator keeps its last good values, greyed; the reason follows its name. */
+.chart-legend .ind.failed .value {
+  opacity: 0.55;
+}
+
+.chart-legend .ind-failed {
+  /* The legend lets the pointer through to the chart; the full reason shows on hover. */
+  pointer-events: auto;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fault);
+}
+
+.indicator-menu .menu-note {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.indicator-menu .menu button:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
 .chart-legend .icon-button {
   pointer-events: auto;
   display: grid;

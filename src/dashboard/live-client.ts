@@ -1,4 +1,5 @@
-// The dashboard's live connection to the server's /live WebSocket: a snapshot on connect and on every change.
+// The dashboard's live connection to the server's /live WebSocket: a snapshot on connect and on every change. The
+// window also says which indicator keys its charts show, and hears when their values change.
 
 /** The part of the browser WebSocket the client uses. */
 export type LiveSocket = {
@@ -6,6 +7,7 @@ export type LiveSocket = {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: (() => void) | null;
   onerror: (() => void) | null;
+  send(data: string): void;
   close(): void;
 };
 
@@ -23,6 +25,8 @@ export type Timers = {
 export type LiveClientOptions<Snapshot> = {
   open: () => LiveSocket;
   onSnapshot: (snapshot: Snapshot) => void;
+  /** The indicator keys whose values changed, of those shown. */
+  onIndicators?: (changed: string[]) => void;
   onStatus: (status: LiveStatus) => void;
   /** Whether the window session still works; false stops reconnecting. */
   sessionValid: () => Promise<boolean>;
@@ -39,6 +43,8 @@ export class LiveClient<Snapshot = unknown> {
   private readonly timers: Timers;
   private retry: unknown;
   private stopped = false;
+  private open = false;
+  private shown: string[] = [];
 
   constructor(private readonly options: LiveClientOptions<Snapshot>) {
     this.timers = options.timers ?? { setTimeout: (run, ms) => setTimeout(run, ms), clearTimeout: (id) => clearTimeout(id as number) };
@@ -54,25 +60,44 @@ export class LiveClient<Snapshot = unknown> {
     this.socket = socket;
     socket.onopen = () => {
       this.retryMs = FIRST_RETRY_MS;
+      this.open = true;
+      // A new connection knows nothing of what this window shows.
+      if (this.shown.length) this.sendShown();
       this.setStatus("live");
     };
     socket.onmessage = (event) => {
-      let snapshot: Snapshot;
+      let message: unknown;
       try {
-        snapshot = JSON.parse(String(event.data)) as Snapshot;
+        message = JSON.parse(String(event.data));
       } catch {
         return; // not a snapshot; the next one replaces it anyway
       }
-      this.options.onSnapshot(snapshot);
+      const notice = message as { type?: unknown; changed?: unknown };
+      if (notice.type === "indicators") {
+        if (Array.isArray(notice.changed)) this.options.onIndicators?.(notice.changed.filter((k): k is string => typeof k === "string"));
+        return;
+      }
+      this.options.onSnapshot(message as Snapshot);
     };
     socket.onerror = () => socket.close();
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = undefined;
+      this.open = false;
       if (this.stopped) return;
       this.setStatus("reconnecting");
       void this.retryUnlessSessionEnded();
     };
+  }
+
+  /** The indicator keys this window shows now; the server tells it when their values change. */
+  show(keys: readonly string[]) {
+    this.shown = [...keys];
+    if (this.open) this.sendShown();
+  }
+
+  private sendShown() {
+    this.socket?.send(JSON.stringify({ type: "show", keys: this.shown }));
   }
 
   /** Closes the connection; no more snapshots or retries. */

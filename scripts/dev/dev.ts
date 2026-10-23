@@ -19,6 +19,7 @@ import { ipcTransport } from "../../src/shared/host-transport.js";
 import type { HostMessage, ServerMessage } from "../../src/shared/server-host-protocol.js";
 import { SettingsStore } from "../../src/shared/settings-store.js";
 import { copyStatic, DASHBOARD_OUT, DASHBOARD_SOURCE, dashboardBuildOptions, STATIC_FILES } from "../dashboard-build.js";
+import { copyBundledPackages } from "../indicators-build.js";
 import { planDevRun, type DevPlan } from "./dev-plan.js";
 import { fakeFeeds } from "./fake-feeds.js";
 import { realPortsRefusal } from "./port-check.js";
@@ -27,7 +28,8 @@ import { startReloadServer } from "./reload-server.js";
 import { RestartScheduler } from "./restart-scheduler.js";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
-const SERVER_BUNDLE = join(root, ".dev-build", "server-entry.mjs");
+const DEV_BUILD = join(root, ".dev-build");
+const SERVER_BUNDLE = join(DEV_BUILD, "server-entry.mjs");
 const QUIET_MS = 300;
 const log = (message: string) => console.log(`[dev] ${message}`);
 let stopping = false;
@@ -97,13 +99,15 @@ const staticWatchers = STATIC_FILES.map((file) =>
   }),
 );
 
-// Server: rebuilt on change into .dev-build, then restarted.
+// Server: rebuilt on change into .dev-build, then restarted. The indicator engine's worker is bundled beside it, and the
+// bundled indicator packages are copied there (src/server/indicators finds both beside its own module).
 const serverRestart = new RestartScheduler(async () => runner.restartServer(), { quietMs: QUIET_MS });
 let serverBuilt!: () => void;
 const serverReady = new Promise<void>((resolve) => (serverBuilt = resolve));
 const serverBuild = await context({
-  entryPoints: [join(root, "scripts", "dev", "server-entry.ts")],
-  outfile: SERVER_BUNDLE,
+  entryPoints: { "server-entry": join(root, "scripts", "dev", "server-entry.ts"), "sandbox-worker": join(root, "src", "server", "indicators", "sandbox-worker.ts") },
+  outdir: DEV_BUILD,
+  outExtension: { ".js": ".mjs" },
   bundle: true,
   platform: "node",
   format: "esm",
@@ -111,7 +115,7 @@ const serverBuild = await context({
   packages: "external",
   sourcemap: true,
   logLevel: "info",
-  plugins: [onBuilt("server", () => serverBuilt(), () => serverRestart.changed())],
+  plugins: [{ name: "dev-indicators", setup: (build) => build.onEnd(() => copyBundledPackages(DEV_BUILD)) }, onBuilt("server", () => serverBuilt(), () => serverRestart.changed())],
 });
 await serverBuild.watch();
 await Promise.all([dashboardReady, serverReady]);

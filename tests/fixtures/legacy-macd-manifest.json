@@ -1,0 +1,77 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.macd",
+  "version": "1.0.0",
+  "name": "MACD",
+  "description": "EMA(close, fast) minus EMA(close, slow), with an SMA signal (MT4 convention). Histogram colors compare with the previous value.",
+  "license": "LicenseRef-Project-Internal",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Close prices",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "close",
+      "history": {
+        "parameter": "slow",
+        "extra": 499
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "id": "fast",
+      "label": "fast",
+      "type": "integer",
+      "default": 12,
+      "min": 1,
+      "max": 500,
+      "lessThan": "slow"
+    },
+    {
+      "id": "slow",
+      "label": "slow",
+      "type": "integer",
+      "default": 26,
+      "min": 1,
+      "max": 500
+    },
+    {
+      "id": "signal",
+      "label": "signal",
+      "type": "integer",
+      "default": 9,
+      "min": 1,
+      "max": 500
+    }
+  ],
+  "outputs": [
+    {
+      "id": "macd",
+      "label": "MACD",
+      "kind": "numeric",
+      "render": "histogram",
+      "placement": "pane",
+      "color": "#56d9af",
+      "unit": {
+        "input": "source"
+      },
+      "palette": {
+        "rising": "#56d9af",
+        "falling": "#ff817c"
+      }
+    },
+    {
+      "id": "signal",
+      "label": "Signal",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "pane",
+      "color": "#ffbc57",
+      "unit": {
+        "input": "source"
+      }
+    }
+  ]
+}

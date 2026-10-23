@@ -1,16 +1,16 @@
 // The Charts view's model (pure): the legend at the crosshair or the latest bar, the forming candle that
 // follows the live quote, day separators, paging back through the chart history, where the view goes when bars come
-// in, what the view remembers, and since when it has candles.
+// in, what the view remembers (Milestone 2's indicators read as their packages), and since when it has candles.
 import type { Candle } from "../../server/candles/index.js";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
-import { bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
+import { bucketStart, isIntraday, PAGE_BARS, PERIODS, type Period } from "../../shared/periods.js";
 import { minuteStamp } from "../format.js";
-import { PALETTE_SIZE, type IndicatorSpec } from "./indicators.js";
+import { fromMilestone2, isIndicatorSpec, MAX_INDICATORS, type IndicatorSpec } from "./indicators.js";
 
 const NONE = "—";
 
-/** One indicator's line, with a value per candle. */
-export type IndicatorLine = { id: string; label: string; colour: string; digits: number; values: readonly (number | undefined)[] };
+/** One indicator's line, with a value per candle; `failed`: why its last computation failed (the values are the last good ones). */
+export type IndicatorLine = { id: string; label: string; colour: string; digits: number; values: readonly (number | undefined)[]; failed?: string };
 
 export type LegendInput = {
   symbol: string;
@@ -28,7 +28,7 @@ export type Legend = {
   /** The bar's time on the chart's clock: "2027-01-15 10:00", or the date alone for D1 and longer; empty without a bar. */
   time: string;
   ohlc: { label: "O" | "H" | "L" | "C"; value: string }[];
-  indicators: { id: string; label: string; colour: string; value: string }[];
+  indicators: { id: string; label: string; colour: string; value: string; failed?: string }[];
 };
 
 export function chartLegend({ symbol, period, digits, candles, indicators, time }: LegendInput): Legend {
@@ -41,7 +41,7 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
     title: `${symbol}, ${period}`,
     time: isIntraday(period) ? stamp : stamp.slice(0, 10),
     ohlc: (["open", "high", "low", "close"] as const).map((key) => ({ label: key[0].toUpperCase() as "O", value: price(bar?.[key], digits) })),
-    indicators: indicators.map(({ id, label, colour, digits: places, values }) => ({ id, label, colour, value: price(values[index], places) })),
+    indicators: indicators.map(({ id, label, colour, digits: places, values, failed }) => ({ id, label, colour, value: price(values[index], places), ...(failed === undefined ? {} : { failed }) })),
   };
 }
 
@@ -84,8 +84,6 @@ export type ChartType = (typeof CHART_TYPES)[number];
 /** What the Charts view keeps in localStorage. `feed` is absent until a symbol is chosen. */
 export type ChartMemory = { feed?: string; period: Period; type: ChartType; askLine: boolean; indicators: IndicatorSpec[] };
 
-export const MAX_INDICATOR_PERIOD = 500;
-
 /** The stored view, with anything that cannot work read as its default. */
 export function readChartMemory(text: string | null): ChartMemory {
   let stored: Record<string, unknown> = {};
@@ -100,20 +98,15 @@ export function readChartMemory(text: string | null): ChartMemory {
     period: (PERIODS as readonly unknown[]).includes(stored.period) ? (stored.period as Period) : "M1",
     type: (CHART_TYPES as readonly unknown[]).includes(stored.type) ? (stored.type as ChartType) : "candles",
     askLine: typeof stored.askLine === "boolean" ? stored.askLine : false,
-    indicators: Array.isArray(stored.indicators) ? stored.indicators.filter(isIndicator) : [],
+    indicators: Array.isArray(stored.indicators) ? stored.indicators.flatMap(readIndicator).slice(0, MAX_INDICATORS) : [],
   };
 }
 
-export function isIndicatorPeriod(period: unknown): period is number {
-  return typeof period === "number" && Number.isInteger(period) && period >= 1 && period <= MAX_INDICATOR_PERIOD;
-}
-
-function isIndicator(value: unknown): value is IndicatorSpec {
-  if (typeof value !== "object" || value === null) return false;
-  const i = value as Record<string, unknown>;
-  if (typeof i.id !== "string" || !(typeof i.colour === "number" && Number.isInteger(i.colour) && i.colour >= 0 && i.colour < PALETTE_SIZE)) return false;
-  if (!isIndicatorPeriod(i.period)) return false;
-  return i.kind === "rsi" || (i.kind === "ma" && (i.type === "simple" || i.type === "exponential"));
+/** A remembered indicator: a package's, or Milestone 2's read as its package; none when it cannot work. */
+function readIndicator(value: unknown): IndicatorSpec[] {
+  if (isIndicatorSpec(value)) return [value];
+  const converted = typeof value === "object" && value !== null && "kind" in value ? fromMilestone2(value as Record<string, unknown>) : undefined;
+  return converted ? [converted] : [];
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -130,8 +123,7 @@ export function candlesSince(since: number, now: number): string {
 
 /** Older bars are fetched when fewer than this many remain left of the visible range. */
 export const OLDER_WHEN_FEWER_THAN = 100;
-/** Bars per page of chart history: MetaTrader's default, and what the EA sends. */
-export const PAGE_BARS = 900;
+export { PAGE_BARS };
 
 /** `fromIndex`: the logical index of the leftmost visible bar (negative past the first bar). */
 export function wantsOlder(fromIndex: number, complete: boolean): boolean {

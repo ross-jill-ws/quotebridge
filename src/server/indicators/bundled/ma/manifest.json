@@ -1,0 +1,43 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.ma",
+  "version": "1.0.0",
+  "name": "Moving average",
+  "description": "The simple or exponential moving average of the close, as MetaTrader's Moving Average draws it. An exponential average starts from the simple average of its first period closes.",
+  "license": "MIT",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Close",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "close",
+      "history": { "parameter": "period", "extra": 499 }
+    }
+  ],
+  "parameters": [
+    { "id": "period", "label": "Period", "type": "integer", "default": 20, "min": 1, "max": 500 },
+    {
+      "id": "type",
+      "label": "Type",
+      "type": "choice",
+      "default": "simple",
+      "choices": [
+        { "value": "simple", "label": "Simple" },
+        { "value": "exponential", "label": "Exponential" }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "ma",
+      "label": "MA",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "overlay",
+      "color": "#c9a227",
+      "unit": { "input": "source" }
+    }
+  ]
+}

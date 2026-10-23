@@ -103,7 +103,7 @@ $env:QUOTEBRIDGE_EA_PORT = '7755'; npm run dev; Remove-Item Env:QUOTEBRIDGE_EA_P
 | --- | --- |
 | `npm test` | All tests (a few seconds). |
 | `npm run typecheck` | Type-checks everything. |
-| `npm run build` | Builds the main process, server and production dashboard into `dist/`. |
+| `npm run build` | Builds the main process, server (with the bundled indicator packages) and production dashboard into `dist/`. |
 | `npm start` | Builds once, then runs the app with Electron, without live reload. |
 | `npm run package` | Builds the Windows installer into `release/`. |
 | `npm run verify:package` | Checks the unpacked build in `release/win-unpacked`. |

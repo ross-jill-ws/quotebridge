@@ -22,6 +22,8 @@ const LICENCE_SOURCES: Record<string, string> = {
   "licences/Archivo-OFL.txt": `${ARCHIVO}LICENSE`,
   "licences/lightweight-charts-LICENSE.txt": `${root}node_modules/lightweight-charts/LICENSE`,
   "licences/lightweight-charts-NOTICE.txt": `${DASHBOARD_SOURCE}licences/lightweight-charts-NOTICE.txt`,
+  // QuickJS's licence and quickjs-emscripten's, together, as the build of it the server runs ships them.
+  "licences/QuickJS-LICENSE.txt": `${root}node_modules/@jitl/quickjs-wasmfile-release-sync/LICENSE`,
 };
 const FONT_FILES: Record<string, string> = {
   "fonts/archivo-latin-wdth-normal.woff2": `${ARCHIVO}files/archivo-latin-wdth-normal.woff2`,

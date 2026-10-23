@@ -1,7 +1,7 @@
 // The Charts view: one feed's chart history (the terminal's HST bars, then the live candles the server builds),
 // loaded further back as the trader scrolls, with the forming candle following the live quote; MetaTrader's
 // conventions (symbol, period and OHLC top-left, M1–MN1, candles, bars or line, Bid label, Ask line, indicator panes),
-// drawn in the app's own design.
+// drawn in the app's own design. Indicator values come from the server (ADR 12), fetched again when it says they changed.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { BridgeSnapshot, FeedSnapshot } from "../../server/bridge/index.js";
 import type { Candle } from "../../server/candles/index.js";
@@ -15,20 +15,18 @@ import { duration } from "../format.js";
 import { Price } from "../price.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
-import { ChartCanvas, RSI_DIGITS } from "./chart-canvas.js";
+import { ChartCanvas, type IndicatorDraw } from "./chart-canvas.js";
 import {
   candlesSince,
   chartLegend,
   CHART_TYPES,
   daySeparators,
   followQuote,
-  isIndicatorPeriod,
   mergeLatest,
   PAGE_BARS,
   prependOlder,
   showsCandlesSince,
   wantsOlder,
-  MAX_INDICATOR_PERIOD,
   readChartMemory,
   type ChartMemory,
   type ChartType,
@@ -36,7 +34,18 @@ import {
   type Legend,
 } from "./chart-model.js";
 import { chartScheme, type ChartScheme, type ColourMode } from "./chart-scheme.js";
-import { DEFAULT_INDICATORS, indicatorLabel, indicatorValues, nextColour, type IndicatorSettings, type IndicatorSpec } from "./indicators.js";
+import {
+  checkSettings,
+  indicatorDigits,
+  indicatorLabel,
+  MAX_INDICATORS,
+  nextColour,
+  valuesByCandle,
+  type IndicatorSpec,
+  type IndicatorValuesAnswer,
+  type PackageInfo,
+} from "./indicators.js";
+import { defaultValues, type Manifest, type ParameterValues } from "../../shared/indicator-manifest.js";
 
 /** Per window (localStorage): the last symbol, period, chart type, Ask line and indicators. */
 const MEMORY_KEY = "quotebridge.chart";
@@ -88,7 +97,12 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   );
   const mode = useColourMode();
   const scheme = chartScheme(chartColours, mode);
-  const indicators = useMemo(() => drawnIndicators(memory.indicators, data?.candles ?? [], data?.digits ?? 5, scheme.series), [memory.indicators, data?.candles, data?.digits, scheme]);
+  const packages = usePackages(live.status);
+  const values = useIndicatorValues(feed, memory.period, memory.indicators, packages, fetched, live);
+  const drawn = useMemo(
+    () => drawnIndicators(memory.indicators, packages, values, fetched?.candles ?? [], data?.digits ?? 5, scheme),
+    [memory.indicators, packages, values, fetched?.candles, data?.digits, scheme],
+  );
   const [crosshair, setCrosshair] = useState<number>();
   // Asks the chart to scroll back to the latest bar.
   const [toLatest, setToLatest] = useState(0);
@@ -117,12 +131,17 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
     );
   }
 
-  const legend = data && feed ? chartLegend({ symbol: feed.symbol, period: memory.period, digits: data.digits, candles: data.candles, indicators, time: crosshair }) : undefined;
+  const legend = data && feed ? chartLegend({ symbol: feed.symbol, period: memory.period, digits: data.digits, candles: data.candles, indicators: drawn.lines, time: crosshair }) : undefined;
   const latest = feed?.latest;
   const spread = latest && feed ? Math.round((latest.ask - latest.bid) * 10 ** feed.digits) : undefined;
   const lastHeard = feed && !feed.online ? duration(snapshot.time - feed.lastSeen) : undefined;
-  const changeIndicator = (id: string, settings: IndicatorSettings | null) =>
-    setMemory({ indicators: memory.indicators.flatMap((i) => (i.id !== id ? [i] : settings ? [{ ...settings, id, colour: i.colour }] : [])) });
+  const changeIndicator = (id: string, parameters: ParameterValues | null) =>
+    setMemory({ indicators: memory.indicators.flatMap((i) => (i.id !== id ? [i] : parameters ? [{ ...i, parameters }] : [])) });
+  const addIndicator = (manifest: Manifest) => {
+    const colour = nextColour(memory.indicators);
+    const colours = Object.fromEntries(manifest.outputs.map((o) => [o.id, colour]));
+    setMemory({ indicators: [...memory.indicators, { id: newId(), package: manifest.id, parameters: defaultValues(manifest), colours }] });
+  };
 
   return (
     <section class="view charts" aria-label="Charts">
@@ -164,7 +183,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
           <button class="button" title="Scroll back to the latest bar" onClick={() => setToLatest((n) => n + 1)}>
             Latest
           </button>
-          <IndicatorMenu onAdd={(settings) => setMemory({ indicators: [...memory.indicators, { ...settings, id: newId(), colour: nextColour(memory.indicators) }] })} />
+          <IndicatorMenu packages={packages} full={memory.indicators.length >= MAX_INDICATORS} onAdd={addIndicator} />
         </div>
       </div>
 
@@ -184,8 +203,9 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
         askLine={memory.askLine}
         scheme={scheme}
         greenOnBlack={chartColours === "green-on-black"}
-        indicators={indicators}
+        draws={drawn.draws}
         specs={memory.indicators}
+        packages={packages}
         legend={legend}
         toLatest={toLatest}
         onCrosshair={setCrosshair}
@@ -249,22 +269,26 @@ function SymbolPicker({ groups, feed, groupName, onPick }: { groups: FeedGroup[]
   );
 }
 
-function IndicatorMenu({ onAdd }: { onAdd: (settings: IndicatorSettings) => void }) {
+/** The enabled packages, bundled ones first, then the others by name. */
+function IndicatorMenu({ packages, full, onAdd }: { packages: ReadonlyMap<string, PackageInfo>; full: boolean; onAdd: (manifest: Manifest) => void }) {
   const menu = useRef<HTMLDetailsElement>(null);
-  const add = (settings: IndicatorSettings) => {
-    onAdd(settings);
+  const add = (manifest: Manifest) => {
+    onAdd(manifest);
     menu.current?.removeAttribute("open");
   };
+  const listed = [...packages.values()]
+    .filter((p) => p.enabled)
+    .sort((a, b) => Number(b.bundled) - Number(a.bundled) || (a.bundled ? 0 : a.manifest.name.localeCompare(b.manifest.name)));
   return (
     <details class="indicator-menu" ref={menu}>
       <summary class="button">Indicators</summary>
       <div class="menu" role="menu">
-        <button role="menuitem" onClick={() => add(DEFAULT_INDICATORS.ma)}>
-          Moving average
-        </button>
-        <button role="menuitem" onClick={() => add(DEFAULT_INDICATORS.rsi)}>
-          RSI
-        </button>
+        {full && <p class="menu-note">A chart has at most {MAX_INDICATORS} indicators.</p>}
+        {listed.map((p) => (
+          <button key={p.manifest.id} role="menuitem" disabled={full} title={p.manifest.description} onClick={() => add(p.manifest)}>
+            {p.manifest.name}
+          </button>
+        ))}
       </div>
     </details>
   );
@@ -276,19 +300,20 @@ type FrameProps = {
   askLine: boolean;
   scheme: ChartScheme;
   greenOnBlack: boolean;
-  indicators: IndicatorLine[];
+  draws: IndicatorDraw[];
   specs: IndicatorSpec[];
+  packages: ReadonlyMap<string, PackageInfo>;
   legend?: Legend;
   /** Changes each time the user asks for the latest bar. */
   toLatest: number;
   onCrosshair: (time: number | undefined) => void;
   /** The logical index of the leftmost visible bar, whenever the view moves. */
   onVisibleFrom: (index: number) => void;
-  onChangeIndicator: (id: string, settings: IndicatorSettings | null) => void;
+  onChangeIndicator: (id: string, parameters: ParameterValues | null) => void;
 };
 
 /** The chart canvas with its legends: the price pane's top-left, and one at the top of each indicator pane. */
-function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, specs, legend, toLatest, onCrosshair, onVisibleFrom, onChangeIndicator }: FrameProps) {
+function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, packages, legend, toLatest, onCrosshair, onVisibleFrom, onChangeIndicator }: FrameProps) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ChartCanvas>();
   const [paneTops, setPaneTops] = useState<Map<string, number>>(new Map());
@@ -330,15 +355,15 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, spe
   }, [data?.candles]);
   useEffect(() => canvas.current?.setAsk(askLine && data?.ask != null ? data.ask : null), [askLine, data?.ask]);
   useEffect(() => {
-    const draws = indicators.map((line) => ({ spec: specs.find((s) => s.id === line.id)!, colour: line.colour, values: line.values }));
     canvas.current?.setIndicators(draws);
     layout();
-  }, [indicators]);
+  }, [draws]);
   useEffect(() => {
     if (toLatest) canvas.current?.scrollToLatest();
   }, [toLatest]);
 
   const legendRows = legend?.indicators ?? [];
+  const manifestOf = (id: string) => packages.get(specs.find((s) => s.id === id)?.package ?? "")?.manifest;
   const pricePane = legendRows.filter((row) => !paneTops.has(row.id));
   return (
     <div class={`chart-frame${greenOnBlack ? " green-on-black" : ""}`} style={{ "--chart-text": scheme.text, "--chart-strong": scheme.strong }}>
@@ -355,7 +380,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, spe
             ))}
           </div>
           {pricePane.map((row) => (
-            <IndicatorRow key={row.id} row={row} spec={specs.find((s) => s.id === row.id)} onChange={onChangeIndicator} />
+            <IndicatorRow key={row.id} row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} onChange={onChangeIndicator} />
           ))}
         </div>
       )}
@@ -363,7 +388,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, indicators, spe
         .filter((row) => paneTops.has(row.id))
         .map((row) => (
           <div key={row.id} class="chart-legend sub" style={{ top: `${paneTops.get(row.id)! + 6}px` }}>
-            <IndicatorRow row={row} spec={specs.find((s) => s.id === row.id)} onChange={onChangeIndicator} />
+            <IndicatorRow row={row} spec={specs.find((s) => s.id === row.id)} manifest={manifestOf(row.id)} onChange={onChangeIndicator} />
           </div>
         ))}
       {data && data.candles.length === 0 && <p class="chart-empty">No quotes for this feed yet. The first candle opens with its next quote.</p>}
@@ -376,15 +401,30 @@ function sameTops(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>
   return a.size === b.size && [...a].every(([id, top]) => b.get(id) === top);
 }
 
-/** An indicator's legend row: its colour, name and value, with edit and remove. */
-function IndicatorRow({ row, spec, onChange }: { row: Legend["indicators"][number]; spec?: IndicatorSpec; onChange: (id: string, settings: IndicatorSettings | null) => void }) {
+/** An indicator's legend row: its colour, name and value, Failed with the reason, edit and remove. */
+function IndicatorRow({
+  row,
+  spec,
+  manifest,
+  onChange,
+}: {
+  row: Legend["indicators"][number];
+  spec?: IndicatorSpec;
+  manifest?: Manifest;
+  onChange: (id: string, parameters: ParameterValues | null) => void;
+}) {
   const [editing, setEditing] = useState(false);
   return (
-    <div class="ind">
+    <div class={`ind${row.failed ? " failed" : ""}`}>
       <i style={{ background: row.colour }} aria-hidden="true" />
       <span>
-        {row.label} {row.value}
+        {row.label} <span class="value">{row.value}</span>
       </span>
+      {row.failed && (
+        <span class="ind-failed" role="status" title={row.failed}>
+          Failed: {row.failed}
+        </span>
+      )}
       <button class="icon-button" title={`Change ${row.label}`} aria-label={`Change ${row.label}`} onClick={() => setEditing(!editing)}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path d="M10.5 2.5l3 3L6 13H3v-3z" />
@@ -395,12 +435,13 @@ function IndicatorRow({ row, spec, onChange }: { row: Legend["indicators"][numbe
           <path d="M4 4l8 8M12 4l-8 8" />
         </svg>
       </button>
-      {editing && spec && (
+      {editing && spec && manifest && (
         <IndicatorForm
-          spec={spec}
-          onDone={(settings) => {
+          manifest={manifest}
+          parameters={spec.parameters}
+          onDone={(parameters) => {
             setEditing(false);
-            if (settings) onChange(row.id, settings);
+            if (parameters) onChange(row.id, parameters);
           }}
         />
       )}
@@ -408,51 +449,204 @@ function IndicatorRow({ row, spec, onChange }: { row: Legend["indicators"][numbe
   );
 }
 
-function IndicatorForm({ spec, onDone }: { spec: IndicatorSpec; onDone: (settings: IndicatorSettings | null) => void }) {
-  const [period, setPeriod] = useState(String(spec.period));
-  const [type, setType] = useState(spec.kind === "ma" ? spec.type : "simple");
-  const valid = isIndicatorPeriod(Number(period)) && /^\d+$/.test(period.trim());
+/** The settings form, generated from the package's manifest: each parameter by its label, with its range or choices. */
+function IndicatorForm({ manifest, parameters, onDone }: { manifest: Manifest; parameters: ParameterValues; onDone: (parameters: ParameterValues | null) => void }) {
+  const [texts, setTexts] = useState<Record<string, string>>(() => Object.fromEntries(manifest.parameters.map((p) => [p.id, String(parameters[p.id] ?? p.default)])));
+  const checked = checkSettings(manifest, texts);
+  const set = (id: string, text: string) => setTexts((t) => ({ ...t, [id]: text }));
   const submit = (e: Event) => {
     e.preventDefault();
-    if (!valid) return;
-    onDone(spec.kind === "ma" ? { kind: "ma", period: Number(period), type } : { kind: "rsi", period: Number(period) });
+    if (checked.ok) onDone(checked.values);
   };
   return (
     <form class="indicator-form" onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && onDone(null)}>
-      <label>
-        Period
-        <input class="input" inputMode="numeric" value={period} onInput={(e) => setPeriod((e.target as HTMLInputElement).value)} autoFocus />
-      </label>
-      {spec.kind === "ma" && (
-        <label>
-          Type
-          <select class="input" value={type} onChange={(e) => setType((e.target as HTMLSelectElement).value as "simple" | "exponential")}>
-            <option value="simple">Simple</option>
-            <option value="exponential">Exponential</option>
-          </select>
+      {manifest.parameters.map((p, i) => (
+        <label key={p.id}>
+          {p.label}
+          {p.type === "choice" ? (
+            <select class="input" value={texts[p.id]} onChange={(e) => set(p.id, (e.target as HTMLSelectElement).value)}>
+              {p.choices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              class="input"
+              inputMode={p.type === "integer" ? "numeric" : "decimal"}
+              title={`${p.min} to ${p.max}, ${p.default} by default`}
+              value={texts[p.id]}
+              onInput={(e) => set(p.id, (e.target as HTMLInputElement).value)}
+              autoFocus={i === 0}
+            />
+          )}
         </label>
-      )}
-      <button class="button primary" type="submit" disabled={!valid}>
+      ))}
+      <button class="button primary" type="submit" disabled={!checked.ok}>
         Apply
       </button>
       <button class="button quiet" type="button" onClick={() => onDone(null)}>
         Cancel
       </button>
-      {!valid && <span class="bad-text">Use a whole number from 1 to {MAX_INDICATOR_PERIOD}.</span>}
+      {!checked.ok && <span class="bad-text">{checked.error}</span>}
     </form>
   );
 }
 
-/** Each indicator's line for the candles: Moving averages in the feed's digits, RSI in its own. */
-function drawnIndicators(specs: readonly IndicatorSpec[], candles: readonly Candle[], digits: number, palette: readonly string[]): IndicatorLine[] {
-  const closes = candles.map((c) => c.close);
-  return specs.map((spec) => ({
-    id: spec.id,
-    label: indicatorLabel(spec),
-    colour: palette[spec.colour % palette.length],
-    digits: spec.kind === "rsi" ? RSI_DIGITS : digits,
-    values: indicatorValues(spec, closes),
-  }));
+/**
+ * Each indicator's draw for the canvas and line for the legend: its outputs' values at the candles (UTC, as fetched),
+ * in its palette colours, greyed while its values are stale. Indicators whose package or values are not here yet are
+ * left out.
+ */
+function drawnIndicators(
+  specs: readonly IndicatorSpec[],
+  packages: ReadonlyMap<string, PackageInfo>,
+  values: ReadonlyMap<string, IndicatorValuesAnswer>,
+  candles: readonly Candle[],
+  digits: number,
+  scheme: ChartScheme,
+): { draws: IndicatorDraw[]; lines: IndicatorLine[] } {
+  const draws: IndicatorDraw[] = [];
+  const lines: IndicatorLine[] = [];
+  for (const spec of specs) {
+    const manifest = packages.get(spec.package)?.manifest;
+    const answer = values.get(spec.id);
+    if (!manifest || !answer) continue;
+    const places = indicatorDigits(manifest, digits);
+    const colourOf = (output: string) => (answer.stale ? scheme.level : scheme.series[(spec.colours[output] ?? 0) % scheme.series.length]);
+    const outputs = manifest.outputs.map((o) => ({ id: o.id, render: o.render, colour: colourOf(o.id), values: valuesByCandle(candles, answer.outputs[o.id]) }));
+    draws.push({
+      id: spec.id,
+      key: JSON.stringify([spec.package, answer.version, spec.parameters]),
+      pane: manifest.outputs[0].placement === "pane",
+      levels: manifest.levels ?? [],
+      range: manifest.range,
+      digits: places,
+      outputs,
+    });
+    lines.push({
+      id: spec.id,
+      label: indicatorLabel(manifest, spec.parameters),
+      colour: outputs[0].colour,
+      digits: places,
+      values: outputs[0].values,
+      ...(answer.failed === null ? {} : { failed: answer.failed }),
+    });
+  }
+  return { draws, lines };
+}
+
+/** The packages the server has, by id; fetched again after a reconnect. */
+function usePackages(status: Live["status"]): ReadonlyMap<string, PackageInfo> {
+  const [packages, setPackages] = useState<ReadonlyMap<string, PackageInfo>>(new Map());
+  useEffect(() => {
+    if (status !== "live") return;
+    let current = true;
+    get<{ packages: PackageInfo[] }>("/api/indicators/packages").then(
+      (answer) => current && setPackages(new Map(answer.packages.map((p) => [p.manifest.id, p]))),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [status]);
+  return packages;
+}
+
+/** The latest values fetched again when the server says an indicator's values changed: enough for the forming bar. */
+const TAIL_VALUES = 10;
+
+/**
+ * Each indicator's values (by its id) for the loaded candles, from /api/indicators/values: all of them when the
+ * settings, feed, period or number of candles change, and the latest few when the live stream says a shown key changed.
+ */
+function useIndicatorValues(
+  feed: FeedSnapshot | undefined,
+  period: Period,
+  specs: readonly IndicatorSpec[],
+  packages: ReadonlyMap<string, PackageInfo>,
+  data: CandlesAnswer | undefined,
+  live: Live,
+): ReadonlyMap<string, IndicatorValuesAnswer> {
+  const [fetched, setFetched] = useState<ReadonlyMap<string, { query: string; answer: IndicatorValuesAnswer }>>(new Map());
+  const count = data && data.feed === feed?.feed && data.period === period ? data.candles.length : 0;
+  const queries = specs
+    .filter((s) => packages.has(s.package) && feed)
+    .map((s) => {
+      const query = new URLSearchParams({ feed: feed!.feed, period, package: s.package });
+      for (const [id, value] of Object.entries(s.parameters)) query.set(`p.${id}`, String(value));
+      return { id: s.id, query: query.toString() };
+    });
+  const queriesKey = JSON.stringify(queries);
+  /** Keeps what `change` makes of the values fetched with the same query (undefined leaves them). */
+  const store = (id: string, query: string, change: (old: IndicatorValuesAnswer | undefined) => IndicatorValuesAnswer | undefined) =>
+    setFetched((m) => {
+      const old = m.get(id);
+      const answer = change(old?.query === query ? old.answer : undefined);
+      return answer ? new Map(m).set(id, { query, answer }) : m;
+    });
+
+  useEffect(() => {
+    if (!count || live.status !== "live") return;
+    let current = true;
+    for (const { id, query } of queries) {
+      get<IndicatorValuesAnswer>(`/api/indicators/values?${query}&limit=${count}`).then(
+        (answer) => current && store(id, query, () => answer),
+        // Refused (a parameter the package no longer has, say): the legend row says why.
+        (e: Error) => current && store(id, query, () => refused(e.message)),
+      );
+    }
+    return () => {
+      current = false;
+    };
+  }, [queriesKey, count, live.status]);
+
+  // Only values fetched with the settings shown now.
+  const shown = new Map<string, IndicatorValuesAnswer>();
+  for (const { id, query } of queries) {
+    const entry = fetched.get(id);
+    if (entry?.query === query) shown.set(id, entry.answer);
+  }
+  const keys = [...new Set([...shown.values()].map((v) => v.key).filter(Boolean))].sort();
+  const keysKey = keys.join("\n");
+  useEffect(() => live.showIndicators(keys), [keysKey]);
+  useEffect(() => () => live.showIndicators([]), []);
+
+  // The listener is made once; it reads the latest queries and values.
+  const latest = useRef({ queries, shown });
+  latest.current = { queries, shown };
+  useEffect(
+    () =>
+      live.onIndicators((changed) => {
+        for (const { id, query } of latest.current.queries) {
+          const answer = latest.current.shown.get(id);
+          if (!answer || !changed.includes(answer.key)) continue;
+          // Joined only onto values of the same query: settings changed meanwhile fetch their own.
+          get<IndicatorValuesAnswer>(`/api/indicators/values?${query}&limit=${TAIL_VALUES}`).then(
+            (tail) => store(id, query, (old) => old && withTail(old, tail)),
+            () => {},
+          );
+        }
+      }),
+    [],
+  );
+  return shown;
+}
+
+/** No values, and why: shown as Failed in the legend. */
+function refused(reason: string): IndicatorValuesAnswer {
+  return { key: "", package: "", version: "", outputs: {}, complete: true, failed: reason, stale: false };
+}
+
+/** The values with the latest few fetched again put on in place of their times. */
+function withTail(old: IndicatorValuesAnswer, tail: IndicatorValuesAnswer): IndicatorValuesAnswer {
+  const outputs: IndicatorValuesAnswer["outputs"] = {};
+  for (const [id, points] of Object.entries(tail.outputs)) {
+    const from = points[0]?.time ?? Infinity;
+    outputs[id] = [...(old.outputs[id] ?? []).filter((p) => p.time < from).map(({ complete, ...p }) => p), ...points];
+  }
+  return { ...tail, outputs, complete: old.complete };
 }
 
 /** The remembered feed (or the one a `#/charts?feed=` link chose) while the bridge knows it, else the first feed listed. */

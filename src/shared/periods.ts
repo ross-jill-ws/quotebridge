@@ -30,3 +30,6 @@ export function bucketStart(time: number, period: Period): number {
   }
   return time - (time % PERIOD_SECONDS[period]);
 }
+
+/** Bars per page of chart history and REST's default count: MetaTrader's default, and what the EA sends. */
+export const PAGE_BARS = 900;
