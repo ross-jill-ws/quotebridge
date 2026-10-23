@@ -23,7 +23,7 @@ import { TerminalRequestError, type TerminalManager } from "../terminals/index.j
 import { LiveSnapshots } from "./live.js";
 import { json, write } from "./respond.js";
 import { info, RestV1 } from "./rest-v1.js";
-import { sessionCookie, type WindowSessions } from "./window-session.js";
+import { sessionCookie, type SessionKind, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
 export const DEFAULT_DASHBOARD_FOLDER = fileURLToPath(new URL("../../dashboard/", import.meta.url));
@@ -98,7 +98,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       else res.destroy();
     });
   });
-  const live = new LiveSnapshots(bridge, options.indicators?.values);
+  const live = new LiveSnapshots(bridge, options.indicators?.values, options.indicators?.packages);
   const rest = new RestV1({
     bridge,
     candles: options.candles,
@@ -165,7 +165,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return handleApi(url, req, res, check.key);
     }
 
-    if (!sessions.authenticated(req.headers, cookie)) {
+    const session = sessions.kind(req.headers, cookie);
+    if (!session) {
       return json(res, 401, { error: api ? `${SEND_A_KEY} Create one in Settings › API keys.` : "Open the dashboard from the app window." });
     }
 
@@ -176,7 +177,10 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) return handleApiKeys(options.apiKeys, url, req, res);
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
     if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
-    if (options.indicators && url.pathname === "/api/indicators/packages" && req.method === "GET") return handlePackages(options.indicators.packages, res);
+    if (options.indicators && url.pathname.startsWith("/api/indicators/package")) {
+      const handled = await handlePackages(options.indicators.packages, session, url, req, res);
+      if (handled) return;
+    }
     if (options.indicators && url.pathname === "/api/indicators/values" && req.method === "GET") return handleIndicatorValues(options.indicators, url, res);
     if (url.pathname === "/api/feeds/remove" && req.method === "POST") {
       const body = await readJson(req).catch(() => undefined);
@@ -308,9 +312,42 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     });
   }
 
-  /** The indicator packages: their manifests, and whether each is bundled and enabled. */
-  function handlePackages(packages: IndicatorPackages, res: ServerResponse) {
-    json(res, 200, { packages: packages.list().map((p) => ({ manifest: p.manifest, bundled: p.bundled, enabled: true })) });
+  /**
+   * The Indicators page: GET /api/indicators/packages lists every package with its manifest, whether it is bundled
+   * and enabled, and how many windows' charts use it (as they report it), and `manage`: whether this session may
+   * change them; GET /api/indicators/package?id= gives one's README and licence; POST
+   * /api/indicators/packages/enabled { id, enabled } switches one on or off, from the app window only (ADR 5, ADR 12),
+   * and answers the list. Returns false when the route is not one of them.
+   */
+  async function handlePackages(packages: IndicatorPackages, session: SessionKind, url: URL, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const list = () => ({
+      manage: session === "window",
+      packages: packages.list().map((p) => ({ manifest: p.manifest, bundled: p.bundled, enabled: packages.enabled(p.manifest.id), charts: live.chartsUsing(p.manifest.id) })),
+    });
+    const route = `${req.method} ${url.pathname}`;
+    if (route === "GET /api/indicators/packages") {
+      json(res, 200, list());
+      return true;
+    }
+    if (route === "GET /api/indicators/package") {
+      const pkg = packages.get(url.searchParams.get("id") ?? "");
+      if (!pkg) json(res, 404, { error: "Unknown indicator package" });
+      else json(res, 200, { id: pkg.manifest.id, readme: pkg.readme, licence: pkg.licence });
+      return true;
+    }
+    if (route !== "POST /api/indicators/packages/enabled") return false;
+    if (session !== "window") {
+      json(res, 403, { error: "Only the app window can enable or disable indicator packages." });
+      return true;
+    }
+    const body = (await readJson(req).catch(() => undefined)) as { id?: unknown; enabled?: unknown } | undefined;
+    if (typeof body?.id !== "string" || typeof body.enabled !== "boolean") {
+      json(res, 400, { error: "Expected { id, enabled }." });
+      return true;
+    }
+    if (!(await packages.setEnabled(body.id, body.enabled))) json(res, 404, { error: "Unknown indicator package" });
+    else json(res, 200, list());
+    return true;
   }
 
   /**
@@ -325,7 +362,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     const period = query.get("period");
     if (!PERIODS.includes(period as Period)) return json(res, 400, { error: `Expected a period: ${PERIODS.join(", ")}` });
     const pkg = indicators.packages.get(query.get("package") ?? "");
-    if (!pkg) return json(res, 404, { error: `Unknown indicator package. Packages: ${indicators.packages.list().map((p) => p.manifest.id).join(", ")}` });
+    // A chart keeps such an indicator in its legend, marked Not available.
+    if (!pkg) return json(res, 404, { error: `Unknown indicator package. Packages: ${indicators.packages.list().map((p) => p.manifest.id).join(", ")}`, notAvailable: true });
+    if (!indicators.packages.enabled(pkg.manifest.id)) return json(res, 404, { error: `${pkg.manifest.name} is not available: it is disabled on the Indicators page.`, notAvailable: true });
     const limitText = query.get("limit");
     const limit = limitText === null ? PAGE_BARS : Number(limitText);
     if (limitText !== null && !(/^\d+$/.test(limitText) && limit >= 1 && limit <= MAX_INDICATOR_LIMIT)) return json(res, 400, { error: `Expected a limit from 1 to ${MAX_INDICATOR_LIMIT}` });

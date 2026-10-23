@@ -1,5 +1,6 @@
 // The dashboard's live connection to the server's /live WebSocket: a snapshot on connect and on every change. The
-// window also says which indicator keys its charts show, and hears when their values change.
+// window also says which indicator keys its charts show, and hears when their values change; it reports the packages
+// its chart uses (the Indicators page counts them), and hears when the packages change.
 
 /** The part of the browser WebSocket the client uses. */
 export type LiveSocket = {
@@ -27,6 +28,8 @@ export type LiveClientOptions<Snapshot> = {
   onSnapshot: (snapshot: Snapshot) => void;
   /** The indicator keys whose values changed, of those shown. */
   onIndicators?: (changed: string[]) => void;
+  /** The packages, or whether they are enabled, changed. */
+  onPackages?: () => void;
   onStatus: (status: LiveStatus) => void;
   /** Whether the window session still works; false stops reconnecting. */
   sessionValid: () => Promise<boolean>;
@@ -45,6 +48,7 @@ export class LiveClient<Snapshot = unknown> {
   private stopped = false;
   private open = false;
   private shown: string[] = [];
+  private uses?: string[];
 
   constructor(private readonly options: LiveClientOptions<Snapshot>) {
     this.timers = options.timers ?? { setTimeout: (run, ms) => setTimeout(run, ms), clearTimeout: (id) => clearTimeout(id as number) };
@@ -63,6 +67,7 @@ export class LiveClient<Snapshot = unknown> {
       this.open = true;
       // A new connection knows nothing of what this window shows.
       if (this.shown.length) this.sendShown();
+      if (this.uses) this.sendUses();
       this.setStatus("live");
     };
     socket.onmessage = (event) => {
@@ -75,6 +80,10 @@ export class LiveClient<Snapshot = unknown> {
       const notice = message as { type?: unknown; changed?: unknown };
       if (notice.type === "indicators") {
         if (Array.isArray(notice.changed)) this.options.onIndicators?.(notice.changed.filter((k): k is string => typeof k === "string"));
+        return;
+      }
+      if (notice.type === "packages") {
+        this.options.onPackages?.();
         return;
       }
       this.options.onSnapshot(message as Snapshot);
@@ -98,6 +107,16 @@ export class LiveClient<Snapshot = unknown> {
 
   private sendShown() {
     this.socket?.send(JSON.stringify({ type: "show", keys: this.shown }));
+  }
+
+  /** The packages this window's chart uses now, as its view memory has them. */
+  reportCharts(packages: readonly string[]) {
+    this.uses = [...packages];
+    if (this.open) this.sendUses();
+  }
+
+  private sendUses() {
+    this.socket?.send(JSON.stringify({ type: "charts", packages: this.uses }));
   }
 
   /** Closes the connection; no more snapshots or retries. */

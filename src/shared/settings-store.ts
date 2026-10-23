@@ -56,6 +56,8 @@ export interface Settings {
   firstCloseNotificationShown: boolean;
   /** Set when the user finishes the first-run setup screen; until then every start is a first run. */
   setupCompleted: boolean;
+  /** Indicator packages switched off on the Indicators page, by package id. */
+  disabledIndicators: string[];
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
@@ -72,6 +74,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   timeShown: "broker",
   firstCloseNotificationShown: false,
   setupCompleted: false,
+  disabledIndicators: [],
 });
 
 export class SettingsStore {
@@ -149,6 +152,7 @@ function withDefaults(stored: unknown): Settings {
     timeShown: (TIMES_SHOWN as readonly unknown[]).includes(partial.timeShown) ? partial.timeShown! : defaults.timeShown,
     firstCloseNotificationShown: typeof partial.firstCloseNotificationShown === "boolean" ? partial.firstCloseNotificationShown : defaults.firstCloseNotificationShown,
     setupCompleted: typeof partial.setupCompleted === "boolean" ? partial.setupCompleted : defaults.setupCompleted,
+    disabledIndicators: Array.isArray(partial.disabledIndicators) ? partial.disabledIndicators.filter((id): id is string => typeof id === "string") : defaults.disabledIndicators,
   };
 }
 

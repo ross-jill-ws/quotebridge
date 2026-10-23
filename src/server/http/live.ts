@@ -1,11 +1,13 @@
 // Live WebSocket: a bridge snapshot on connect, then a new one whenever it changes, at most every 500 ms per socket.
 // A window also sends the indicator keys its charts show ({"type":"show","keys":[…]}), and hears when their values
-// change ({"type":"indicators","changed":[…]}); it then fetches them again.
+// change ({"type":"indicators","changed":[…]}); it then fetches them again. It reports the packages its chart's view
+// memory uses ({"type":"charts","packages":[…]}), which the Indicators page counts, and hears when the packages or
+// whether they are enabled change ({"type":"packages"}).
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BridgeServer, BridgeSnapshot } from "../bridge/index.js";
-import type { IndicatorValues } from "../indicators/index.js";
+import type { IndicatorPackages, IndicatorValues } from "../indicators/index.js";
 
 export const LIVE_INTERVAL_MS = 500;
 const MAX_CLIENTS = 100;
@@ -14,7 +16,8 @@ const MAX_SHOWN_KEYS = 64;
 /** A socket this far behind is not reading; drop it rather than buffer without bound. */
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 
-type Client = { ws: WebSocket; lastSentAt: number; lastKey?: string; timer?: NodeJS.Timeout; shows: Set<string> };
+/** `uses`: the packages the window's chart uses, as it last reported them. */
+type Client = { ws: WebSocket; lastSentAt: number; lastKey?: string; timer?: NodeJS.Timeout; shows: Set<string>; uses: Set<string> };
 
 /** Snapshots that differ only in their `time` are the same state. */
 const stateKey = (snapshot: BridgeSnapshot) => JSON.stringify({ ...snapshot, time: 0 });
@@ -24,15 +27,18 @@ export class LiveSnapshots {
   private readonly clients = new Set<Client>();
   private readonly unsubscribe: () => void;
   private readonly unsubscribeIndicators?: () => void;
+  private readonly unsubscribePackages?: () => void;
   /** Time-based changes (online to offline, stale) raise no change signal; look for them on a timer. */
   private readonly sweep: NodeJS.Timeout;
 
   constructor(
     private readonly bridge: BridgeServer,
     private readonly indicators?: IndicatorValues,
+    packages?: IndicatorPackages,
   ) {
     this.unsubscribe = bridge.onChange(() => this.scheduleAll());
     this.unsubscribeIndicators = indicators?.onChange((key) => this.indicatorChanged(key));
+    this.unsubscribePackages = packages?.onChange(() => this.broadcast({ type: "packages" }));
     this.sweep = setInterval(() => this.scheduleAll(), LIVE_INTERVAL_MS);
   }
 
@@ -43,7 +49,7 @@ export class LiveSnapshots {
   /** Completes an authenticated upgrade to /live. */
   accept(req: IncomingMessage, socket: Duplex, head: Buffer) {
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const client: Client = { ws, lastSentAt: -Infinity, shows: new Set() };
+      const client: Client = { ws, lastSentAt: -Infinity, shows: new Set(), uses: new Set() };
       this.clients.add(client);
       ws.on("error", () => ws.terminate());
       ws.on("message", (data) => this.received(client, data));
@@ -56,7 +62,14 @@ export class LiveSnapshots {
     });
   }
 
-  /** A window's message: the indicator keys it shows. Anything else is ignored. */
+  /** How many windows' charts use the package, as they last reported. */
+  chartsUsing(id: string): number {
+    let n = 0;
+    for (const client of this.clients) if (client.uses.has(id)) n++;
+    return n;
+  }
+
+  /** A window's message: the indicator keys it shows, or the packages its chart uses. Anything else is ignored. */
   private received(client: Client, data: unknown) {
     let message: unknown;
     try {
@@ -64,7 +77,11 @@ export class LiveSnapshots {
     } catch {
       return;
     }
-    const { type, keys } = (message ?? {}) as { type?: unknown; keys?: unknown };
+    const { type, keys, packages } = (message ?? {}) as { type?: unknown; keys?: unknown; packages?: unknown };
+    if (type === "charts" && Array.isArray(packages)) {
+      client.uses = new Set(packages.filter((p): p is string => typeof p === "string" && p.length <= 200).slice(0, MAX_SHOWN_KEYS));
+      return;
+    }
     if (type !== "show" || !Array.isArray(keys)) return;
     const shown = keys.filter((k): k is string => typeof k === "string" && k.length <= 2000).slice(0, MAX_SHOWN_KEYS);
     client.shows = new Set(shown);
@@ -80,6 +97,11 @@ export class LiveSnapshots {
       }
       client.ws.send(JSON.stringify({ type: "indicators", changed: [key] }));
     }
+  }
+
+  private broadcast(message: unknown) {
+    const text = JSON.stringify(message);
+    for (const client of this.clients) if (client.ws.readyState === WebSocket.OPEN) client.ws.send(text);
   }
 
   private scheduleAll() {
@@ -107,6 +129,7 @@ export class LiveSnapshots {
   close() {
     this.unsubscribe();
     this.unsubscribeIndicators?.();
+    this.unsubscribePackages?.();
     clearInterval(this.sweep);
     for (const client of this.clients) {
       clearTimeout(client.timer);

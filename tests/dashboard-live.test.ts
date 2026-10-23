@@ -60,7 +60,7 @@ class FakeTimers {
   }
 }
 
-function setup(options: { sessionValid?: () => Promise<boolean> } = {}) {
+function setup(options: { sessionValid?: () => Promise<boolean>; onPackages?: () => void } = {}) {
   const sockets: FakeSocket[] = [];
   const snapshots: unknown[] = [];
   const changed: string[][] = [];
@@ -74,6 +74,7 @@ function setup(options: { sessionValid?: () => Promise<boolean> } = {}) {
     },
     onSnapshot: (s) => snapshots.push(s),
     onIndicators: (keys) => changed.push(keys),
+    onPackages: options.onPackages,
     onStatus: (s) => statuses.push(s),
     sessionValid: options.sessionValid ?? (async () => true),
     timers,
@@ -212,4 +213,30 @@ test("the server's notice that indicator values changed is passed on apart from 
   latest().message({ time: 1, feeds: [] });
   assert.deepEqual(changed, [["a"]]);
   assert.deepEqual(snapshots, [{ time: 1, feeds: [] }]);
+});
+
+test("the window reports the packages its chart uses, once connected and again after a reconnect", async () => {
+  const { client, latest, timers } = setup();
+  client.start();
+  client.reportCharts(["quotebridge.ma"]);
+  latest().open();
+  assert.deepEqual(latest().sent.map((m) => JSON.parse(m)), [{ type: "charts", packages: ["quotebridge.ma"] }]);
+  client.reportCharts(["quotebridge.ma", "quotebridge.eo"]);
+  assert.deepEqual(JSON.parse(latest().sent.at(-1)!), { type: "charts", packages: ["quotebridge.ma", "quotebridge.eo"] });
+
+  latest().drop();
+  await settle();
+  timers.advance(1000);
+  latest().open();
+  assert.deepEqual(latest().sent.map((m) => JSON.parse(m)), [{ type: "charts", packages: ["quotebridge.ma", "quotebridge.eo"] }]);
+});
+
+test("the server's notice that the packages changed is passed on apart from the snapshots", () => {
+  const packages: number[] = [];
+  const { client, latest, snapshots } = setup({ onPackages: () => packages.push(1) });
+  client.start();
+  latest().open();
+  latest().message({ type: "packages" });
+  assert.deepEqual(packages, [1]);
+  assert.deepEqual(snapshots, []);
 });

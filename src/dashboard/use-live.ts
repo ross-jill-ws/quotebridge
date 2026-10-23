@@ -13,18 +13,28 @@ export type Live = {
   showIndicators: (keys: readonly string[]) => void;
   /** `listener` hears the shown keys whose values changed; returns a function that stops it. */
   onIndicators: (listener: (changed: string[]) => void) => () => void;
+  /** The packages this window's chart uses, for the Indicators page's count. */
+  reportCharts: (packages: readonly string[]) => void;
+  /** `listener` hears when the packages, or whether they are enabled, change; returns a function that stops it. */
+  onPackages: (listener: () => void) => () => void;
 };
 
 export function useLive(): Live {
-  const [live, setLive] = useState<Omit<Live, "showIndicators" | "onIndicators">>({ status: "connecting", receivedAt: 0 });
+  const [live, setLive] = useState<Omit<Live, "showIndicators" | "onIndicators" | "reportCharts" | "onPackages">>({ status: "connecting", receivedAt: 0 });
   const client = useRef<LiveClient<BridgeSnapshot>>();
   const listeners = useRef(new Set<(changed: string[]) => void>());
+  const packageListeners = useRef(new Set<() => void>());
   const indicators = useMemo(
     () => ({
       showIndicators: (keys: readonly string[]) => client.current?.show(keys),
       onIndicators: (listener: (changed: string[]) => void) => {
         listeners.current.add(listener);
         return () => void listeners.current.delete(listener);
+      },
+      reportCharts: (packages: readonly string[]) => client.current?.reportCharts(packages),
+      onPackages: (listener: () => void) => {
+        packageListeners.current.add(listener);
+        return () => void packageListeners.current.delete(listener);
       },
     }),
     [],
@@ -35,6 +45,7 @@ export function useLive(): Live {
       open: () => browserSocket(url),
       onSnapshot: (snapshot) => setLive((l) => ({ ...l, snapshot, receivedAt: performance.now() })),
       onIndicators: (changed) => listeners.current.forEach((listener) => listener(changed)),
+      onPackages: () => packageListeners.current.forEach((listener) => listener()),
       onStatus: (status) => setLive((l) => ({ ...l, status })),
       sessionValid,
     });

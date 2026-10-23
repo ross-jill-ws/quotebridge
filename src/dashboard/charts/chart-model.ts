@@ -12,7 +12,7 @@ const NONE = "—";
 /**
  * One indicator's legend row: each output with its colour and a value per candle (a label when there are several),
  * a histogram's colour per candle where its bars differ, and a two-colour histogram's two `tones`; `failed`: why
- * its last computation failed (the values are the last good ones).
+ * its last computation failed (the values are the last good ones); `notAvailable`: its package is disabled or gone.
  */
 export type IndicatorLine = {
   id: string;
@@ -20,6 +20,7 @@ export type IndicatorLine = {
   digits: number;
   outputs: readonly IndicatorLineOutput[];
   failed?: string;
+  notAvailable?: true;
 };
 
 export type IndicatorLineOutput = {
@@ -51,7 +52,7 @@ export type Legend = {
   time: string;
   ohlc: { label: "O" | "H" | "L" | "C"; value: string }[];
   /** Each value in its output's colour, a histogram's in its bar's. */
-  indicators: { id: string; label: string; outputs: { id: string; label?: string; colour: string; value: string; tones?: Tones }[]; failed?: string }[];
+  indicators: { id: string; label: string; outputs: { id: string; label?: string; colour: string; value: string; tones?: Tones }[]; failed?: string; notAvailable?: true }[];
 };
 
 export function chartLegend({ symbol, period, digits, candles, indicators, time }: LegendInput): Legend {
@@ -64,7 +65,7 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
     title: `${symbol}, ${period}`,
     time: isIntraday(period) ? stamp : stamp.slice(0, 10),
     ohlc: (["open", "high", "low", "close"] as const).map((key) => ({ label: key[0].toUpperCase() as "O", value: price(bar?.[key], digits) })),
-    indicators: indicators.map(({ id, label, digits: places, outputs, failed }) => ({
+    indicators: indicators.map(({ id, label, digits: places, outputs, failed, notAvailable }) => ({
       id,
       label,
       outputs: outputs.map((o) => ({
@@ -75,6 +76,7 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
         ...(o.tones ? { tones: o.tones } : {}),
       })),
       ...(failed === undefined ? {} : { failed }),
+      ...(notAvailable ? { notAvailable } : {}),
     })),
   };
 }

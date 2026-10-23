@@ -4,9 +4,10 @@ import { useEffect, useState } from "preact/hooks";
 import type { SettingsView as Settings } from "../server/settings/index.js";
 import type { TerminalsState } from "../server/terminals/index.js";
 import { get } from "./api.js";
-import { ChartsView } from "./charts/charts-view.js";
+import { ChartsView, rememberedChartPackages } from "./charts/charts-view.js";
 import { FeedsView } from "./feeds/feeds-view.js";
 import { HistoryView } from "./history/history-view.js";
+import { IndicatorsView } from "./indicators/indicators-view.js";
 import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
@@ -41,6 +42,12 @@ const ICONS = {
       <path d="M10 5.5V10l3 2" />
     </>
   ),
+  indicators: (
+    <>
+      <path d="M2.5 13.5c2.5 0 3-7 5.5-7s2.5 5 5 5 2.5-6 4.5-6" />
+      <path d="M2.5 17.5h15" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="10" cy="10" r="2.6" />
@@ -54,6 +61,7 @@ const VIEWS = [
   { id: "terminals", label: "Terminals" },
   { id: "charts", label: "Charts" },
   { id: "history", label: "History" },
+  { id: "indicators", label: "Indicators" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -73,6 +81,8 @@ export function App() {
     return () => removeEventListener("hashchange", onHash);
   }, []);
   const live = useLive();
+  // The Indicators page counts this window's chart even while another view shows.
+  useEffect(() => live.reportCharts(rememberedChartPackages()), []);
   const [settings, setSettings] = useSavedSettings(live.status);
   // The setup screen opens on first run and stays (with its progress) until the user moves on.
   const [setupOpen, setSetupOpen] = useState(false);
@@ -124,6 +134,8 @@ export function App() {
           <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "history" ? (
           <HistoryView timeShown={settings?.timeShown ?? "broker"} />
+        ) : view === "indicators" ? (
+          <IndicatorsView live={live} />
         ) : view === "settings" ? (
           <SettingsView managedTerminals={terminals.state?.terminals.filter((t) => t.managed).length ?? 0} onSaved={setSettings} />
         ) : (

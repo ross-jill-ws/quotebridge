@@ -255,6 +255,22 @@ test("an indicator pane with a histogram gets a zero line; one with lines only d
   assert.equal(bands.draws[0].zeroLine, false);
 });
 
+test("an indicator whose package is disabled or gone stays in the legend, Not available, and draws nothing", () => {
+  const rsi = { id: "r", package: "quotebridge.rsi", parameters: { period: 9 }, colours: { rsi: 1 } };
+  const gone = { id: "g", package: "acme.thing", parameters: { length: 3 }, colours: { out: 0 } };
+  const disabled = new Map([...PACKAGES, ["quotebridge.rsi", { ...info(RSI_MANIFEST), enabled: false }]]);
+  const values = new Map([["r", answer({ rsi: [null, 40, 50] })]]);
+  const drawn = drawnIndicators([rsi, gone, BANDS], disabled, new Map([...values, ["bb", BAND_VALUES]]), BARS, 5, LIGHT);
+  assert.deepEqual(drawn.draws.map((d) => d.id), ["bb"]);
+  assert.deepEqual(legendOf(drawn).slice(0, 2), [
+    { id: "r", label: "RSI 9", outputs: [], notAvailable: true },
+    { id: "g", label: "acme.thing", outputs: [], notAvailable: true },
+  ]);
+  // Enabled again: drawn as before.
+  const back = drawnIndicators([rsi], PACKAGES, values, BARS, 5, LIGHT);
+  assert.deepEqual(legendOf(back), [{ id: "r", label: "RSI 9", outputs: [{ id: "rsi", colour: LIGHT.series[1], value: "50.00" }] }]);
+});
+
 test("a failed indicator's last good values are greyed, every output alike", () => {
   const drawn = drawnIndicators([BANDS], PACKAGES, new Map([["bb", { ...BAND_VALUES, failed: "The calculation threw: no", stale: true }]]), BARS, 5, LIGHT);
   const [row] = legendOf(drawn);

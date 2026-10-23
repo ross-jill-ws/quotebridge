@@ -49,6 +49,11 @@ export type RunningServer = {
   httpOrigin: string;
   /** Accepts another one-time window token, e.g. for an app window recreated after a renderer crash. Throws if too short. */
   addWindowToken(token: string): void;
+  /**
+   * Accepts a one-time token whose session is a remote browser's: it reads, but may not manage what only the app
+   * window owns (ADR 5). The password sign-in of network access will hand these out; tests use it now.
+   */
+  addRemoteToken(token: string): void;
   close(): Promise<void>;
 };
 
@@ -135,7 +140,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     saved,
     saving: (market) => saver?.progress(market) ?? null,
   });
-  const packages = await IndicatorPackages.open(config.extraIndicatorPackages);
+  const packages = await IndicatorPackages.open({ extraFolder: config.extraIndicatorPackages, settings: config.settings?.store });
   const engine = new IndicatorEngine();
   const indicatorValues = new IndicatorValues({
     page: (feed, period, limit, before) => history.page(feed, period, limit, before),
@@ -176,6 +181,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     terminals,
     httpOrigin: http.origin,
     addWindowToken: (token) => sessions.addToken(token),
+    addRemoteToken: (token) => sessions.addToken(token, "remote"),
     async close() {
       await terminals?.close();
       await http.close();

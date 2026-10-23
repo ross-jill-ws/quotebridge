@@ -46,6 +46,7 @@ import {
   type PackageInfo,
 } from "./indicators.js";
 import { defaultValues, type Manifest, type ParameterValues } from "../../shared/indicator-manifest.js";
+import { usePackages } from "../indicators/use-packages.js";
 
 /** Per window (localStorage): the last symbol, period, chart type, Ask line and indicators. */
 const MEMORY_KEY = "quotebridge.chart";
@@ -97,7 +98,10 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   );
   const mode = useColourMode();
   const scheme = chartScheme(chartColours, mode);
-  const packages = usePackages(live.status);
+  const packages = usePackages(live).byId;
+  // The Indicators page counts the charts using each package.
+  const used = [...new Set(memory.indicators.map((i) => i.package))].sort().join("\n");
+  useEffect(() => live.reportCharts(used ? used.split("\n") : []), [used]);
   const values = useIndicatorValues(feed, memory.period, memory.indicators, packages, fetched, live);
   const drawn = useMemo(
     () => drawnIndicators(memory.indicators, packages, values, fetched?.candles ?? [], data?.digits ?? 5, scheme),
@@ -421,8 +425,13 @@ function IndicatorRow({
   const [editing, setEditing] = useState(false);
   const [picking, setPicking] = useState<string>();
   return (
-    <div class={`ind${row.failed ? " failed" : ""}`}>
+    <div class={`ind${row.failed ? " failed" : ""}${row.notAvailable ? " unavailable" : ""}`}>
       <span class="ind-label">{row.label}</span>
+      {row.notAvailable && (
+        <span class="ind-unavailable" role="status" title="Its package is disabled or no longer installed. Enable it on the Indicators page and the indicator comes back.">
+          Not available
+        </span>
+      )}
       {row.outputs.map((o) => (
         <span key={o.id} class="ind-output">
           {o.tones ? (
@@ -474,11 +483,13 @@ function IndicatorRow({
           Failed: {row.failed}
         </span>
       )}
-      <button class="icon-button" title={`Change ${row.label}`} aria-label={`Change ${row.label}`} onClick={() => setEditing(!editing)}>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M10.5 2.5l3 3L6 13H3v-3z" />
-        </svg>
-      </button>
+      {manifest && (
+        <button class="icon-button" title={`Change ${row.label}`} aria-label={`Change ${row.label}`} onClick={() => setEditing(!editing)}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M10.5 2.5l3 3L6 13H3v-3z" />
+          </svg>
+        </button>
+      )}
       <button class="icon-button" title={`Remove ${row.label}`} aria-label={`Remove ${row.label}`} onClick={() => onChange(row.id, null)}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" />
@@ -546,23 +557,6 @@ function IndicatorForm({ manifest, parameters, onDone }: { manifest: Manifest; p
   );
 }
 
-/** The packages the server has, by id; fetched again after a reconnect. */
-function usePackages(status: Live["status"]): ReadonlyMap<string, PackageInfo> {
-  const [packages, setPackages] = useState<ReadonlyMap<string, PackageInfo>>(new Map());
-  useEffect(() => {
-    if (status !== "live") return;
-    let current = true;
-    get<{ packages: PackageInfo[] }>("/api/indicators/packages").then(
-      (answer) => current && setPackages(new Map(answer.packages.map((p) => [p.manifest.id, p]))),
-      () => {},
-    );
-    return () => {
-      current = false;
-    };
-  }, [status]);
-  return packages;
-}
-
 /** The latest values fetched again when the server says an indicator's values changed: enough for the forming bar. */
 const TAIL_VALUES = 10;
 
@@ -581,7 +575,7 @@ function useIndicatorValues(
   const [fetched, setFetched] = useState<ReadonlyMap<string, { query: string; answer: IndicatorValuesAnswer }>>(new Map());
   const count = data && data.feed === feed?.feed && data.period === period ? data.candles.length : 0;
   const queries = specs
-    .filter((s) => packages.has(s.package) && feed)
+    .filter((s) => packages.get(s.package)?.enabled && feed)
     .map((s) => {
       const query = new URLSearchParams({ feed: feed!.feed, period, package: s.package });
       for (const [id, value] of Object.entries(s.parameters)) query.set(`p.${id}`, String(value));
@@ -661,6 +655,17 @@ function withTail(old: IndicatorValuesAnswer, tail: IndicatorValuesAnswer): Indi
 /** The remembered feed (or the one a `#/charts?feed=` link chose) while the bridge knows it, else the first feed listed. */
 function chosenFeed(snapshot: BridgeSnapshot | undefined, remembered: string | undefined, groups: FeedGroup[]): FeedSnapshot | undefined {
   return snapshot?.feeds.find((f) => f.feed === remembered) ?? groups[0]?.feeds[0];
+}
+
+/** The packages this window's chart uses, as its view memory has them (for the Indicators page's count). */
+export function rememberedChartPackages(): string[] {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(MEMORY_KEY);
+  } catch {
+    // None known.
+  }
+  return [...new Set(readChartMemory(stored).indicators.map((i) => i.package))].sort();
 }
 
 /** The view memory in localStorage, with a feed from the URL (a Feeds row's link) taking over. */

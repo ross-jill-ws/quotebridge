@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { startServer, type ServerConfig } from "../src/server/index.js";
 import { brokerToUtc, type ClockRule } from "../src/shared/clock.js";
+import { SettingsStore } from "../src/shared/settings-store.js";
 import { FakeClock, FakeEA } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { bars, writeHst, type FixtureBar } from "./hst-fixtures.js";
@@ -79,6 +80,7 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
   const server = await startServer(cfg);
   t.after(() => server.close());
   const origin = server.httpOrigin;
+  server.addRemoteToken(REMOTE_TOKEN);
   const signIn = async (token: string) => (await fetch(`${origin}/session?token=${token}`, { redirect: "manual" })).headers.get("set-cookie")!.split(";")[0];
   const cookie = await signIn(TOKEN);
   server.addWindowToken(SECOND_TOKEN);
@@ -99,8 +101,37 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
     assert.equal(res.status, 200, await res.clone().text());
     return (await res.json()) as Values;
   };
-  return { origin, cookie, secondCookie, clock, send, ask, values };
+  return { origin, cookie, secondCookie, signIn, clock, send, ask, values };
 }
+
+const REMOTE_TOKEN = "remote-token-0123456789";
+
+type PackageRow = { manifest: { id: string; name: string }; bundled: boolean; enabled: boolean; charts: number };
+type PackageList = { manage: boolean; packages: PackageRow[] };
+
+async function packageList(origin: string, cookie: string): Promise<PackageList> {
+  const res = await fetch(`${origin}/api/indicators/packages`, { headers: { cookie } });
+  assert.equal(res.status, 200);
+  return (await res.json()) as PackageList;
+}
+
+/** Switches a package on or off as `cookie`'s session; the answer's status and body. */
+async function setEnabled(origin: string, cookie: string, id: string, enabled: boolean) {
+  const res = await fetch(`${origin}/api/indicators/packages/enabled`, { method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: JSON.stringify({ id, enabled }) });
+  return { status: res.status, body: (await res.json()) as PackageList & { error?: string } };
+}
+
+/** A window's live stream, open; `messages` collects what it hears. */
+async function liveStream(t: TestContext, origin: string, cookie: string) {
+  const ws = new WebSocket(`${origin.replace("http", "ws")}/live`, { headers: { origin, cookie } });
+  t.after(() => ws.terminate());
+  const messages: { type?: string }[] = [];
+  ws.on("message", (data) => messages.push(JSON.parse(String(data))));
+  await new Promise((resolve) => ws.once("open", resolve));
+  return { ws, messages };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
 const sma = { package: "quotebridge.ma", "p.period": 20, "p.type": "simple" };
 /** The mean of the 20 closes ending at `closes[i]`. */
@@ -277,4 +308,71 @@ test("the package list has the bundled packages with their manifests, the Moving
       ["quotebridge.eo", "EO", true, true],
     ],
   );
+});
+
+test("the Indicators page lists each package with how many windows' charts use it, as the windows report", { timeout: 20000 }, async (t) => {
+  const { origin, cookie, secondCookie } = await start(t, { extraIndicatorPackages: undefined });
+  const first = await liveStream(t, origin, cookie);
+  const second = await liveStream(t, origin, secondCookie);
+  first.ws.send(JSON.stringify({ type: "charts", packages: ["quotebridge.ma", "quotebridge.rsi"] }));
+  second.ws.send(JSON.stringify({ type: "charts", packages: ["quotebridge.ma"] }));
+  await settle();
+  const list = await packageList(origin, cookie);
+  assert.equal(list.manage, true, "the app window manages packages");
+  const charts = Object.fromEntries(list.packages.map((p) => [p.manifest.id, p.charts]));
+  assert.deepEqual([charts["quotebridge.ma"], charts["quotebridge.rsi"], charts["quotebridge.macd"]], [2, 1, 0]);
+  // A window that goes away no longer counts.
+  second.ws.close();
+  await settle();
+  assert.equal((await packageList(origin, cookie)).packages.find((p) => p.manifest.id === "quotebridge.ma")!.charts, 1);
+});
+
+test("a package's details give its README and licence", { timeout: 20000 }, async (t) => {
+  const { origin, cookie } = await start(t, { extraIndicatorPackages: undefined });
+  const res = await fetch(`${origin}/api/indicators/package?id=quotebridge.eo`, { headers: { cookie } });
+  assert.equal(res.status, 200);
+  const details = (await res.json()) as { readme: string; licence: string };
+  assert.match(details.readme, /^# EO/);
+  assert.match(details.licence, /Yuexin Zhu/);
+  assert.equal((await fetch(`${origin}/api/indicators/package?id=nobody.nothing`, { headers: { cookie } })).status, 404);
+});
+
+test("a package disabled from the app window stays disabled after a restart, its values not available, until it is enabled", { timeout: 30000 }, async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), "quotebridge-ind-settings-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settings = { store: new SettingsStore(folder) };
+  const { origin, cookie, send, ask } = await start(t, { settings });
+  await send(TEN + 60, 1.2);
+  const { ws, messages } = await liveStream(t, origin, cookie);
+
+  const disabled = await setEnabled(origin, cookie, "quotebridge.rsi", false);
+  assert.equal(disabled.status, 200);
+  assert.equal(disabled.body.packages.find((p) => p.manifest.id === "quotebridge.rsi")!.enabled, false);
+  await settle();
+  assert.ok(messages.some((m) => m.type === "packages"), "windows hear that the packages changed");
+  ws.close();
+  const refused = await ask({ package: "quotebridge.rsi", limit: 10 });
+  assert.equal(refused.status, 404);
+  assert.deepEqual(await refused.json(), { error: "RSI is not available: it is disabled on the Indicators page.", notAvailable: true });
+
+  // The same settings, another server: still disabled.
+  const again = await start(t, { settings });
+  await again.send(TEN + 60, 1.2);
+  assert.equal((await packageList(again.origin, again.cookie)).packages.find((p) => p.manifest.id === "quotebridge.rsi")!.enabled, false);
+  assert.equal((await again.ask({ package: "quotebridge.rsi", limit: 10 })).status, 404);
+  assert.equal((await setEnabled(again.origin, again.cookie, "quotebridge.rsi", true)).status, 200);
+  assert.equal((await again.ask({ package: "quotebridge.rsi", limit: 10 })).status, 200);
+  assert.equal((await setEnabled(again.origin, again.cookie, "nobody.nothing", true)).status, 404);
+});
+
+test("a remote browser sees the packages read-only: its change is refused with 403", { timeout: 20000 }, async (t) => {
+  const { origin, cookie, signIn } = await start(t);
+  const remote = await signIn(REMOTE_TOKEN);
+  const list = await packageList(origin, remote);
+  assert.equal(list.manage, false);
+  assert.ok(list.packages.length > 0);
+  const refused = await setEnabled(origin, remote, "quotebridge.ma", false);
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error ?? "", /app window/);
+  assert.equal((await packageList(origin, cookie)).packages.find((p) => p.manifest.id === "quotebridge.ma")!.enabled, true);
 });

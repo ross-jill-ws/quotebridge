@@ -19,8 +19,8 @@ export type IndicatorSpec = { id: string; package: string; parameters: Parameter
 /** A series palette index, or the Uptick or Downtick colour. */
 export type ColourChoice = number | "up" | "down";
 
-/** A package as /api/indicators/packages lists it. */
-export type PackageInfo = { manifest: Manifest; bundled: boolean; enabled: boolean };
+/** A package as /api/indicators/packages lists it; `charts`: how many windows' charts use it, as they report. */
+export type PackageInfo = { manifest: Manifest; bundled: boolean; enabled: boolean; charts?: number };
 
 /** A chart has at most this many indicators. */
 export const MAX_INDICATORS = 8;
@@ -137,8 +137,8 @@ export type IndicatorDraw = {
 /**
  * Each indicator's draw for the canvas and line for the legend: its outputs' values at the candles (UTC, as fetched),
  * lines and single-colour histograms in their palette colours, a two-colour histogram's bars in Uptick and Downtick
- * (or swapped), all greyed while the values are stale. Indicators whose package or values are not here yet are left
- * out.
+ * (or swapped), all greyed while the values are stale. An indicator whose package is disabled or gone is Not
+ * available: in the legend, drawing nothing. Indicators whose values are not here yet are left out.
  */
 export function drawnIndicators(
   specs: readonly IndicatorSpec[],
@@ -151,7 +151,13 @@ export function drawnIndicators(
   const draws: IndicatorDraw[] = [];
   const lines: IndicatorLine[] = [];
   for (const spec of specs) {
-    const manifest = packages.get(spec.package)?.manifest;
+    const info = packages.get(spec.package);
+    const manifest = info?.manifest;
+    if (!info?.enabled) {
+      // Before the list is in, nothing is known to be missing.
+      if (packages.size) lines.push({ id: spec.id, label: manifest ? indicatorLabel(manifest, spec.parameters) : spec.package, digits, outputs: [], notAvailable: true });
+      continue;
+    }
     const answer = values.get(spec.id);
     if (!manifest || !answer) continue;
     const places = indicatorDigits(manifest, digits);

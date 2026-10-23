@@ -2305,3 +2305,207 @@ a.path {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+/* Indicators */
+.indicators .notice {
+  margin-bottom: 16px;
+}
+
+.packages-table .enabled-col {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.packages-table .switch {
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.packages-table .switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.packages-table tr.off .package-name,
+.packages-table tr.off td:not(.enabled-col) {
+  color: var(--ink-3);
+}
+
+.packages-table tr.open td {
+  background: var(--sunk);
+}
+
+.package-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 0 -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.package-name:hover {
+  background: rgb(127 127 127 / 12%);
+}
+
+.package-name .chevron {
+  width: 13px;
+  height: 13px;
+  color: var(--ink-3);
+  transition: transform 0.15s;
+}
+
+.package-name[aria-expanded="true"] .chevron {
+  transform: rotate(90deg);
+}
+
+.package-id {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.packages-table tr.package-details-row td {
+  padding: 0;
+  border-top: 0;
+  background: var(--sunk);
+}
+
+.package-details {
+  padding: 4px 18px 18px 40px;
+  color: var(--ink);
+}
+
+.package-description {
+  max-width: 72ch;
+  margin: 0 0 14px;
+  color: var(--ink-2);
+}
+
+.package-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 40px;
+  margin-bottom: 16px;
+}
+
+.package-details h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.facts {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.facts th,
+.facts td {
+  padding: 4px 18px 4px 0;
+  text-align: left;
+  vertical-align: top;
+  color: var(--ink);
+}
+
+.facts th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.facts td {
+  border-top: 1px solid var(--line-soft);
+}
+
+.readme {
+  max-width: 80ch;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  font-size: 13.5px;
+}
+
+.readme h4 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.readme h5,
+.readme h6 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+}
+
+.readme p,
+.readme ul {
+  margin: 0 0 10px;
+}
+
+.readme ul {
+  padding-left: 20px;
+}
+
+.readme pre,
+.licence pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: var(--sunk);
+  font-size: 12.5px;
+}
+
+.readme code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--sunk);
+  font-size: 0.92em;
+}
+
+.readme .facts {
+  margin-bottom: 10px;
+}
+
+.licence {
+  max-width: 80ch;
+  margin-top: 10px;
+}
+
+.licence summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.licence pre {
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.foot-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+}
+
+/* An indicator whose package is disabled or gone: its name, marked, drawing nothing. */
+.chart-legend .ind.unavailable .ind-label {
+  opacity: 0.6;
+}
+
+.chart-legend .ind-unavailable {
+  pointer-events: auto;
+  font-weight: 600;
+  color: var(--caution);
+}
