@@ -1,8 +1,9 @@
-// The Charts view's pure models: colour schemes, the legend, the forming candle, day separators and view memory.
+// The Charts view's pure models: colour schemes, the legend, the forming candle, day separators, where the view goes
+// when bars come in, and view memory.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, readChartMemory, showsCandlesSince, wantsOlder } from "../src/dashboard/charts/chart-model.js";
+import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, latestView, readChartMemory, showsCandlesSince, viewAfterSet, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
 import { indicatorLabel, nextColour } from "../src/dashboard/charts/indicators.js";
@@ -202,6 +203,37 @@ test("a fresh latest page replaces the loaded bars from its first bar on and kee
   assert.deepEqual(mergeLatest(loaded, { candles: [], complete: true }).candles, [], "a feed with no bars any more");
   const notScrolled = mergeLatest({ candles: [bar(300)], complete: true }, { candles: [bar(300), bar(400)], complete: false });
   assert.equal(notScrolled.complete, false, "nothing older was loaded: the page says");
+});
+
+const bars = (first: number, count: number) => Array.from({ length: count }, (_, i) => bar(first + i * 100));
+
+test("a view that showed every bar it had moves to the latest bars once older ones fill it, as wide as it was", () => {
+  // Two live candles, then the EA's 900 bars before them: the view showed both (and room around them).
+  const live = bars(100_000, 2);
+  const filled = [...bars(10_000, 900), ...live];
+  assert.deepEqual(viewAfterSet(live, filled, { from: -1, to: 7 }), { from: 899, to: 907 }, "the newest bar 6 from the right edge");
+  // A new bucket opened while the bars were on their way: still filled, not scrolled back.
+  assert.deepEqual(viewAfterSet(live, [...filled, bar(100_200)], { from: -1, to: 7 }), { from: 900, to: 908 });
+  assert.equal(viewAfterSet(live, filled, null), "latest", "a chart not laid out yet scrolls to real time");
+});
+
+test("older bars put before a view scrolled back move the view with the bars it showed", () => {
+  const loaded = bars(100_000, 500);
+  const paged = [...bars(50_000, 500), ...loaded];
+  assert.deepEqual(viewAfterSet(loaded, paged, { from: 10, to: 60 }), { from: 510, to: 560 });
+  // The newest bar changed too (a fresh page): the indices no longer line up, so the view stays.
+  assert.equal(viewAfterSet(loaded, [...paged, bar(150_000)], { from: 10, to: 60 }), null);
+});
+
+test("candles set again without older bars before them leave the view alone", () => {
+  assert.equal(viewAfterSet([], bars(100, 5), { from: 0, to: 10 }), null, "the first set");
+  assert.equal(viewAfterSet(bars(100, 5), bars(100, 7), { from: 0, to: 10 }), null, "a fetch from the same first bar");
+  assert.equal(viewAfterSet(bars(100, 5), bars(5_000, 3), { from: 0, to: 10 }), null, "another period");
+});
+
+test("Latest keeps the view's width and puts the newest bar 6 from the right edge", () => {
+  assert.deepEqual(latestView(500, { from: 100, to: 180 }), { from: 425, to: 505 });
+  assert.equal(latestView(500, null), "latest");
 });
 
 test("older bars are asked for when fewer than 100 remain left of the view, until there are none", () => {

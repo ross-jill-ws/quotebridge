@@ -1,6 +1,6 @@
 // The Charts view's model (pure): the legend at the crosshair or the latest bar, the forming candle that
-// follows the live quote, day separators, paging back through the chart history, what the view remembers, and since
-// when it has candles.
+// follows the live quote, day separators, paging back through the chart history, where the view goes when bars come
+// in, what the view remembers, and since when it has candles.
 import type { Candle } from "../../server/candles/index.js";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
@@ -152,6 +152,36 @@ export function mergeLatest<P extends { candles: Candle[]; complete: boolean }>(
   const first = page.candles[0]?.time;
   const older = first === undefined ? [] : loaded.candles.filter((c) => c.time < first);
   return older.length ? { ...page, candles: [...older, ...page.candles], complete: loaded.complete } : page;
+}
+
+/** Empty bars kept right of the newest one. */
+export const RIGHT_OFFSET = 6;
+
+/** A visible range of logical (bar index) positions. */
+export type LogicalRange = { from: number; to: number };
+
+/**
+ * The view at the latest bars, as wide as `range`, with the usual room after the newest (a view of a few bars has
+ * more); "latest" when the chart has no range yet (it scrolls to real time).
+ */
+export function latestView(count: number, range: LogicalRange | null): LogicalRange | "latest" {
+  if (!range) return "latest";
+  const end = count - 1 + RIGHT_OFFSET;
+  return { from: end - (range.to - range.from), to: end };
+}
+
+/**
+ * Where the view goes when the candles are set again (not updated in place), or null to leave it. Older bars put
+ * before the loaded ones fill a view that showed every bar it had (the EA's bars joining a few live candles; a new
+ * bucket may have opened meanwhile): it moves to the latest bars. Bars prepended to a view scrolled back (the newest
+ * bar unchanged) move every loaded bar's logical index on by as many: the view moves with them.
+ */
+export function viewAfterSet(old: readonly Candle[], candles: readonly Candle[], range: LogicalRange | null): LogicalRange | "latest" | null {
+  const n = old.length;
+  if (!(n > 0 && candles.length > n && candles[0].time < old[0].time)) return null;  if (range === null || (range.from <= 0 && range.to >= n - 1)) return latestView(candles.length, range);
+  if (candles.at(-1)!.time !== old[n - 1].time) return null;
+  const prepended = candles.length - n;
+  return { from: range.from + prepended, to: range.to + prepended };
 }
 
 /** The note shows while the chart does not reach back before QuoteBridge started (`since`, epoch ms). */

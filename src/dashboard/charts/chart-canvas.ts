@@ -20,7 +20,7 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import type { Candle } from "../../server/candles/index.js";
-import type { ChartType } from "./chart-model.js";
+import { latestView, RIGHT_OFFSET, viewAfterSet, type ChartType, type LogicalRange } from "./chart-model.js";
 import { COLOUR_TOKENS } from "../colour-tokens.js";
 import type { ChartScheme } from "./chart-scheme.js";
 import type { IndicatorSpec } from "./indicators.js";
@@ -42,9 +42,6 @@ const time = (seconds: number) => seconds as UTCTimestamp;
 
 /** A price scale with `precision` decimal places. */
 const priceFormat = (precision: number) => ({ type: "price" as const, precision, minMove: 10 ** -precision });
-
-/** Empty bars kept right of the newest one. */
-const RIGHT_OFFSET = 6;
 
 export class ChartCanvas {
   private readonly chart: IChartApi;
@@ -115,16 +112,9 @@ export class ChartCanvas {
     if (live) {
       for (let i = n - 1; i < candles.length; i++) this.main.update(this.point(candles[i]));
     } else {
-      const older = n > 0 && candles.length > n && candles[0].time < old[0].time;
-      const range = older ? this.chart.timeScale().getVisibleLogicalRange() : null;
-      // A view that showed every bar it had is filled by the older bars (the EA's bars joining a few live candles; a new
-      // bucket may have opened meanwhile), not scrolled back: it moves to the latest bars.
-      const filled = older && (range === null || (range.from <= 0 && range.to >= n - 1));
-      // Bars prepended (the newest bar unchanged) move every loaded bar's logical index on by as many: move the view with them.
-      const prepended = older && candles.at(-1)!.time === old[n - 1].time ? candles.length - n : 0;
+      const view = viewAfterSet(old, candles, this.chart.timeScale().getVisibleLogicalRange());
       this.main.setData(candles.map((c) => this.point(c)));
-      if (filled) this.scrollToLatest();
-      else if (range && prepended) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended });
+      if (view) this.setView(view);
     }
     this.separators.set(separators);
     const last = candles.at(-1);
@@ -182,10 +172,12 @@ export class ChartCanvas {
 
   /** The view at the latest bars, as wide as it is, with the usual room after the newest (a view of a few bars has more). */
   scrollToLatest() {
-    const range = this.chart.timeScale().getVisibleLogicalRange();
-    const end = this.candles.length - 1 + RIGHT_OFFSET;
-    if (!range) return this.chart.timeScale().scrollToRealTime();
-    this.chart.timeScale().setVisibleLogicalRange({ from: end - (range.to - range.from), to: end });
+    this.setView(latestView(this.candles.length, this.chart.timeScale().getVisibleLogicalRange()));
+  }
+
+  private setView(view: LogicalRange | "latest") {
+    if (view === "latest") this.chart.timeScale().scrollToRealTime();
+    else this.chart.timeScale().setVisibleLogicalRange(view);
   }
 
   remove() {
