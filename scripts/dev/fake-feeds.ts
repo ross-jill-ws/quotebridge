@@ -14,7 +14,7 @@ export const localNow = () => Math.floor((Date.now() - new Date().getTimezoneOff
 export function fakeFeeds(endpoint: string): () => void {
   const terminal = "mt4-0123456789ab";
   const broker = "Demo-Broker";
-  type Fake = { ea: FakeEA; price?: number; spread?: number; frozen?: boolean; until?: number; seq: number };
+  type Fake = { ea: FakeEA; price?: number; spread?: number; frozen?: boolean; oldSession?: boolean; until?: number; seq: number };
   const make = (options: ConstructorParameters<typeof FakeEA>[0], extra: Partial<Fake> = {}): Fake => ({
     ea: new FakeEA({ terminal, broker, ...options }).connect(endpoint),
     seq: 0,
@@ -34,6 +34,10 @@ export function fakeFeeds(endpoint: string): () => void {
     make({ symbol: "AUDUSD", timeframe: 60 }, { price: 0.6612, spread: 0.0001 }),
     // Goes quiet after 5 s: offline after 7 s more, then removable.
     make({ symbol: "NZDUSD", timeframe: 1440 }, { price: 0.6011, spread: 0.00018, until: Date.now() + 5000 }),
+    // Batches name an old session, as after a chart change on EA 1.08: rejected, so no quotes received after 30 s.
+    make({ symbol: "USDCAD", timeframe: 60 }, { price: 1.3721, spread: 0.00016, oldSession: true }),
+    // Says hello but sends no samples: no quotes received after 30 s.
+    make({ symbol: "USDCHF", timeframe: 60 }),
   ];
   fakes[4].ea.quoteStatus = "no-quote";
   fakes[6].ea.dropped = 1250;
@@ -48,7 +52,8 @@ export function fakeFeeds(endpoint: string): () => void {
       f.price = Number((f.price + (Math.round(Math.random() * 6) - 3) * step).toFixed(f.ea.digits));
       const quoteTime = f.frozen ? frozenTime : brokerNow();
       const ask = Number((f.price + f.spread).toFixed(f.ea.digits));
-      void f.ea.ticks([{ seq: ++f.seq, bid: f.price, ask, quoteTime, sampledTime: localNow() }]).catch(() => {});
+      const wire = f.ea.tickWire([{ seq: ++f.seq, bid: f.price, ask, quoteTime, sampledTime: localNow() }]);
+      void f.ea.send(f.oldSession ? wire.replace(f.ea.session, `${f.ea.session}-old`) : wire).catch(() => {});
     }
   };
   hello();

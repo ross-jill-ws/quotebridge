@@ -336,3 +336,60 @@ test("a rejected account-info or trading message keeps only its type and session
   assert.equal(bridge.snapshot().rejections[0].reason, "Routing identity mismatch");
   assert.equal(bridge.snapshot().rejections[0].excerpt, "I|1|chart-old|…");
 });
+
+test("an online feed with no samples accepted for 30 s is missing samples, never or not lately, until a batch is accepted", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const chart = ea();
+  const helloFor = async (ms: number) => {
+    for (let waited = 0; waited < ms; waited += 2000) {
+      clock.advance(2000);
+      await chart.request(chart.helloWire());
+    }
+  };
+  await chart.request(chart.helloWire());
+
+  await helloFor(28000);
+  assert.equal(bridge.snapshot().feeds[0].samplesMissing, false);
+  await helloFor(2000);
+  assert.deepEqual([bridge.snapshot().feeds[0].samplesMissing, bridge.snapshot().feeds[0].samplesAcceptedAt], [true, null]);
+
+  await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.1002, quoteTime: 1700000000 }]));
+  assert.deepEqual([bridge.snapshot().feeds[0].samplesMissing, bridge.snapshot().feeds[0].samplesAcceptedAt], [false, clock.time]);
+
+  await helloFor(30000);
+  assert.equal(bridge.snapshot().feeds[0].samplesMissing, true);
+});
+
+test("a feed is not missing samples while offline, and its 30 s start again when it comes back", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const chart = ea();
+  await chart.request(chart.helloWire());
+
+  clock.advance(60000);
+  assert.equal(bridge.snapshot().feeds[0].online, false);
+  assert.equal(bridge.snapshot().feeds[0].samplesMissing, false);
+
+  await chart.request(chart.helloWire());
+  clock.advance(5000);
+  assert.equal(bridge.snapshot().feeds[0].samplesMissing, false);
+  for (let waited = 5000; waited < 30000; waited += 5000) {
+    await chart.request(chart.helloWire());
+    clock.advance(5000);
+  }
+  assert.equal(bridge.snapshot().feeds[0].samplesMissing, true);
+});
+
+test("a replayed batch is ACKed but does not count as samples received", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const chart = ea();
+  await chart.request(chart.helloWire());
+  await chart.request(chart.tickWire([{ seq: 5, bid: 1.5, ask: 1.5002, quoteTime: 1700000005 }]));
+  const accepted = clock.time;
+
+  for (let i = 0; i < 16; i++) {
+    clock.advance(2000);
+    assert.equal(await chart.request(chart.tickWire([{ seq: 5, bid: 1.5, ask: 1.5002, quoteTime: 1700000005 }])), `A|1|${chart.session}|5`);
+  }
+
+  assert.deepEqual([bridge.snapshot().feeds[0].samplesMissing, bridge.snapshot().feeds[0].samplesAcceptedAt], [true, accepted]);
+});

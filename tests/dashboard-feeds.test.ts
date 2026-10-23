@@ -1,7 +1,7 @@
 // The Feeds view model: what each feed row shows (formatted quote cells and warnings).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FeedSnapshot, TerminalPresence } from "../src/server/bridge/index.js";
+import type { FeedSnapshot, Rejection, TerminalPresence } from "../src/server/bridge/index.js";
 import { describeFeed, groupFeeds, nextFlash, priceParts, sortFeeds } from "../src/dashboard/feeds/feed-row.js";
 
 const NOW = 1_800_000_000_000;
@@ -28,6 +28,8 @@ function feed(overrides: Partial<FeedSnapshot> = {}): FeedSnapshot {
     recording: false,
     lastSeen: NOW - 500,
     dropped: 0,
+    samplesAcceptedAt: NOW - 500,
+    samplesMissing: false,
     ...overrides,
   };
 }
@@ -70,6 +72,45 @@ test("several warnings appear together, most serious first", () => {
     row.warnings.map((w) => w.kind),
     ["no-quote", "duplicate", "dropped"],
   );
+});
+
+function rejection(overrides: Partial<Rejection> = {}): Rejection {
+  return { time: NOW - 2000, reason: "Routing identity mismatch", route: "chart-new", excerpt: "T|1|chart-old|…", feed: "f", ...overrides };
+}
+
+test("an online feed whose samples stopped arriving warns that no quotes are received", () => {
+  const never = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: null, latest: undefined }), NOW);
+  assert.deepEqual(never.warnings, [{ kind: "no-samples", text: "No quotes received" }]);
+  const notLately = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: NOW - 45_000 }), NOW);
+  assert.deepEqual(notLately.warnings, [{ kind: "no-samples", text: "No quotes received" }]);
+});
+
+test("when the app has been rejecting the feed's messages, the no-quotes warning names the latest reason", () => {
+  const row = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: NOW - 45_000, lastRejection: rejection() }), NOW);
+  assert.deepEqual(row.warnings, [{ kind: "no-samples", text: "No quotes received: the app rejects its messages (Routing identity mismatch)" }]);
+  // A rejection from before the last accepted samples is history, not the reason.
+  const older = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: NOW - 45_000, lastRejection: rejection({ time: NOW - 60_000 }) }), NOW);
+  assert.deepEqual(older.warnings, [{ kind: "no-samples", text: "No quotes received" }]);
+  // Nor is one the app stopped seeing 30 s ago, e.g. before the feed went offline and came back.
+  const stopped = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: null, lastRejection: rejection({ time: NOW - 30_000 }) }), NOW);
+  assert.deepEqual(stopped.warnings, [{ kind: "no-samples", text: "No quotes received" }]);
+});
+
+test("the no-quotes warning clears as soon as samples are accepted again, whatever was rejected before", () => {
+  assert.deepEqual(describeFeed(feed({ samplesMissing: false, samplesAcceptedAt: NOW - 500, lastRejection: rejection() }), NOW).warnings, []);
+});
+
+test("a feed missing samples does not also warn that its quote is unchanged: that follows from the missing samples", () => {
+  const row = describeFeed(feed({ samplesMissing: true, samplesAcceptedAt: NOW - 45_000, stale: true, quoteUnchangedSince: NOW - 45_000, dropped: 2 }), NOW);
+  assert.deepEqual(
+    row.warnings.map((w) => w.kind),
+    ["no-samples", "dropped"],
+  );
+});
+
+test("an EA reporting no valid quote keeps that warning only, not no-quotes-received", () => {
+  const row = describeFeed(feed({ quoteStatus: "no-quote", latest: undefined, samplesMissing: true, samplesAcceptedAt: null }), NOW);
+  assert.deepEqual(row.warnings, [{ kind: "no-quote", text: "No valid quote" }]);
 });
 
 test("bid and ask show the symbol's digits; spread is in points, as in MetaTrader's Market Watch", () => {

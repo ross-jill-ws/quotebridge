@@ -4,7 +4,7 @@ import type { TimeShown } from "../../shared/settings-store.js";
 import { browserOffsetMinutes, displaySeconds } from "../display-clock.js";
 import { count, duration } from "../format.js";
 
-export type FeedWarning = { kind: "no-quote" | "stale" | "dropped" | "duplicate"; text: string };
+export type FeedWarning = { kind: "no-quote" | "no-samples" | "stale" | "dropped" | "duplicate"; text: string };
 
 export type FeedRow = {
   /** "Online", or "Offline, last heard 3 min ago". */
@@ -65,9 +65,13 @@ export function describeFeed(feed: FeedSnapshot, snapshotTime: number, shown: Ti
 
 function warnings(feed: FeedSnapshot, snapshotTime: number): FeedWarning[] {
   const list: FeedWarning[] = [];
+  // An EA without a valid quote sends no samples: its warning says so already.
+  const noSamples = feed.samplesMissing && feed.quoteStatus !== "no-quote";
   if (feed.quoteStatus === "no-quote") list.push({ kind: "no-quote", text: "No valid quote" });
+  if (noSamples) list.push({ kind: "no-samples", text: noSamplesText(feed, snapshotTime) });
   if (feed.instances > 1) list.push({ kind: "duplicate", text: `Duplicate EAs on ${feed.instances} charts` });
-  if (feed.stale) {
+  // Without samples the quote cannot change: the missing samples are the warning.
+  if (feed.stale && !noSamples) {
     const since = feed.quoteUnchangedSince ?? snapshotTime;
     list.push({ kind: "stale", text: `Quote unchanged for ${duration(snapshotTime - since)}` });
   }
@@ -75,6 +79,16 @@ function warnings(feed: FeedSnapshot, snapshotTime: number): FeedWarning[] {
     list.push({ kind: "dropped", text: `${count(feed.dropped)} ${feed.dropped === 1 ? "sample" : "samples"} dropped` });
   }
   return list;
+}
+
+/** A rejection this recent, after the last accepted samples, is why none arrive (a stuck EA repeats it every second or so). */
+const CURRENT_REJECTION_MS = 30000;
+
+function noSamplesText(feed: FeedSnapshot, snapshotTime: number): string {
+  const rejection = feed.lastRejection;
+  const current =
+    rejection && snapshotTime - rejection.time < CURRENT_REJECTION_MS && (feed.samplesAcceptedAt === null || rejection.time > feed.samplesAcceptedAt);
+  return current ? `No quotes received: the app rejects its messages (${rejection.reason})` : "No quotes received";
 }
 
 /** A price as a dealing ticket sets it: the big figure small, the pips large, the pipette raised. */

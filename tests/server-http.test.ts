@@ -1,6 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
+import { describeFeed } from "../src/dashboard/feeds/feed-row.js";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { PortInUseError, startServer, type ServerConfig } from "../src/server/index.js";
 import WebSocket from "ws";
@@ -279,4 +280,24 @@ test("/api/state lists a rejected batch with its reason, and the feed's snapshot
   );
   assert.equal(typeof state.rejections[0].time, "number");
   assert.deepEqual(state.feeds[0].lastRejection, state.rejections[0]);
+});
+
+test("a fake EA that says hello but whose batches are rejected shows as a flagged feed in the dashboard state", { timeout: 10000 }, async (t) => {
+  const clock = new FakeClock();
+  const { origin, ea } = await start(t, { now: clock.now });
+  const cookie = await signIn(origin);
+  const chart = ea({ session: "chart-new" });
+  await chart.request(chart.helloWire());
+
+  // As after a chart change on EA 1.08: hellos are accepted, every batch names the old session.
+  for (let i = 1; i <= 16; i++) {
+    clock.advance(2000);
+    await chart.send(`T|1|chart-old|${i},1.1,1.1002,1700000000,1700000001`);
+    await chart.request(chart.helloWire());
+  }
+
+  const state = (await (await fetch(origin + "/api/state", { headers: { cookie } })).json()) as BridgeSnapshot;
+  assert.deepEqual(describeFeed(state.feeds[0], state.time).warnings, [
+    { kind: "no-samples", text: "No quotes received: the app rejects its messages (Routing identity mismatch)" },
+  ]);
 });

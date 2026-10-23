@@ -11,6 +11,9 @@ export const ONLINE_WINDOW_MS = 7000;
 /** An online feed whose quote time has not changed for this long is stale. */
 export const STALE_QUOTE_MS = 10000;
 
+/** An online feed with no batch of samples accepted for this long (never, or not lately) is missing samples. */
+export const SAMPLES_MISSING_MS = 30000;
+
 const MAX_PEERS = 1000;
 /** Rejections the snapshot lists, newest first; older ones drop out. */
 export const MAX_REJECTIONS = 20;
@@ -60,6 +63,10 @@ type Peer = Hello & {
   feed: string;
   route: Buffer;
   lastSeen: number;
+  /** When the chart's current online spell began. */
+  onlineSince: number;
+  /** When a batch of its samples was last accepted. */
+  samplesAcceptedAt?: number;
   latest?: Sample;
   quoteUnchangedSince?: number;
 };
@@ -97,6 +104,10 @@ export type FeedSnapshot = {
   lastSeen: number;
   /** Samples the feed's EAs dropped from full buffers, summed over its charts. */
   dropped: number;
+  /** When a batch of the feed's samples was last accepted (from any of its charts); null if none has been. */
+  samplesAcceptedAt: number | null;
+  /** Online, with no batch accepted for SAMPLES_MISSING_MS since it came online: never, or not lately. */
+  samplesMissing: boolean;
   /** The latest message rejected on one of the feed's chart routes; absent when there was none. */
   lastRejection?: Rejection;
 };
@@ -233,8 +244,14 @@ export class BridgeServer {
     }
   }
 
-  private isOnline(p: Peer, now = this.now()) {
+  private isOnline(p: Pick<Peer, "lastSeen">, now = this.now()) {
     return now - p.lastSeen < ONLINE_WINDOW_MS;
+  }
+
+  /** A chart's times on any message from it: heard now, and a new online spell if it was offline. */
+  private heard(p: Pick<Peer, "lastSeen" | "onlineSince"> | undefined) {
+    const now = this.now();
+    return { lastSeen: now, onlineSince: p && this.isOnline(p, now) ? p.onlineSince : now };
   }
 
   /** The chart that owns a feed's subscription: the current owner while online, else the first online chart. */
@@ -298,7 +315,7 @@ export class BridgeServer {
           this.emit({ type: "removed", feed: stale.feed });
         }
       }
-      const p: Peer = { ...old, ...m, feed: feedKey(m), route, lastSeen: this.now() };
+      const p: Peer = { ...old, ...m, feed: feedKey(m), route, ...this.heard(old) };
       this.peers.set(m.session, p);
       this.terminals.set(m.terminal, { terminalId: m.terminal, lastHello: p.lastSeen, eaVersion: m.eaVersion ?? null, brokerServer: m.broker });
       // The hello reply is the subscription state; duplicates may hand ownership over, so refresh every chart of the feed.
@@ -309,9 +326,11 @@ export class BridgeServer {
         await this.send(route, `R|1|${m.session}`);
         return;
       }
-      p.lastSeen = this.now();
+      Object.assign(p, this.heard(p));
       const latest = m.samples.at(-1)!;
       const fresh = m.samples.filter((s) => !p.latest || s.seq > p.latest.seq);
+      // A replayed batch is ACKed again, but brings no new samples.
+      if (fresh.length) p.samplesAcceptedAt = this.now();
       // The market of the terminal's latest hello, as in the snapshot: one feed's charts never disagree about it.
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       if (fresh.length) this.emit({ type: "samples", feed: p.feed, market: { brokerServer, symbol: p.symbol }, samples: fresh });
@@ -333,6 +352,11 @@ export class BridgeServer {
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       const market = { brokerServer, symbol: p.symbol };
       const { clockRule, recording } = this.marketInfo(market);
+      // Samples from any chart count, even one offline now (the owner before a handover); the silence runs from the
+      // later of those and the feed's online spell, which began with its first chart online.
+      const acceptedTimes = instances.flatMap((i) => (i.samplesAcceptedAt === undefined ? [] : [i.samplesAcceptedAt]));
+      const accepted = acceptedTimes.length ? Math.max(...acceptedTimes) : null;
+      const silentSince = Math.max(accepted ?? 0, Math.min(...online.map((i) => i.onlineSince)));
       return {
         feed,
         terminal: p.terminal,
@@ -354,6 +378,8 @@ export class BridgeServer {
         recording,
         lastSeen: p.lastSeen,
         dropped: instances.reduce((n, i) => n + i.dropped, 0),
+        samplesAcceptedAt: accepted,
+        samplesMissing: this.isOnline(p, now) && now - silentSince >= SAMPLES_MISSING_MS,
         ...(this.lastRejectionByFeed.has(feed) && { lastRejection: { ...this.lastRejectionByFeed.get(feed)! } }),
       };
     });
