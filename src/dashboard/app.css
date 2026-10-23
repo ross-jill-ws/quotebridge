@@ -698,10 +698,15 @@ input[type="checkbox"]:focus-visible {
   overflow-x: auto;
 }
 
+/* Feeds sizes its cells to the card, not the window (see the container query below). */
+.feed-group .table-scroll {
+  container-type: inline-size;
+}
+
 /* Fixed columns, so prices line up from one terminal's group to the next. */
 .feeds {
   width: 100%;
-  min-width: 820px;
+  min-width: 680px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -762,12 +767,9 @@ input[type="checkbox"]:focus-visible {
   text-wrap: balance;
 }
 
-/* A narrow window: tighter cells, so the table fits beside the collapsed rail without scrolling and Remove shows. */
-@media (max-width: 960px) {
-  .feeds {
-    min-width: 680px;
-  }
-
+/* A narrow card (a narrow window, with the rail collapsed or not): tighter cells, so the table fits without scrolling
+   and Remove shows. Below 680px the card scrolls. */
+@container (max-width: 860px) {
   .feeds th,
   .feeds td {
     padding-left: 10px;
