@@ -4,7 +4,7 @@ import { BridgeServer, marketKey } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
-import { ChartHistory, HistoryCatalog, HistorySaver } from "./history/index.js";
+import { ChartHistory, EaBarFetcher, HistoryCatalog, HistorySaver, PERIOD_OF } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
 import { Recorder } from "./recording/index.js";
 import { WindowSessions } from "./http/window-session.js";
@@ -55,6 +55,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   let clockRules: ClockRules | undefined;
   let recorder: Recorder | undefined;
   let saver: HistorySaver | undefined;
+  let eaBars: EaBarFetcher | undefined;
   let apiKeys: ApiKeys | undefined;
   const bridge = new BridgeServer({
     now: config.now,
@@ -99,12 +100,27 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       recorded: () => recording.storedMarkets().filter((m) => m.recording),
       now: config.now,
     });
+    eaBars = new EaBarFetcher({
+      bridge,
+      save: async (market, digits, period, bars) => saved.insert(await recording.ensureMarket(market, digits), period, bars),
+      clockRule: (brokerServer) => rules.rule(brokerServer),
+    });
   }
   const history = new ChartHistory({
     dataFolder,
     liveCandles: (feed, period) => candles.candles(feed, period),
     clockRule: (brokerServer) => rules.rule(brokerServer),
     savedBars: saved && ((market, period, before, limit) => saved.before(market, period, before, limit)),
+    eaBars,
+    now: config.now,
+  });
+  // A feed that connects gets its chart period's bars from its EA, when chart history has a gap there; after a while
+  // away, its market's periods may be asked again.
+  const stopFilling = bridge.onOnline((key) => {
+    const feed = bridge.snapshot().feeds.find((f) => f.feed === key);
+    if (feed) eaBars?.forget(feed.market);
+    const period = feed?.timeframe ? PERIOD_OF.get(feed.timeframe) : undefined;
+    if (feed && period) history.fill(feed, period).catch((e) => console.error(`Chart history of ${feed.symbol} could not be checked`, e));
   });
   const catalog = new HistoryCatalog({
     snapshot: () => bridge.snapshot(),
@@ -123,7 +139,9 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   try {
     http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings });
   } catch (e) {
+    stopFilling();
     candles.close();
+    eaBars?.close();
     await saver?.close();
     await bridge.close();
     await recorder?.close();
@@ -145,7 +163,9 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     async close() {
       await terminals?.close();
       await http.close();
+      stopFilling();
       candles.close();
+      eaBars?.close();
       // Before the host's CHECKPOINT: a save stops after the page it is writing.
       await saver?.close();
       await bridge.close();

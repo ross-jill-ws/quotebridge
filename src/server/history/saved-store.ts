@@ -95,6 +95,17 @@ export class SavedBarStore {
     });
   }
 
+  /** The start times of the saved bars of a market's period from `from` to `to` (broker seconds, both included). */
+  async times(marketId: number, period: Period, from: number, to: number): Promise<Set<number>> {
+    const rows = await this.read("SELECT broker_seconds FROM saved_bars WHERE market_id = $1 AND period = $2 AND broker_seconds BETWEEN $3 AND $4", [
+      marketId,
+      period,
+      BigInt(from),
+      BigInt(to),
+    ]);
+    return new Set(rows.map((row) => Number(row.broker_seconds)));
+  }
+
   /** Up to `limit` bars of a market's period older than `before` (broker seconds; the newest when undefined), oldest first. */
   async before(market: Market, period: Period, before: number | undefined, limit: number): Promise<{ bars: HstBar[]; complete: boolean }> {
     const rows = await this.read(
@@ -115,19 +126,22 @@ export class SavedBarStore {
     return rows.map(bar);
   }
 
-  /** How many bars of a market's period are saved older than `before` (broker seconds; all when undefined), and the first and last of them. */
-  async count(market: Market, period: Period, before?: number): Promise<{ bars: number; first: number; last: number } | null> {
+  /**
+   * How many bars of a market's period are saved older than `before` and from `from` on (broker seconds; no bound when
+   * undefined), and the first and last of them.
+   */
+  async count(market: Market, period: Period, before?: number, from?: number): Promise<{ bars: number; first: number; last: number } | null> {
     const [row] = await this.read(
       `SELECT count(*) AS n, min(broker_seconds) AS first, max(broker_seconds) AS last FROM saved_bars
-        WHERE market_id = (SELECT id FROM markets WHERE broker_server = $1 AND symbol = $2) AND period = $3 AND broker_seconds < $4`,
-      [market.brokerServer, market.symbol, period, BigInt(before ?? Number.MAX_SAFE_INTEGER)],
+        WHERE market_id = (SELECT id FROM markets WHERE broker_server = $1 AND symbol = $2) AND period = $3 AND broker_seconds < $4 AND broker_seconds >= $5`,
+      [market.brokerServer, market.symbol, period, BigInt(before ?? Number.MAX_SAFE_INTEGER), BigInt(from ?? -1)],
     );
     return Number(row?.n ?? 0) ? { bars: Number(row.n), first: Number(row.first), last: Number(row.last) } : null;
   }
 
-  /** Every bar of a market's period older than `before` (broker seconds; all when undefined), oldest first, a page at a time. */
-  async *pages(market: Market, period: Period, before?: number): AsyncGenerator<HstBar[]> {
-    let after = -1;
+  /** Every bar of a market's period older than `before` and from `from` on (broker seconds; no bound when undefined), oldest first, a page at a time. */
+  async *pages(market: Market, period: Period, before?: number, from?: number): AsyncGenerator<HstBar[]> {
+    let after = from === undefined ? -1 : from - 1;
     for (;;) {
       const rows = await this.read(
         `SELECT ${COLUMNS} FROM saved_bars WHERE market_id = (SELECT id FROM markets WHERE broker_server = $1 AND symbol = $2) AND period = $3

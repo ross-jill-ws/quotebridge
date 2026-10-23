@@ -41,7 +41,10 @@ import { DEFAULT_INDICATORS, indicatorLabel, indicatorValues, nextColour, type I
 /** Per window (localStorage): the last symbol, period, chart type, Ask line and indicators. */
 const MEMORY_KEY = "quotebridge.chart";
 
-/** Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown; `complete`: no older bars exist. */
+/**
+ * Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown; `complete`: no older bars exist;
+ * `filling`: the server is getting the period's bars from the EA, and the latest page grows once they are in.
+ */
 type CandlesAnswer = {
   feed: string;
   period: Period;
@@ -51,7 +54,11 @@ type CandlesAnswer = {
   clockRule: ClockRule | null;
   candles: Candle[];
   complete: boolean;
+  filling: boolean;
 };
+
+/** While the server is getting the EA's bars, the latest page is fetched again this often. */
+const FILLING_RELOAD_MS = 1000;
 
 type Props = {
   live: Live;
@@ -495,8 +502,9 @@ function feedFromHash(): string | undefined {
 }
 
 /**
- * The feed's candles from /api/candles, fetched again when the feed or period changes, when a new bucket opens
- * and after a reconnect; between fetches the forming candle follows the live quote.
+ * The feed's candles from /api/candles, fetched again when the feed or period changes, when a new bucket opens,
+ * after a reconnect and while the server is getting the EA's bars; between fetches the forming candle follows the live
+ * quote.
  */
 function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live): { data?: CandlesAnswer; loadOlder: () => void } {
   const [data, setData] = useState<CandlesAnswer>();
@@ -519,6 +527,14 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
       current = false;
     };
   }, [id, period, reload, live.status]);
+
+  const filling = data?.feed === id && data?.period === period && data?.filling;
+  useEffect(() => {
+    if (!filling) return;
+    // Not a timeout per answer: the forming candle replaces the answer on every quote.
+    const timer = setInterval(() => setReload((n) => n + 1), FILLING_RELOAD_MS);
+    return () => clearInterval(timer);
+  }, [filling]);
 
   // The chart asks as it scrolls; one page at a time, for what is shown now.
   const shown = useRef(data);

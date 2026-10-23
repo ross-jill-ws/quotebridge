@@ -1,7 +1,7 @@
 // A fake QuoteBridge EA: a real ZeroMQ DEALER speaking the EA wire protocol.
 // Synthetic fixture: no MetaTrader, broker or DLL is involved.
 import { Dealer } from "zeromq";
-import { feedKey } from "../src/server/bridge/index.js";
+import { BARS_PER_PAGE, feedKey } from "../src/server/bridge/index.js";
 import { freePort } from "./free-port.js";
 
 export type FakeEAOptions = {
@@ -13,9 +13,22 @@ export type FakeEAOptions = {
   timeframe?: number;
   /** The EA version sent as the 14th hello field (EA 1.08+). `null` sends a 13-field hello, like EA 1.07. */
   eaVersion?: string | null;
+  /**
+   * Answers bar requests (EA 1.10+) with these bars of a timeframe, oldest first, or says MetaTrader is still loading
+   * them. Without it, bar requests are left unanswered, like an older EA. With it, the chart reads its socket itself and
+   * `receive` hands out the other messages.
+   */
+  bars?: BarAnswer;
 };
 
+/** A closed bar as the fake EA sends it; `time` in broker seconds. */
+export type FakeBar = { time: number; open: number; high: number; low: number; close: number; volume?: number };
+export type BarAnswer = (timeframe: number, count: number, shift: number) => readonly FakeBar[] | "loading";
+
 export type Quote = { seq: number; bid: number; ask: number; quoteTime: number; sampledTime?: number };
+
+/** Unread messages a chart answering bar requests keeps. */
+const MAX_UNREAD = 100;
 
 export class FakeEA {
   readonly session: string;
@@ -29,6 +42,11 @@ export class FakeEA {
   quoteStatus: "ok" | "no-quote" = "ok";
   private socket: Dealer;
   private sending: Promise<unknown> = Promise.resolve();
+  private readonly bars?: BarAnswer;
+  /** Bar requests received, as [timeframe, count, shift]. */
+  readonly barRequests: [number, number, number][] = [];
+  private readonly inbox: string[] = [];
+  private readonly waiting: ((message: string) => void)[] = [];
 
   constructor(options: FakeEAOptions = {}) {
     this.session = options.session ?? `chart-${Math.random().toString(36).slice(2, 10)}`;
@@ -38,12 +56,41 @@ export class FakeEA {
     this.digits = options.digits ?? 5;
     this.timeframe = options.timeframe ?? 60;
     this.eaVersion = options.eaVersion === undefined ? "1.08" : options.eaVersion;
-    this.socket = new Dealer({ routingId: this.session, receiveTimeout: 2000, linger: 0 });
+    this.bars = options.bars;
+    this.socket = new Dealer({ routingId: this.session, receiveTimeout: this.bars ? -1 : 2000, linger: 0 });
   }
 
   connect(endpoint: string) {
     this.socket.connect(endpoint);
+    if (this.bars) void this.pump();
     return this;
+  }
+
+  /** Reads every message: bar requests are answered, the rest wait for `receive`. */
+  private async pump() {
+    while (!this.socket.closed) {
+      let message: string;
+      try {
+        message = (await this.socket.receive())[0].toString();
+      } catch {
+        continue;
+      }
+      if (message.startsWith("G|")) void this.answer(message.split("|")).catch(() => {});
+      else if (this.waiting.length) this.waiting.shift()!(message);
+      // Unread replies are kept up to a point: a chart that never reads them (the dev run's) must not pile them up.
+      else if (this.inbox.push(message) > MAX_UNREAD) this.inbox.shift();
+    }
+  }
+
+  private async answer([, , , request, timeframe, count, shift]: string[]) {
+    this.barRequests.push([Number(timeframe), Number(count), Number(shift)]);
+    const head = `G|1|${this.session}|${request}|${timeframe}`;
+    const bars = this.bars!(Number(timeframe), Number(count), Number(shift));
+    if (bars === "loading") return this.send(`${head}|loading|0|0|`);
+    for (let offset = 0; offset < bars.length; offset += BARS_PER_PAGE) {
+      const rows = bars.slice(offset, offset + BARS_PER_PAGE).map((b) => [b.time, ...[b.open, b.high, b.low, b.close].map((p) => p.toFixed(this.digits)), b.volume ?? 0].join(","));
+      await this.send(`${head}|ok|${bars.length}|${offset}|${rows.join(";")}`);
+    }
   }
 
   /** The hello as EA 1.08 sends it (14 fields), or as EA 1.07 (13 fields) when eaVersion is null. */
@@ -80,8 +127,22 @@ export class FakeEA {
 
   /** The next message from the bridge server, as text. Rejects after the receive timeout. */
   async receive() {
-    const [frame] = await this.socket.receive();
-    return frame.toString();
+    if (!this.bars) {
+      const [frame] = await this.socket.receive();
+      return frame.toString();
+    }
+    if (this.inbox.length) return this.inbox.shift()!;
+    return new Promise<string>((resolve, reject) => {
+      const take = (message: string) => {
+        clearTimeout(timer);
+        resolve(message);
+      };
+      const timer = setTimeout(() => {
+        this.waiting.splice(this.waiting.indexOf(take), 1);
+        reject(Error("No message within 2 s"));
+      }, 2000);
+      this.waiting.push(take);
+    });
   }
 
   /** Sends and waits for the reply. */

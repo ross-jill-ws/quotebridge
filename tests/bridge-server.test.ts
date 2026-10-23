@@ -393,3 +393,72 @@ test("a replayed batch is ACKed but does not count as samples received", { timeo
 
   assert.deepEqual([bridge.snapshot().feeds[0].samplesMissing, bridge.snapshot().feeds[0].samplesAcceptedAt], [true, accepted]);
 });
+
+test("a bar request goes to the feed's owner chart (EA 1.10+), and its answer pages come back with the feed and market", { timeout: 10000 }, async (t) => {
+  const { bridge, ea } = await startBridge(t);
+  const chart = ea({ terminal: "mt4-aaaaaaaaaaaa", broker: "Demo-Broker", symbol: "EURUSD", eaVersion: "1.10" });
+  await chart.request(chart.helloWire());
+  const pages: unknown[] = [];
+  bridge.onBars((event) => pages.push(event));
+
+  const request = await bridge.requestBars(chart.feedKey(), 60, 900);
+  assert.equal(typeof request, "number");
+  assert.equal(await chart.receive(), `G|1|${chart.session}|${request}|60|900|0`);
+  await chart.send(`G|1|${chart.session}|${request}|60|ok|2|0|1800000000,1.1,1.2,1.05,1.15,42;1800003600,1.15,1.16,1.14,1.14,7`);
+  await chart.send(`G|1|${chart.session}|${request}|60|loading|0|0|`);
+  await chart.request(chart.helloWire());
+
+  const market = { brokerServer: "Demo-Broker", symbol: "EURUSD" };
+  assert.deepEqual(pages, [
+    {
+      feed: chart.feedKey(),
+      market,
+      request,
+      timeframe: 60,
+      status: "ok",
+      total: 2,
+      offset: 0,
+      bars: [
+        { time: 1800000000, open: 1.1, high: 1.2, low: 1.05, close: 1.15, tickVolume: 42 },
+        { time: 1800003600, open: 1.15, high: 1.16, low: 1.14, close: 1.14, tickVolume: 7 },
+      ],
+    },
+    { feed: chart.feedKey(), market, request, timeframe: 60, status: "loading", total: 0, offset: 0, bars: [] },
+  ]);
+  assert.equal(bridge.snapshot().invalidMessages, 0);
+});
+
+test("no bar request goes to an EA older than 1.10, or to an offline feed", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const old = ea({ symbol: "EURUSD", eaVersion: "1.09" });
+  const fresh = ea({ symbol: "GBPUSD", eaVersion: "1.10" });
+  await old.request(old.helloWire());
+  await fresh.request(fresh.helloWire());
+
+  assert.equal(await bridge.requestBars(old.feedKey(), 60, 900), null);
+  clock.advance(8000);
+  assert.equal(await bridge.requestBars(fresh.feedKey(), 60, 900), null);
+  assert.equal(await bridge.requestBars('["mt4-unknown","EURUSD"]', 60, 900), null);
+});
+
+test("malformed bar pages are rejected with their reasons", { timeout: 10000 }, async (t) => {
+  const { bridge, ea } = await startBridge(t);
+  const chart = ea({ session: "chart-bars", eaVersion: "1.10" });
+  await chart.request(chart.helloWire());
+  const wires = [
+    "G|1|chart-bars|7|60|ok|2|0|1800000000,1.1,1.2,1.05,1.15,1", // one row of two
+    "G|1|chart-bars|7|60|ok|2|0|1800003600,1.1,1.2,1.05,1.15,1;1800000000,1.1,1.2,1.05,1.15,1", // times go back
+    "G|1|chart-bars|7|60|ok|1|0|1800000000,1.1,1.0,1.05,1.15,1", // high below low
+    "G|1|chart-bars|7|60|ok|1|0|1800000000,1.1,1.2,1.05,1.15", // no volume
+    "G|1|chart-bars|7|60|ok|901|0|", // more than 900
+    "G|1|chart-bars|7|60|loading|3|0|", // loading with bars
+    "G|1|chart-bars|7|7|ok|1|0|1800000000,1.1,1.2,1.05,1.15,1", // not a period
+  ];
+  for (const wire of wires) await chart.send(wire);
+  await chart.request(chart.helloWire());
+
+  assert.deepEqual(
+    bridge.snapshot().rejections.map((r) => r.reason).reverse(),
+    ["Invalid bar page size", "Invalid bar", "Invalid bar", "Invalid bar", "Invalid bar page size", "Invalid bar page size", "Invalid period"],
+  );
+});

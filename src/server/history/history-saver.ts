@@ -1,8 +1,10 @@
 // The saver: copies a market's HST bars into saved history, from every period file of every terminal on its broker
-// server, so the history outlives MetaTrader trimming its files or the terminal being removed. Each run adds the bars
-// from the newest saved one on (that one may have been saved while forming) and the bars older than the first saved
-// one, reading each file from its end backwards; bars between are saved already. Recorded markets are saved at start
-// (once a terminal on their broker server is known) and hourly; any market once on request. One run at a time.
+// server, so the history outlives MetaTrader trimming its files or the terminal being removed. Each run reads each file
+// from its end backwards, adding the bars not saved yet and those from the newest saved one on (that one may have been
+// saved while forming), until a whole page is saved already; then the bars older than the first saved one. The EA's
+// bars (ea-bars.ts) may have left a hole before them, never longer than a page; older than that, bars are saved
+// already. Recorded markets are saved at start (once a terminal on their broker server is known) and hourly; any market
+// once on request. One run at a time.
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeSnapshot, type Market } from "../bridge/index.js";
@@ -121,12 +123,14 @@ export class HistorySaver {
     for (const { period, file, bars } of files) {
       if (this.closed) return;
       const saved = await this.options.store.span(id, period);
-      // From the end back to the newest saved bar, then on from before the first saved one.
+      // From the end back to a page saved already, then on from before the first saved one.
       for (let cursor: number | undefined; ; ) {
         const page = await file.before(cursor, SAVE_PAGE);
-        await insert(period, saved ? page.bars.filter((b) => b.time >= saved.last) : page.bars);
+        const known = saved && page.bars.length ? await this.options.store.times(id, period, page.bars[0].time, page.bars.at(-1)!.time) : new Set<number>();
+        const missing = page.bars.filter((b) => !known.has(b.time));
+        await insert(period, saved ? page.bars.filter((b) => b.time >= saved.last || !known.has(b.time)) : page.bars);
         progress.done = Math.min(read + bars, progress.done + page.bars.length);
-        if (this.closed || page.complete || page.next === undefined || (saved && page.next <= saved.last)) break;
+        if (this.closed || page.complete || page.next === undefined || (saved && !missing.length)) break;
         cursor = page.next;
       }
       for (let cursor = saved?.first; saved && !this.closed; ) {

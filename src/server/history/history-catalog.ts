@@ -1,13 +1,14 @@
 // The History page's catalog: every market the app knows (its feeds, recorded markets, and the symbols in the HST
 // folders of the terminals logged into a broker server), with each period's HST file and saved bars. A period's HST
 // comes from whichever terminal on that broker server holds the newest bar; a download continues into the saved bars
-// older than that file's first bar. Times are handed out in UTC (ADR 11).
+// older than that file's first bar, and into those newer than its last bar (the EA's bars, which replace its last bar
+// when they hold it, as it may have been written while forming). Times are handed out in UTC (ADR 11).
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeSnapshot, type Market } from "../bridge/index.js";
-import { PERIOD_MINUTES } from "./chart-history.js";
+import { PERIOD_MINUTES, PERIOD_OF } from "./chart-history.js";
 import type { SaveProgress } from "./history-saver.js";
 import { HstFile, hstPath, type HstBar } from "./hst-file.js";
 import type { SavedBarStore } from "./saved-store.js";
@@ -35,7 +36,8 @@ export type HistoryMarket = {
 
 /**
  * Everything available for a market's period, as the REST API reads it: the HST file holding the newest bar, joined
- * with the saved bars older than its first. `bars`, `first` and `last` describe the whole; times are broker seconds.
+ * with the saved bars older than its first and newer than its last. `bars`, `first` and `last` describe the whole;
+ * times are broker seconds.
  */
 export type HistorySeries = HistorySpan & {
   digits: number;
@@ -76,7 +78,8 @@ type KnownMarket = Market & { digits: number | null };
 /** A period's HST file, with what it holds in broker seconds. */
 type PeriodFile = { file: HstFile; span: HistorySpan };
 
-const PERIOD_BY_MINUTES = new Map(PERIODS.map((p) => [PERIOD_MINUTES[p], p]));
+/** The saved bars newer than a file's last bar: from `first` on; the file's own bars end before `fileEnd`. */
+type NewerSaved = { bars: number; first: number; last: number; fileEnd: number };
 
 export class HistoryCatalog {
   constructor(private readonly options: HistoryCatalogOptions) {}
@@ -139,21 +142,28 @@ export class HistoryCatalog {
     if (!best && !older) return null;
     const file = best?.file;
     const hstFirst = best?.span.first ?? Infinity;
+    const newer = await this.newerSaved(market, period, best);
+    const fileEnd = newer?.fileEnd ?? Infinity;
+    const fileBars = best ? best.span.bars - (newer && newer.fileEnd === best.span.last ? 1 : 0) : 0;
     return {
-      bars: (best?.span.bars ?? 0) + (older?.bars ?? 0),
+      bars: fileBars + (older?.bars ?? 0) + (newer?.bars ?? 0),
       first: older?.first ?? best!.span.first,
-      last: best?.span.last ?? older!.last,
+      last: newer?.last ?? best?.span.last ?? older!.last,
       digits: this.digits(market, best),
       clockRule: this.options.clockRule(market.brokerServer),
       latest: async (limit) => {
-        const recent = file ? (await file.before(undefined, limit)).bars : [];
-        const rest = older && recent.length < limit ? (await saved!.before(market, period, best?.span.first, limit - recent.length)).bars : [];
-        return [...rest, ...recent];
+        const newest = newer ? (await saved!.before(market, period, undefined, limit)).bars.filter((b) => b.time >= newer.first) : [];
+        const recent = file && newest.length < limit ? (await file.before(newer?.fileEnd, limit - newest.length)).bars : [];
+        const taken = newest.length + recent.length;
+        const rest = older && taken < limit ? (await saved!.before(market, period, best?.span.first, limit - taken)).bars : [];
+        return [...rest, ...recent, ...newest];
       },
       between: async (from, to, limit) => {
         const early = older && from < hstFirst ? await saved!.between(market, period, from, Math.min(to, hstFirst - 1), limit) : [];
-        const late = file && to >= hstFirst && early.length < limit ? await file.between(Math.max(from, hstFirst), to, limit - early.length) : [];
-        return [...early, ...late];
+        const middle = file && to >= hstFirst && from < fileEnd && early.length < limit ? await file.between(Math.max(from, hstFirst), Math.min(to, fileEnd - 1), limit - early.length) : [];
+        const taken = early.length + middle.length;
+        const late = newer && to >= newer.first && taken < limit ? await saved!.between(market, period, Math.max(from, newer.first), to, limit - taken) : [];
+        return [...early, ...middle, ...late];
       },
     };
   }
@@ -166,9 +176,18 @@ export class HistoryCatalog {
     if (!best && !savedOlder) return null;
     const digits = this.digits(market, best);
     const file = best?.file;
+    const newer = await this.newerSaved(market, period, best);
     async function* pages() {
       if (savedOlder) yield* saved!.pages(market, period, best?.span.first);
-      if (file) yield* file.pages();
+      if (file && !newer) yield* file.pages();
+      else if (file) {
+        for await (const page of file.pages()) {
+          const kept = page.filter((b) => b.time < newer!.fileEnd);
+          if (kept.length) yield kept;
+          if (kept.length < page.length) break;
+        }
+      }
+      if (newer) yield* saved!.pages(market, period, undefined, newer.first);
     }
     return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };
   }
@@ -185,13 +204,24 @@ export class HistoryCatalog {
         const names = await readdir(join(dataFolder, "history", brokerServer)).catch(() => [] as string[]);
         for (const name of names.filter((n) => /\.hst$/i.test(n)).sort()) {
           const hst = await HstFile.open(join(dataFolder, "history", brokerServer, name));
-          const period = hst && PERIOD_BY_MINUTES.get(hst.header.minutes);
+          const period = hst && PERIOD_OF.get(hst.header.minutes);
           const span = hst && period ? await hst.span() : null;
           if (hst && period && span) out.push({ file: `${terminalId}/${brokerServer}/${name}`, terminalId, brokerServer, period, hst, span });
         }
       }
     }
     return out;
+  }
+
+  /**
+   * The saved bars from a file's last bar on, when saved history reaches later than the file; they replace its last
+   * bar when they hold it. Null without a file, or when saved history reaches no later.
+   */
+  private async newerSaved(market: Market, period: Period, best: PeriodFile | null): Promise<NewerSaved | null> {
+    const last = best?.span.last;
+    const newer = last === undefined ? null : await this.options.saved?.count(market, period, undefined, last);
+    if (!newer || last === undefined || newer.last <= last) return null;
+    return { ...newer, fileEnd: newer.first === last ? last : last + 1 };
   }
 
   /** The HST file of a market's period holding the newest bar, among the terminals logged into its broker server. */
@@ -223,7 +253,7 @@ export class HistoryCatalog {
       for (const name of names.filter((n) => /\.hst$/i.test(n))) {
         const file = await HstFile.open(join(folder, name));
         // The header names the symbol and period: a file name alone is ambiguous ("GER3060": GER30 H1).
-        const period = file && PERIOD_BY_MINUTES.get(file.header.minutes);
+        const period = file && PERIOD_OF.get(file.header.minutes);
         if (!file || !period || name.toLowerCase() !== `${file.header.symbol}${file.header.minutes}.hst`.toLowerCase()) continue;
         const span = await file.span();
         if (!span) continue;

@@ -1,7 +1,9 @@
 // Synthetic feeds for `npm run dev`, covering every row state of the Feeds view. They run in the dev
-// runner, not the server process, so they reconnect (ZeroMQ does) when the server restarts.
+// runner, not the server process, so they reconnect (ZeroMQ does) when the server restarts. As EA 1.10 they answer bar
+// requests with synthetic bars ending at their price, so their charts are full.
 import { utcToBroker } from "../../src/shared/clock.js";
 import { FakeEA } from "../../tests/fake-ea.js";
+import { fakeBars } from "./fake-bars.js";
 
 /** The fake broker's clock: GMT+2, GMT+3 in US summer time, like most MetaTrader brokers. */
 const BROKER_CLOCK = { winterOffsetMinutes: 120, dst: "us" } as const;
@@ -15,11 +17,14 @@ export function fakeFeeds(endpoint: string): () => void {
   const terminal = "mt4-0123456789ab";
   const broker = "Demo-Broker";
   type Fake = { ea: FakeEA; price?: number; spread?: number; frozen?: boolean; oldSession?: boolean; until?: number; seq: number };
-  const make = (options: ConstructorParameters<typeof FakeEA>[0], extra: Partial<Fake> = {}): Fake => ({
-    ea: new FakeEA({ terminal, broker, ...options }).connect(endpoint),
-    seq: 0,
-    ...extra,
-  });
+  const make = (options: ConstructorParameters<typeof FakeEA>[0], extra: Partial<Fake> = {}): Fake => {
+    const fake = { seq: 0, ...extra } as Fake;
+    // A feed without a price has no bars to show: MetaTrader would still be loading them.
+    const bars = (timeframe: number, count: number, shift: number) =>
+      fake.price === undefined ? ("loading" as const) : fakeBars(timeframe, count, shift, brokerNow(), fake.price, options?.digits ?? 5);
+    fake.ea = new FakeEA({ terminal, broker, eaVersion: "1.10", bars, ...options }).connect(endpoint);
+    return fake;
+  };
   const fakes: Fake[] = [
     make({ symbol: "EURUSD", timeframe: 60 }, { price: 1.0842, spread: 0.00012 }),
     make({ symbol: "GBPUSD", timeframe: 15 }, { price: 1.2711, spread: 0.00015 }),

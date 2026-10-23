@@ -3,7 +3,7 @@
 import { Router } from "zeromq";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { asPortInUse } from "../port-in-use.js";
-import { feedKey, MAX_MESSAGE_BYTES, parseMessage, type Hello, type Market, type Sample } from "./protocol.js";
+import { barRequestWire, feedKey, MAX_MESSAGE_BYTES, parseMessage, type BarPage, type Hello, type Market, type Sample } from "./protocol.js";
 
 /** A feed is online while its last message is younger than this. EAs re-send hello every 2 s. */
 export const ONLINE_WINDOW_MS = 7000;
@@ -31,6 +31,17 @@ const STALE_PEER_MS = 60000;
  */
 export type SampleEvent = { type: "samples"; feed: string; market: Market; samples: Sample[] } | { type: "removed"; feed: string };
 export type SampleListener = (event: SampleEvent) => void;
+
+/** A page of an EA's answer to a bar request, with the feed and market it came from. */
+export type BarsEvent = Omit<BarPage, "type" | "session"> & { feed: string; market: Market };
+export type BarsListener = (event: BarsEvent) => void;
+
+/** EAs from this version on answer bar requests; older ones ignore them. */
+const BARS_SINCE = [1, 10];
+const answersBars = (version: string | undefined) => {
+  const [major, minor] = (version ?? "").split(".").map(Number);
+  return major > BARS_SINCE[0] || (major === BARS_SINCE[0] && minor >= BARS_SINCE[1]);
+};
 
 /**
  * An EA message the bridge rejected, and why. The excerpt is short, and account info and trading messages keep only their
@@ -158,6 +169,9 @@ export class BridgeServer {
   private operations: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
   private readonly sampleListeners = new Set<SampleListener>();
+  private readonly barsListeners = new Set<BarsListener>();
+  private readonly onlineListeners = new Set<(feed: string) => void>();
+  private lastBarRequest = 0;
 
   constructor(options: BridgeServerOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -199,24 +213,49 @@ export class BridgeServer {
     return () => this.rejectionListeners.delete(listener);
   }
 
-  private emit(event: SampleEvent) {
-    for (const listener of this.sampleListeners) {
+  /** Calls `listener` with each page of an answer to a bar request; returns an unsubscribe function. */
+  onBars(listener: BarsListener): () => void {
+    this.barsListeners.add(listener);
+    return () => this.barsListeners.delete(listener);
+  }
+
+  /** Calls `listener` with a feed's key when a hello brings one of its charts online; returns an unsubscribe function. */
+  onOnline(listener: (feed: string) => void): () => void {
+    this.onlineListeners.add(listener);
+    return () => this.onlineListeners.delete(listener);
+  }
+
+  /**
+   * Asks the feed's owner chart for `count` closed bars of `timeframe` (minutes), the newest `shift` skipped; the
+   * pages come to `onBars` listeners. Resolves to the request's number, or null when the feed is offline or its EA
+   * predates bar requests.
+   */
+  requestBars(feed: string, timeframe: number, count: number, shift = 0): Promise<number | null> {
+    return this.serial(async () => {
+      const owner = this.owner(feed);
+      if (!owner || !answersBars(owner.eaVersion)) return null;
+      const request = ++this.lastBarRequest;
+      await this.send(owner.route, barRequestWire(owner.session, request, timeframe, count, shift));
+      return request;
+    });
+  }
+
+  private notify<T>(listeners: Set<(value: T) => void>, value: T, what: string) {
+    for (const listener of listeners) {
       try {
-        listener(event);
+        listener(value);
       } catch (e) {
-        console.error("Bridge sample listener failed", e);
+        console.error(`Bridge ${what} listener failed`, e);
       }
     }
   }
 
+  private emit(event: SampleEvent) {
+    this.notify(this.sampleListeners, event, "sample");
+  }
+
   private changed() {
-    for (const listener of this.listeners) {
-      try {
-        listener();
-      } catch (e) {
-        console.error("Bridge change listener failed", e);
-      }
-    }
+    this.notify(this.listeners, undefined, "change");
   }
 
   private serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -291,13 +330,7 @@ export class BridgeServer {
     };
     this.rejections = [rejection, ...this.rejections.slice(0, MAX_REJECTIONS - 1)];
     if (rejection.feed) this.lastRejectionByFeed.set(rejection.feed, rejection);
-    for (const listener of this.rejectionListeners) {
-      try {
-        listener(rejection);
-      } catch (e) {
-        console.error("Bridge rejection listener failed", e);
-      }
-    }
+    this.notify(this.rejectionListeners, rejection, "rejection");
   }
 
   private async accept(route: Buffer, body: Buffer) {
@@ -315,11 +348,20 @@ export class BridgeServer {
           this.emit({ type: "removed", feed: stale.feed });
         }
       }
+      const wasOnline = old !== undefined && this.isOnline(old);
       const p: Peer = { ...old, ...m, feed: feedKey(m), route, ...this.heard(old) };
       this.peers.set(m.session, p);
       this.terminals.set(m.terminal, { terminalId: m.terminal, lastHello: p.lastSeen, eaVersion: m.eaVersion ?? null, brokerServer: m.broker });
       // The hello reply is the subscription state; duplicates may hand ownership over, so refresh every chart of the feed.
       for (const peer of this.peers.values()) if (peer.feed === p.feed) await this.control(peer);
+      if (!wasOnline) this.notify(this.onlineListeners, p.feed, "online");
+    } else if (m.type === "bars") {
+      const p = this.peers.get(m.session);
+      if (!p) return this.send(route, `R|1|${m.session}`);
+      Object.assign(p, this.heard(p));
+      const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
+      const { type: _type, session: _session, ...page } = m;
+      this.notify(this.barsListeners, { ...page, feed: p.feed, market: { brokerServer, symbol: p.symbol } }, "bars");
     } else if (m.type === "samples") {
       const p = this.peers.get(m.session);
       if (!p) {

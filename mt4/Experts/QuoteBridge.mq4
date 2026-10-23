@@ -1,9 +1,9 @@
 #property strict
-#property version "1.09"
+#property version "1.10"
 #property description "Quote Bridge: live quotes and holdings; opt-in DEMO trading only."
 // Installed and compiled by QuoteBridge for MetaTrader with the terminal's own MetaEditor; do not edit here.
 // Sent as the last hello field; keep equal to #property version.
-#define QB_EA_VERSION "1.09"
+#define QB_EA_VERSION "1.10"
 #include "..\Include\QuoteBridgeZmq.mqh"
 input string ServerEndpoint="tcp://127.0.0.1:5555";
 input string TerminalId="mt4-main";
@@ -66,6 +66,44 @@ void FlushCandles() {
  }
 }
 
+// Chart bars on request (G|1|session|request|timeframe|count|shift): the last closed bars of any period of the chart's
+// symbol, oldest first, in pages of QB_BARS_PER_PAGE after quote flushing, so QuoteBridge shows what MetaTrader holds in
+// memory but has not written to its history files. "loading" while MetaTrader is still loading that period: the server
+// asks again. shift skips the newest closed bars, for asking further back later.
+#define QB_BARS_PER_PAGE 100
+#define QB_MAX_REQUEST_BARS 900
+MqlRates barRates[];
+string barRequest="";
+int barOffset=0,barTotal=0,barTimeframe=0;
+bool IsTimeframe(int t) {return t==1||t==5||t==15||t==30||t==60||t==240||t==1440||t==10080||t==43200;}
+void RequestBars(string request,int timeframe,int count,int shift) {
+ if(StringToInteger(request)<=0||!IsTimeframe(timeframe)||count<1||count>QB_MAX_REQUEST_BARS||shift<0)return;
+ if(barRequest==request)return;
+ barRequest="";ArrayResize(barRates,0);
+ ArraySetAsSeries(barRates,false);
+ ResetLastError();
+ // Bar 0 is still forming: closed bars start at 1.
+ int copied=CopyRates(Symbol(),timeframe,1+shift,count,barRates);
+ int error=GetLastError();
+ // 4066: history is being updated; 4073: none loaded yet.
+ if(copied<=0||error==4066||error==4073){ArrayResize(barRates,0);Send("G|1|"+session+"|"+request+"|"+IntegerToString(timeframe)+"|loading|0|0|");return;}
+ barRequest=request;barTimeframe=timeframe;barOffset=0;barTotal=copied;
+}
+void FlushBars() {
+ if(barRequest=="")return;
+ for(int page=0;page<3;page++) {
+  int end=MathMin(barOffset+QB_BARS_PER_PAGE,barTotal);
+  string rows="";
+  for(int i=barOffset;i<end;i++) {
+   if(i>barOffset)rows+=";";
+   rows+=IntegerToString((long)barRates[i].time)+","+DoubleToString(barRates[i].open,Digits)+","+DoubleToString(barRates[i].high,Digits)+","+DoubleToString(barRates[i].low,Digits)+","+DoubleToString(barRates[i].close,Digits)+","+IntegerToString(barRates[i].tick_volume);
+  }
+  if(!Send("G|1|"+session+"|"+barRequest+"|"+IntegerToString(barTimeframe)+"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+rows))return;
+  barOffset=end;
+  if(barOffset>=barTotal){barRequest="";ArrayResize(barRates,0);return;}
+ }
+}
+
 void Hello() {
  Send("H|1|"+session+"|"+Clean(TerminalId)+"|"+Clean(AccountServer())+"|"+Clean(Symbol())+"|"+IntegerToString(Digits)+"|"+IntegerToString(SamplingMilliseconds)+"|"+IntegerToString(dropped)+"|"+quoteStatus+"|"+IntegerToString(Period())+"|2000|1|"+QB_EA_VERSION);
  AccountHello();
@@ -79,7 +117,7 @@ void Cleanup() {
 }
 bool ConnectSocket() {
  if(socket!=0){zmq_close(socket);socket=0;}
- lastConnect=GetTickCount();serverConfirmed=false;candleRequest="";ArrayResize(candleRates,0);
+ lastConnect=GetTickCount();serverConfirmed=false;candleRequest="";ArrayResize(candleRates,0);barRequest="";ArrayResize(barRates,0);
  socket=zmq_socket(context,QB_DEALER);if(socket==0){return false;}
  if(!QBOption(socket,QB_LINGER,0)||!QBOption(socket,QB_SNDHWM,64)||!QBOption(socket,QB_RCVHWM,64)||!QBOption(socket,QB_IMMEDIATE,1)){return false;}
  if(!QBOption(socket,79,3000)||!QBOption(socket,66,5000))return false; // CONNECT_TIMEOUT / HANDSHAKE_IVL
@@ -113,12 +151,13 @@ void Receive() {
   if(n==0||n>4096)continue;
   string fields[];int parts=StringSplit(CharArrayToString(buffer,0,n,CP_UTF8),StringGetCharacter("|",0),fields);
   if(parts<3||fields[1]!="1"||fields[2]!=session)continue;
-  if(fields[0]!="R" && fields[0]!="C" && fields[0]!="A" && fields[0]!="B" && fields[0]!="V" && fields[0]!="P" && fields[0]!="X")continue;
+  if(fields[0]!="R" && fields[0]!="C" && fields[0]!="A" && fields[0]!="B" && fields[0]!="G" && fields[0]!="V" && fields[0]!="P" && fields[0]!="X")continue;
   lastReply=GetTickCount();
   if(!serverConfirmed){Print("QuoteBridge server confirmed connection for ",Symbol());serverConfirmed=true;}
   if(TradingReceive(fields,parts))continue;
   if(fields[0]=="R"){Hello();continue;}
   if(fields[0]=="B" && parts==6){RequestCandles(fields[3],(int)StringToInteger(fields[4]),(int)StringToInteger(fields[5]));continue;}
+  if(fields[0]=="G" && parts==7){RequestBars(fields[3],(int)StringToInteger(fields[4]),(int)StringToInteger(fields[5]),(int)StringToInteger(fields[6]));continue;}
   if(parts!=4)continue;
   if(fields[0]=="C" && (fields[3]=="0"||fields[3]=="1")){subscribed=fields[3]=="1";continue;}
   if(fields[0]=="A") {
@@ -162,7 +201,7 @@ void OnTimer() {
   if(socket!=0)Hello();
  }
  Capture();
- if(socket!=0){if((uint)(GetTickCount()-lastHello)>=2000)Hello();Flush();FlushAccount();FlushCandles();}
+ if(socket!=0){if((uint)(GetTickCount()-lastHello)>=2000)Hello();Flush();FlushAccount();FlushCandles();FlushBars();}
  Comment("QuoteBridge | ",Symbol()," | ",serverConfirmed?"server connected":"SERVER NOT CONFIRMED"," | errno ",sendError," | ",subscribed?"subscribed":"idle"," | queued ",count," | dropped ",dropped," | ",quoteStatus);
 }
 void OnDeinit(const int reason) {

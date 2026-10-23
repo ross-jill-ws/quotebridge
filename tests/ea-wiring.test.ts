@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { BARS_PER_PAGE, MAX_REQUEST_BARS } from "../src/server/bridge/index.js";
 
 // A Windows checkout may turn LF into CRLF; the checks are about content, not line endings.
 const eol = (text: string) => text.replace(/\r\n/g, "\n");
@@ -35,8 +36,8 @@ function helloFields(): string[] {
   return sends[0][1].split("|");
 }
 
-test("QuoteBridge EA version is 1.09", () => {
-  assert.match(source, /^#property version "1\.09"$/m);
+test("QuoteBridge EA version is 1.10", () => {
+  assert.match(source, /^#property version "1\.10"$/m);
 });
 
 test("hello keeps the 1.07 fields and carries the EA version as its last field", () => {
@@ -46,7 +47,7 @@ test("hello keeps the 1.07 fields and carries the EA version as its last field",
   const version = fields.at(-1)!.match(/^"\+(\w+)$/)?.[1];
   assert.ok(version, `last hello field must be a version constant, got ${fields.at(-1)}`);
   const defined = source.match(new RegExp(`^#define ${version} "([^"]*)"$`, "m"))?.[1];
-  assert.equal(defined, "1.09", "the hello reports the same version as #property version");
+  assert.equal(defined, "1.10", "the hello reports the same version as #property version");
 });
 
 test("EA timer updates trade freshness before receiving commands, independent of recording", () => {
@@ -79,4 +80,19 @@ test("the EA's stop line says whether queued samples are kept for the restart or
   assert.match(deinit, /REASON_CHARTCHANGE/);
   assert.match(deinit, /REASON_PARAMETERS/);
   assert.doesNotMatch(deinit, /unacknowledged samples lost/);
+});
+
+// The bar exchange (G) the server parses in src/server/bridge/protocol.ts; the fake EA in tests/fake-ea.ts speaks it too.
+test("the EA answers a bar request in pages the server accepts, with the same limits, after flushing quotes", () => {
+  const receive = source.match(/void Receive\(\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(receive, "EA must have Receive()");
+  assert.ok(receive.includes(`fields[0]!="G"`), "G messages get past the type filter");
+  assert.ok(receive.includes(`if(fields[0]=="G" && parts==7){RequestBars(`), "a request has seven fields: G|1|session|request|timeframe|count|shift");
+  assert.equal(source.match(/^#define QB_BARS_PER_PAGE (\d+)$/m)?.[1], String(BARS_PER_PAGE));
+  assert.equal(source.match(/^#define QB_MAX_REQUEST_BARS (\d+)$/m)?.[1], String(MAX_REQUEST_BARS));
+  assert.ok(source.includes(`"|loading|0|0|"`), "a loading answer has no bars");
+  assert.ok(source.includes(`"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+rows`));
+  assert.ok(source.includes("CopyRates(Symbol(),timeframe,1+shift,count,barRates)"), "closed bars only: the forming bar 0 is skipped");
+  const timer = source.match(/void OnTimer\(\)\s*\{([\s\S]*?)\n\}/)![1];
+  assert.ok(timer.indexOf("Flush();") < timer.indexOf("FlushBars();"), "quotes go out first");
 });

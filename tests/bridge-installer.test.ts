@@ -79,7 +79,7 @@ test("a terminal is not installed before the first install and installed with th
 
   const status = await installer.status(terminal);
   assert.equal(status.state, "installed");
-  assert.equal(status.eaVersion, "1.09");
+  assert.equal(status.eaVersion, "1.10");
   assert.equal(status.terminalId, terminalIdFor(terminal.dataFolder));
 });
 
@@ -229,7 +229,7 @@ test("a compile with errors copies nothing, keeps the old EA and shows compile f
   assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
   const status = await newer.status(terminal);
   assert.equal(status.state, "compile-failed");
-  assert.equal(status.eaVersion, "1.09");
+  assert.equal(status.eaVersion, "1.10");
   assert.equal(status.lastFailure?.reason, "compile-errors");
   assert.equal(status.lastFailure?.errors?.length, 2);
   assert.ok(status.lastFailure?.compileLog?.startsWith(fixture.appData));

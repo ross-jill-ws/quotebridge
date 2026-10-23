@@ -43,7 +43,7 @@ symbol), so it answers even when no terminal is running.
 | --- | --- |
 | `GET /api/v1/symbols` | `{ symbols: [{ symbol, broker, terminal, feed, online, recording, digits, bid, ask, quoteTime, quoteTimeUtc, livePeriods[], historyPeriods[] }] }`, one row per feed. `broker` is the broker server. |
 | `GET /api/v1/symbols/:symbol/quote` | The feed's latest sample (`source: "live"`), else the market's last recorded sample (`source: "recorded"`, with `received` in UTC ms). `{ symbol, broker, terminal, feed, source, online, bid, ask, spread (points), digits, time, timeUtc }`. |
-| `GET /api/v1/symbols/:symbol/candles?period=H1&count=30&source=auto` | The last `count` (1–2000) bars: `{ period, timeframe, symbol, broker, terminal, feed, digits, source, status, message, bars: [{ time, timeUtc, open, high, low, close, complete? }] }`. `auto` is the chart's history: HST, then saved history, with the live candles after it. `live` gives the live candles only; `history` gives HST and saved bars, with `volume` and `spread`. The last live bar has `complete: false`. |
+| `GET /api/v1/symbols/:symbol/candles?period=H1&count=30&source=auto` | The last `count` (1–2000) bars: `{ period, timeframe, symbol, broker, terminal, feed, digits, source, status, message, bars: [{ time, timeUtc, open, high, low, close, complete? }] }`. `auto` is the chart's history (see [Chart history](#chart-history)), with the live candles after it. `live` gives the live candles only; `history` gives HST and saved bars, with `volume` and `spread`. The last live bar has `complete: false`. |
 | `GET /api/v1/symbols/:symbol/samples?from=&to=&limit=10000` | Recorded samples from `from` to `to` (UTC ms), oldest first, `limit` ≤ 100,000: `{ symbol, broker, from, to, truncated, samples: [{ time, timeUtc, bid, ask, received }] }`. With `truncated: true`, continue from the last `timeUtc + 1`: a page ends at a whole second, unless one second holds more than `limit` samples (the rest of that second is then skipped). |
 | `GET /api/v1/history` | `{ series: [{ source, symbol, broker, period, timeframe, bars, from, to, fromUtc, toUtc }] }`: each market's periods, from MetaTrader's HST file joined with the app's saved history. `source` is the broker server. |
 | `GET /api/v1/history/:symbol?period=H1&from=&to=&limit=10000&source=` | Bars in `[from, to]` (broker seconds), oldest first, `limit` ≤ 100,000, each `{ time, timeUtc, open, high, low, close, volume, spread }`. With `truncated: true`, continue from the last `time + 1`. `source` picks the broker server. |
@@ -54,6 +54,25 @@ symbol), so it answers even when no terminal is running.
 
 Errors are `{ error, details? }` with `400` (bad input), `401`, `403`, `404` (unknown symbol or no history), `409`
 (ambiguous symbol, or no quote yet) and `503` (no live candles yet).
+
+## Chart history
+
+The Charts view and `source=auto` show a period's bars from these sources, oldest to newest:
+
+1. **Saved history**: the app's own copy in its database, for bars older than the terminal's history file.
+2. **MetaTrader's history file** (`<symbol><minutes>.hst` in the terminal's `history` folder). Where the period has no
+   file, or a stale one, the bars are rolled up from the M1 file (D1 for W1 and MN1).
+3. **The EA's bars**: MetaTrader writes a period's file only when its chart closes or the terminal shuts down, so an open
+   chart's recent bars are often not on disk. When a period has no bars, or a gap before the live candles, the app asks
+   the QuoteBridge EA (1.10 or later) for the last 900 closed bars of that period, of any period, not only the chart's.
+   It asks once when a feed connects, for its chart period, and when the Charts view opens a period. The bars are kept
+   in saved history, so they survive a restart and the History page lists them. They replace the file's last bar,
+   which may have been written while it was still forming.
+4. **The live candles** the app builds from the EA's quotes since it started. The bar still forming takes the live
+   high, low and close.
+
+While the EA is still loading a period's history, the app asks again a little later. An older EA, or an offline feed,
+leaves the chart as it is. Paging back past the EA's bars continues in saved history or the history file.
 
 ## Coming later
 
