@@ -38,6 +38,7 @@ import {
   drawnIndicators,
   MAX_INDICATORS,
   newColours,
+  swapTones,
   withColour,
   type IndicatorDraw,
   type IndicatorSpec,
@@ -424,14 +425,25 @@ function IndicatorRow({
       <span class="ind-label">{row.label}</span>
       {row.outputs.map((o) => (
         <span key={o.id} class="ind-output">
-          <button
-            class="swatch"
-            style={{ background: o.colour }}
-            title={`Colour of ${o.label ?? row.label}`}
-            aria-label={`Colour of ${o.label ?? row.label}`}
-            aria-expanded={picking === o.id}
-            onClick={() => setPicking(picking === o.id ? undefined : o.id)}
-          />
+          {o.tones ? (
+            // Rising and falling bars: the click swaps their two colours.
+            <button
+              class="swatch"
+              style={{ background: `linear-gradient(90deg, ${o.tones.rising} 50%, ${o.tones.falling} 50%)` }}
+              title={`Swap the rising and falling colours of ${o.label ?? row.label}`}
+              aria-label={`Swap the rising and falling colours of ${o.label ?? row.label}`}
+              onClick={() => spec && onChange(row.id, swapTones(spec, o.id))}
+            />
+          ) : (
+            <button
+              class="swatch"
+              style={{ background: o.colour }}
+              title={`Colour of ${o.label ?? row.label}`}
+              aria-label={`Colour of ${o.label ?? row.label}`}
+              aria-expanded={picking === o.id}
+              onClick={() => setPicking(picking === o.id ? undefined : o.id)}
+            />
+          )}
           {o.label && <span class="ind-name">{o.label}</span>}
           <span class="value" style={{ color: o.colour }}>
             {o.value}

@@ -12,6 +12,7 @@ import {
   indicatorDigits,
   indicatorLabel,
   newColours,
+  swapTones,
   valuesByCandle,
   withColour,
   type IndicatorValuesAnswer,
@@ -191,6 +192,67 @@ test("a colour chosen from the legend is kept in the view memory and drawn in it
   assert.deepEqual(readChartMemory(JSON.stringify({ indicators: [chosen] })).indicators, [chosen]);
   const drawn = drawnIndicators([chosen], PACKAGES, new Map([["bb", BAND_VALUES]]), BARS, 5, chartScheme("default", "dark"));
   assert.deepEqual(legendOf(drawn)[0].outputs.map((o) => o.colour), ["#e8b44a", "#a3afc2", "#b08cf0"]);
+});
+
+const AO_MANIFEST = manifest("../src/server/indicators/bundled/ao/manifest.json");
+const MACD_BUNDLED = manifest("../src/server/indicators/bundled/macd/manifest.json");
+const EO_MANIFEST = manifest("../src/server/indicators/bundled/eo/manifest.json");
+const HISTOGRAMS = new Map([AO_MANIFEST, MACD_BUNDLED, EO_MANIFEST].map((m) => [m.id, info(m)]));
+const AO = { id: "ao", package: "quotebridge.ao", parameters: { fast: 5, slow: 34 }, colours: {} };
+/** AO's answer: no value at the first bar, then a rising and a falling bar. */
+const AO_VALUES: IndicatorValuesAnswer = {
+  ...answer({}),
+  outputs: { ao: [{ time: 3600, value: null }, { time: 7200, value: 0.0012, styleKey: "rising" }, { time: 10800, value: -0.0003, styleKey: "falling" }] },
+};
+
+test("a histogram's rising and falling bars are Uptick and Downtick, following the theme and Green on black, and its legend value takes its bar's colour", () => {
+  assert.deepEqual(newColours(AO_MANIFEST, []), {}, "no palette colour for a two-colour histogram");
+  for (const [scheme, up, down] of [
+    [LIGHT, "#00a86b", "#e5384f"],
+    [chartScheme("default", "dark"), "#2ee6a0", "#ff5e6e"],
+    [chartScheme("green-on-black", "light"), "#00ff00", "#ff0000"],
+  ] as const) {
+    const drawn = drawnIndicators([AO], HISTOGRAMS, new Map([["ao", AO_VALUES]]), BARS, 5, scheme);
+    assert.deepEqual(drawn.draws[0].outputs[0].colours, [undefined, up, down]);
+    assert.deepEqual(legendOf(drawn)[0].outputs[0].colour, down, "the latest bar fell");
+    assert.deepEqual(legendOf(drawn, 7200)[0].outputs[0].colour, up, "the crosshair's bar rose");
+    assert.deepEqual(legendOf(drawn)[0].outputs[0].tones, { rising: up, falling: down });
+  }
+});
+
+test("a single-colour histogram takes a palette colour, as a line does", () => {
+  assert.deepEqual(newColours(MACD_BUNDLED, [{ colours: { ma: 0 } }]), { macd: 1, signal: 2 });
+  assert.deepEqual(newColours(EO_MANIFEST, []), { eo: 0 }, "EO's line only");
+  const macd = { id: "m", package: "quotebridge.macd", parameters: { fast: 12, slow: 26, signal: 9 }, colours: { macd: 1, signal: 2 } };
+  const drawn = drawnIndicators([macd], HISTOGRAMS, new Map([["m", answer({ macd: [null, 0.0004, 0.0002], signal: [null, null, 0.0003] })]]), BARS, 5, LIGHT);
+  assert.deepEqual(drawn.draws[0].outputs.map((o) => [o.colour, o.colours]), [
+    [LIGHT.series[1], undefined],
+    [LIGHT.series[2], undefined],
+  ]);
+  assert.deepEqual(legendOf(drawn)[0], {
+    id: "m",
+    label: "MACD 12 26 9",
+    outputs: [
+      { id: "macd", label: "MACD", colour: LIGHT.series[1], value: "0.00020" },
+      { id: "signal", label: "Signal", colour: LIGHT.series[2], value: "0.00030" },
+    ],
+  });
+});
+
+test("a histogram's two colours swap from the legend, kept in view memory, and swap back", () => {
+  const swapped = swapTones(AO, "ao");
+  assert.deepEqual(readChartMemory(JSON.stringify({ indicators: [swapped] })).indicators, [swapped]);
+  const drawn = drawnIndicators([swapped], HISTOGRAMS, new Map([["ao", AO_VALUES]]), BARS, 5, LIGHT);
+  assert.deepEqual(drawn.draws[0].outputs[0].colours, [undefined, LIGHT.falling, LIGHT.rising]);
+  assert.deepEqual(swapTones(swapped, "ao").colours, {});
+});
+
+test("an indicator pane with a histogram gets a zero line; one with lines only does not", () => {
+  const drawn = drawnIndicators([AO], HISTOGRAMS, new Map([["ao", AO_VALUES]]), BARS, 5, LIGHT);
+  assert.equal(drawn.draws[0].zeroLine, true);
+  assert.equal(drawn.draws[0].pane, true);
+  const bands = drawnIndicators([BANDS], PACKAGES, new Map([["bb", BAND_VALUES]]), BARS, 5, LIGHT);
+  assert.equal(bands.draws[0].zeroLine, false);
 });
 
 test("a failed indicator's last good values are greyed, every output alike", () => {

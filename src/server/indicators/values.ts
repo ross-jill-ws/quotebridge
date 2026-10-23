@@ -205,9 +205,11 @@ export class IndicatorValues {
     // Too far behind to join on (or rewritten before it): read the whole key again.
     if (at < 0) return this.load(entry, feed, entry.from);
     const bars = [...entry.bars.slice(0, at), ...tail];
-    if (sameBars(bars.slice(at), entry.bars.slice(at))) return false;
+    // A closed-bars-only package never sees the forming bar: only a bar closing changes its values.
+    const seen = (list: readonly Candle[]) => (entry.pkg.manifest.closedBarsOnly ? list.slice(at, -1) : list.slice(at));
+    const same = sameBars(seen(bars), seen(entry.bars));
     entry.bars = bars;
-    return this.compute(entry);
+    return same ? false : this.compute(entry);
   }
 
   /** Runs the package over the entry's bars; true when its values or failure changed. */

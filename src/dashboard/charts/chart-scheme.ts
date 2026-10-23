@@ -35,6 +35,9 @@ export type ChartScheme = {
   level: string;
   /** Gold, azure, violet, slate: indicators take them in order. */
   series: readonly [string, string, string, string];
+  /** A histogram's rising and falling bars: Uptick and Downtick. */
+  rising: string;
+  falling: string;
 };
 
 const filled = (colour: string): CandleColours => ({ body: colour, wick: colour, border: colour });
@@ -60,6 +63,8 @@ function tokenScheme(mode: ColourMode): ChartScheme {
     ask: token("downtick"),
     level: LEVEL[mode],
     series: [token("series-gold"), token("series-azure"), token("series-violet"), token("series-slate")],
+    rising: token("uptick-vivid"),
+    falling: token("downtick-vivid"),
   };
 }
 
@@ -81,6 +86,9 @@ const GREEN_ON_BLACK: ChartScheme = {
   ask: "#ff7d69",
   level: "#808080",
   series: DEFAULT.dark.series,
+  // MetaTrader's own green and red for rising and falling bars.
+  rising: "#00ff00",
+  falling: "#ff0000",
 };
 
 export function chartScheme(colours: ChartColours, mode: ColourMode): ChartScheme {

@@ -1,0 +1,44 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.macd",
+  "version": "1.0.0",
+  "name": "MACD",
+  "description": "The fast EMA of the close less the slow one, as bars, with a signal line that is the simple average of the MACD, as MetaTrader's MACD.",
+  "license": "MIT",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Close",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "close",
+      "history": { "parameter": "slow", "extra": 499 }
+    }
+  ],
+  "parameters": [
+    { "id": "fast", "label": "Fast EMA", "type": "integer", "default": 12, "min": 1, "max": 500, "lessThan": "slow" },
+    { "id": "slow", "label": "Slow EMA", "type": "integer", "default": 26, "min": 1, "max": 500 },
+    { "id": "signal", "label": "Signal SMA", "type": "integer", "default": 9, "min": 1, "max": 500 }
+  ],
+  "outputs": [
+    {
+      "id": "macd",
+      "label": "MACD",
+      "kind": "numeric",
+      "render": "histogram",
+      "placement": "pane",
+      "color": "#a3afc2",
+      "unit": { "input": "source" }
+    },
+    {
+      "id": "signal",
+      "label": "Signal",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "pane",
+      "color": "#ff5e6e",
+      "unit": { "input": "source" }
+    }
+  ]
+}

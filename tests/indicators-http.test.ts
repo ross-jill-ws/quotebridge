@@ -213,6 +213,30 @@ test("a failure keeps the last good values, marked stale with the reason, until 
   assert.equal(again.outputs.close.at(-1)!.value, 1.3);
 });
 
+test("a closed-bars-only package has no value at the forming bar, and none of its values move while the bar forms", { timeout: 20000 }, async (t) => {
+  const { clock, send, values } = await start(t);
+  const eo = { package: "quotebridge.eo", limit: 10 };
+  await send(TEN + 60, 1.2);
+  const first = await values(eo);
+  for (const points of Object.values(first.outputs)) {
+    // The page's bars are HST's last 9 and the forming 10:00 candle: the values stop at 09:00.
+    assert.equal(points.at(-1)!.time, utc(HST.at(-1)!.time));
+    assert.ok(points.every((p) => p.complete === undefined && p.time !== utc(TEN)));
+  }
+  assert.ok(first.outputs.eo.every((p) => p.value !== null));
+
+  await send(TEN + 120, 1.9);
+  clock.advance(1000);
+  assert.deepEqual((await values(eo)).outputs, first.outputs, "the forming bar moved; nothing else did");
+
+  // The next bar opens: 10:00 has closed, and has its value.
+  await send(TEN + HOUR + 60, 1.3);
+  clock.advance(1000);
+  const closed = await values(eo);
+  assert.equal(closed.outputs.eo.at(-1)!.time, utc(TEN));
+  assert.ok(closed.outputs.eo.every((p) => p.complete === undefined));
+});
+
 test("the live stream tells a window when the values of a key it shows have changed", { timeout: 20000 }, async (t) => {
   const { origin, cookie, clock, send, values } = await start(t);
   await send(TEN + 60, 1.2);
@@ -246,7 +270,11 @@ test("the package list has the bundled packages with their manifests, the Moving
       ["quotebridge.ma", "Moving average", true, true],
       ["quotebridge.rsi", "RSI", true, true],
       ["quotebridge.bollinger", "Bollinger Bands", true, true],
+      ["quotebridge.macd", "MACD", true, true],
+      ["quotebridge.ao", "Awesome Oscillator", true, true],
+      ["quotebridge.ac", "Accelerator Oscillator", true, true],
       ["quotebridge.alligator", "Alligator", true, true],
+      ["quotebridge.eo", "EO", true, true],
     ],
   );
 });

@@ -30,8 +30,9 @@ const FONT = "Archivo, Segoe UI, sans-serif";
 /** The price pane's share against each indicator pane's 1. */
 const PRICE_PANE_STRETCH = 3;
 
-type OutputSeries = { id: string; series: ISeriesApi<"Line" | "Histogram">; values: readonly (number | undefined)[] };
-type IndicatorSeries = { key: string; pane: boolean; outputs: OutputSeries[]; levels: IPriceLine[] };
+type OutputSeries = { id: string; series: ISeriesApi<"Line" | "Histogram">; values: readonly (number | undefined)[]; colours?: readonly (string | undefined)[] };
+/** `zero`: the line at zero under a pane's histograms. */
+type IndicatorSeries = { key: string; pane: boolean; outputs: OutputSeries[]; levels: IPriceLine[]; zero?: IPriceLine };
 
 const time = (seconds: number) => seconds as UTCTimestamp;
 
@@ -150,13 +151,19 @@ export class ChartCanvas {
       draw.outputs.forEach((output, n) => {
         const target = drawn.outputs[n];
         target.series.applyOptions({ color: output.colour });
-        const points = this.candles.map((c, i): WhitespaceData<Time> | { time: Time; value: number } =>
-          output.values[i] === undefined ? { time: time(c.time) } : { time: time(c.time), value: output.values[i]! },
-        );
+        // A histogram bar of its own colour (rising, falling) carries it.
+        const points = this.candles.map((c, i): WhitespaceData<Time> | { time: Time; value: number; color?: string } => {
+          const value = output.values[i];
+          if (value === undefined) return { time: time(c.time) };
+          const colour = output.colours?.[i];
+          return colour === undefined ? { time: time(c.time), value } : { time: time(c.time), value, color: colour };
+        });
         const from = this.changedFrom;
-        if (same && from !== undefined && firstDifference(target.values, output.values) >= from) for (const point of points.slice(from)) target.series.update(point);
+        const unchanged = Math.min(firstDifference(target.values, output.values), firstDifference(target.colours ?? [], output.colours ?? []));
+        if (same && from !== undefined && unchanged >= from) for (const point of points.slice(from)) target.series.update(point);
         else target.series.setData(points);
         target.values = output.values;
+        target.colours = output.colours;
       });
     }
   }
@@ -207,12 +214,15 @@ export class ChartCanvas {
     const levels = draw.levels.map((price) =>
       outputs[0].series.createPriceLine({ price, color: this.scheme.level, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "" }),
     );
+    const zero = draw.zeroLine
+      ? outputs[0].series.createPriceLine({ price: 0, color: this.scheme.level, lineStyle: LineStyle.Solid, lineWidth: 1, axisLabelVisible: false, title: "" })
+      : undefined;
     if (draw.pane) {
       const panes = this.chart.panes();
       panes[0].setStretchFactor(PRICE_PANE_STRETCH);
       panes[pane]?.setStretchFactor(1);
     }
-    return { key: draw.key, pane: draw.pane, outputs, levels };
+    return { key: draw.key, pane: draw.pane, outputs, levels, zero };
   }
 
   private removeIndicator(drawn: IndicatorSeries) {
@@ -269,13 +279,13 @@ export class ChartCanvas {
     }
     this.bid?.applyOptions({ color: s.bidLabel, axisLabelColor: s.bidLabel, axisLabelTextColor: s.canvas });
     this.ask?.applyOptions({ color: s.ask });
-    for (const { levels } of this.indicators.values()) for (const level of levels) level.applyOptions({ color: s.level });
+    for (const { levels, zero } of this.indicators.values()) for (const level of zero ? [...levels, zero] : levels) level.applyOptions({ color: s.level });
     this.separators.colour = s.line;
   }
 }
 
-/** The first index where two value lists differ; the shorter's length when one only goes on from the other. */
-function firstDifference(a: readonly (number | undefined)[], b: readonly (number | undefined)[]) {
+/** The first index where two lists differ; the shorter's length when one only goes on from the other. */
+function firstDifference<T>(a: readonly T[], b: readonly T[]) {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
   return n;

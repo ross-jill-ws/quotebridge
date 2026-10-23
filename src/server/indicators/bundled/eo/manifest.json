@@ -1,0 +1,47 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.eo",
+  "version": "1.0.0",
+  "name": "EO",
+  "description": "Yuexin Zhu's EO: the fast EMA of the close less the slow one, smoothed by an EMA and averaged over two bars, as a line and as bars rising or falling against the bar before. Closed bars only.",
+  "license": "MIT",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Close",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "close",
+      "history": { "bars": 2000 }
+    }
+  ],
+  "parameters": [
+    { "id": "fast", "label": "Fast EMA", "type": "integer", "default": 5, "min": 1, "max": 500 },
+    { "id": "slow", "label": "Slow EMA", "type": "integer", "default": 34, "min": 1, "max": 500 },
+    { "id": "signal", "label": "Signal EMA", "type": "integer", "default": 1, "min": 1, "max": 500 }
+  ],
+  "outputs": [
+    {
+      "id": "histogram",
+      "label": "Histogram",
+      "kind": "numeric",
+      "render": "histogram",
+      "placement": "pane",
+      "color": "#ff0000",
+      "palette": { "rising": "#ff0000", "falling": "#008000" },
+      "unit": { "input": "source" }
+    },
+    {
+      "id": "eo",
+      "label": "EO",
+      "kind": "numeric",
+      "render": "line",
+      "placement": "pane",
+      "color": "#ffff00",
+      "lineWidth": 1,
+      "unit": { "input": "source" }
+    }
+  ],
+  "closedBarsOnly": true
+}

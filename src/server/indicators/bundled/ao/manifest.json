@@ -1,0 +1,35 @@
+{
+  "apiVersion": 1,
+  "id": "quotebridge.ao",
+  "version": "1.0.0",
+  "name": "Awesome Oscillator",
+  "description": "Bill Williams' Awesome Oscillator, as MetaTrader's: the fast simple average of the median price less the slow one, as bars rising or falling against the bar before.",
+  "license": "MIT",
+  "entry": "calculate.js",
+  "inputs": [
+    {
+      "id": "source",
+      "label": "Median price (high + low) / 2",
+      "kind": "numeric",
+      "alignment": "exact",
+      "field": "median",
+      "history": { "parameter": "slow", "extra": 0 }
+    }
+  ],
+  "parameters": [
+    { "id": "fast", "label": "Fast SMA", "type": "integer", "default": 5, "min": 1, "max": 500, "lessThan": "slow" },
+    { "id": "slow", "label": "Slow SMA", "type": "integer", "default": 34, "min": 1, "max": 500 }
+  ],
+  "outputs": [
+    {
+      "id": "ao",
+      "label": "AO",
+      "kind": "numeric",
+      "render": "histogram",
+      "placement": "pane",
+      "color": "#2ee6a0",
+      "palette": { "rising": "#2ee6a0", "falling": "#ff5e6e" },
+      "unit": { "input": "source" }
+    }
+  ]
+}

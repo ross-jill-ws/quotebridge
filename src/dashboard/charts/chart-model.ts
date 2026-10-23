@@ -10,16 +10,29 @@ import { fromMilestone2, isIndicatorSpec, MAX_INDICATORS, type IndicatorSpec } f
 const NONE = "—";
 
 /**
- * One indicator's legend row: each output with its colour and a value per candle (a label when there are several);
- * `failed`: why its last computation failed (the values are the last good ones).
+ * One indicator's legend row: each output with its colour and a value per candle (a label when there are several),
+ * a histogram's colour per candle where its bars differ, and a two-colour histogram's two `tones`; `failed`: why
+ * its last computation failed (the values are the last good ones).
  */
 export type IndicatorLine = {
   id: string;
   label: string;
   digits: number;
-  outputs: readonly { id: string; label?: string; colour: string; values: readonly (number | undefined)[] }[];
+  outputs: readonly IndicatorLineOutput[];
   failed?: string;
 };
+
+export type IndicatorLineOutput = {
+  id: string;
+  label?: string;
+  colour: string;
+  colours?: readonly (string | undefined)[];
+  values: readonly (number | undefined)[];
+  tones?: Tones;
+};
+
+/** A two-colour histogram's rising and falling colours. */
+export type Tones = { rising: string; falling: string };
 
 export type LegendInput = {
   symbol: string;
@@ -37,7 +50,8 @@ export type Legend = {
   /** The bar's time on the chart's clock: "2027-01-15 10:00", or the date alone for D1 and longer; empty without a bar. */
   time: string;
   ohlc: { label: "O" | "H" | "L" | "C"; value: string }[];
-  indicators: { id: string; label: string; outputs: { id: string; label?: string; colour: string; value: string }[]; failed?: string }[];
+  /** Each value in its output's colour, a histogram's in its bar's. */
+  indicators: { id: string; label: string; outputs: { id: string; label?: string; colour: string; value: string; tones?: Tones }[]; failed?: string }[];
 };
 
 export function chartLegend({ symbol, period, digits, candles, indicators, time }: LegendInput): Legend {
@@ -53,7 +67,13 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
     indicators: indicators.map(({ id, label, digits: places, outputs, failed }) => ({
       id,
       label,
-      outputs: outputs.map((o) => ({ id: o.id, ...(o.label === undefined ? {} : { label: o.label }), colour: o.colour, value: price(o.values[index], places) })),
+      outputs: outputs.map((o) => ({
+        id: o.id,
+        ...(o.label === undefined ? {} : { label: o.label }),
+        colour: o.colours?.[index] ?? o.colour,
+        value: price(o.values[index], places),
+        ...(o.tones ? { tones: o.tones } : {}),
+      })),
       ...(failed === undefined ? {} : { failed }),
     })),
   };

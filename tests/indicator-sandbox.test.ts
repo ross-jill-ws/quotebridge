@@ -119,6 +119,66 @@ test("the Alligator defaults to MT4's 13/8, 8/5 and 5/3, with labelled parameter
   assert.equal(pkg("quotebridge.bollinger").manifest.outputs.every((o) => o.placement === "overlay"), true);
 });
 
+/** One output's style keys; undefined where a point has none. */
+function styles(result: RunResult, output: string): (string | undefined)[] {
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  return result.outputs[output].map((p) => p.styleKey);
+}
+
+test("MACD is the fast EMA less the slow one, as one colour, with a simple average of it as the signal, as MT4's", async () => {
+  const result = await engine.run(pkg("quotebridge.macd"), barsOf([2, 4, 6, 8, 4]), { fast: 2, slow: 3, signal: 2 });
+  // EMA 2 (k = 2/3): 3, 5, 7, 5; EMA 3 (k = 1/2): 4, 6, 5; each seeded from the simple average of its first closes.
+  assert.deepEqual(values(result, "macd"), [null, null, 1, 1, 0]);
+  assert.deepEqual(styles(result, "macd"), [undefined, undefined, undefined, undefined, undefined]);
+  // The signal is the simple average of the last 2 MACD values.
+  assert.deepEqual(values(result, "signal"), [null, null, null, 1, 0.5]);
+  const { manifest } = pkg("quotebridge.macd");
+  assert.throws(() => parameterValues(manifest, { fast: 26, slow: 26, signal: 9 }), /Fast EMA must be less than Slow EMA/);
+  assert.deepEqual(manifest.outputs.map((o) => [o.id, o.render, o.placement]), [
+    ["macd", "histogram", "pane"],
+    ["signal", "line", "pane"],
+  ]);
+});
+
+test("AO is the fast less the slow simple average of the median price, rising or falling against the bar before, as MT4's", async () => {
+  // Fast 1, slow 2: AO = (median − the one before) / 2.
+  const result = await engine.run(pkg("quotebridge.ao"), barsAround([0, 4, 6, 8]), { fast: 1, slow: 2 });
+  assert.deepEqual(values(result, "ao"), [null, 2, 1, 1]);
+  // The first bar is rising; an unchanged one keeps the colour before it.
+  assert.deepEqual(styles(result, "ao"), [undefined, "rising", "falling", "falling"]);
+});
+
+test("AC is AO less the simple average of its last values, coloured as AO is", async () => {
+  // AO 2, 1, 1, 0; its 2-bar average 1.5, 1, 0.5.
+  const result = await engine.run(pkg("quotebridge.ac"), barsAround([0, 4, 6, 8, 8]), { fast: 1, slow: 2, signal: 2 });
+  assert.deepEqual(values(result, "ac"), [null, null, -0.5, 0, -0.5]);
+  assert.deepEqual(styles(result, "ac"), [undefined, undefined, "rising", "rising", "falling"]);
+});
+
+test("EO is a two-bar average of the smoothed fast-less-slow EMA, with a histogram rising or falling against the bar before", async () => {
+  // Fast 1 (the close), slow 2 (k = 2/3) and signal 1 (the difference itself), each EMA seeded at the first close; EO
+  // shows from bar max(fast, slow) + signal. 32 flat closes give 0; then 4: slow 3, signal 1, EO (0 + 1)/2 = 0.5;
+  // 1: slow 5/3, signal −2/3, EO 1/6; 7: slow 47/9, signal 16/9, EO 5/9; 7: slow 173/27, signal 16/27, EO 32/27.
+  const closes = [...Array(32).fill(1), 4, 1, 7, 7];
+  const result = await engine.run(pkg("quotebridge.eo"), barsOf(closes), { fast: 1, slow: 2, signal: 1 });
+  const exact = (v: number) => Number(v.toFixed(10));
+  assert.deepEqual(values(result, "eo"), [null, null, ...Array(30).fill(0), 0.5, exact(1 / 6), exact(5 / 9), exact(32 / 27)]);
+  // The histogram starts a bar later; an unchanged EO is falling, as EO.mq4 draws it.
+  assert.deepEqual(values(result, "histogram"), [null, null, null, ...Array(29).fill(0), 0.5, exact(1 / 6), exact(5 / 9), exact(32 / 27)]);
+  assert.deepEqual(styles(result, "histogram"), [undefined, undefined, undefined, ...Array(29).fill("falling"), "rising", "falling", "rising", "rising"]);
+  // EO.mq4 draws nothing on 34 bars or fewer.
+  assert.ok(values(await engine.run(pkg("quotebridge.eo"), barsOf(closes.slice(0, 34)), { fast: 1, slow: 2, signal: 1 }), "eo").every((v) => v === null));
+});
+
+test("EO is computed on closed bars only, and keeps its author's attribution under MIT", () => {
+  const eo = pkg("quotebridge.eo");
+  assert.equal(eo.manifest.closedBarsOnly, true);
+  assert.equal(eo.manifest.license, "MIT");
+  assert.match(eo.licence, /MIT License[\s\S]*Copyright \(c\) .*Yuexin Zhu/);
+  assert.match(eo.readme, /Yuexin Zhu/);
+  assert.match(eo.readme, /http:\/\/blog\.sina\.com\.cn\/wordteller/);
+});
+
 test("RSI declares its 0–100 range and dashed 30 and 70 levels; the Moving average draws on the price pane", () => {
   const { manifest } = pkg("quotebridge.rsi");
   assert.deepEqual(manifest.range, { min: 0, max: 100 });
@@ -128,7 +188,7 @@ test("RSI declares its 0–100 range and dashed 30 and 70 levels; the Moving ave
 });
 
 test("the bundled packages are MIT-licensed and carry their four files", () => {
-  for (const id of ["quotebridge.ma", "quotebridge.rsi", "quotebridge.bollinger", "quotebridge.alligator"]) {
+  for (const id of ["quotebridge.ma", "quotebridge.rsi", "quotebridge.bollinger", "quotebridge.macd", "quotebridge.ao", "quotebridge.ac", "quotebridge.alligator", "quotebridge.eo"]) {
     const p = pkg(id);
     assert.equal(p.manifest.license, "MIT");
     assert.match(p.licence, /MIT License/);
