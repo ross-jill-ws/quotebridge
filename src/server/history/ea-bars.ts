@@ -51,14 +51,15 @@ export class EaBarFetcher {
 
   /**
    * Asks the feed's EA for the market's period, unless its bars came in this run or are on their way. Resolves once the
-   * request is sent, or refused (an offline feed, an older EA).
+   * request is sent, or refused (an offline feed, an older EA): true when the bars were asked for, now or before.
    */
-  async want(feed: FeedSnapshot, period: Period): Promise<void> {
+  async want(feed: FeedSnapshot, period: Period): Promise<boolean> {
     const key = periodKey(feed.market, period);
-    if (this.closed || !feed.online || this.answered.has(key) || this.asking.has(key)) return;
+    if (this.asking.has(key)) return true;
+    if (this.closed || !feed.online || this.answered.has(key)) return false;
     const asking: Asking = { feed: feed.feed, digits: feed.digits, tries: 0, unanswered: 0, pages: new Map() };
     this.asking.set(key, asking);
-    await this.ask(key, asking, period);
+    return this.ask(key, asking, period);
   }
 
   /** Lets a market's periods be asked for again, as when one of its feeds comes online again after a while away. */
@@ -79,14 +80,19 @@ export class EaBarFetcher {
     this.asking.clear();
   }
 
-  private async ask(key: string, asking: Asking, period: Period) {
+  /** Sends the request; false when it was refused. */
+  private async ask(key: string, asking: Asking, period: Period): Promise<boolean> {
     asking.tries++;
     asking.pages.clear();
     const request = await this.options.bridge.requestBars(asking.feed, PERIOD_MINUTES[period], MAX_REQUEST_BARS).catch(() => null);
-    if (this.asking.get(key) !== asking) return;
-    if (request === null) return this.drop(key, asking);
+    if (this.asking.get(key) !== asking) return request !== null;
+    if (request === null) {
+      this.drop(key, asking);
+      return false;
+    }
     asking.request = request;
     this.expect(key, asking, period);
+    return true;
   }
 
   /** (Re)starts the wait for the request's next page; an unanswered request is asked again, a few times. */

@@ -41,7 +41,7 @@ export type ChartHistoryOptions = {
   /** Up to `limit` saved bars of a market's period older than `before` (broker seconds), oldest first; omitted without a database. */
   savedBars?: (market: Market, period: Period, before: number | undefined, limit: number) => Promise<{ bars: Candle[]; complete: boolean }>;
   /** Asks a feed's EA for a period's bars; omitted without a database. */
-  eaBars?: { want(feed: FeedSnapshot, period: Period): Promise<void>; filling(market: Market, period: Period): boolean };
+  eaBars?: { want(feed: FeedSnapshot, period: Period): Promise<boolean>; filling(market: Market, period: Period): boolean };
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
 };
@@ -87,8 +87,9 @@ export class ChartHistory {
       if (!hstLast || c.time > hstLast.time) live.push(c);
       else if (c.time === hstLast.time) live.push(combine(hstLast, c));
     }
-    if (before === undefined) await this.fillGap(feed, period, hstLast, live);
-    const filling = this.options.eaBars?.filling(feed.market, period) ?? false;
+    // A page that asked the EA says it is filling even when the bars are in already: it was read before they came.
+    const asked = before === undefined && (await this.fillGap(feed, period, hstLast, live));
+    const filling = asked || (this.options.eaBars?.filling(feed.market, period) ?? false);
     const liveBefore = live.filter((c) => c.time < brokerBefore);
     if (liveBefore.length >= limit || !hstLast) {
       const candles = liveBefore.slice(-limit);
@@ -107,13 +108,16 @@ export class ChartHistory {
     await this.fillGap(feed, period, last, this.options.liveCandles(feed.feed, period));
   }
 
-  /** Asks for the bars when there are none, or a bucket is missing between the last one and the live candles (or now). */
-  private async fillGap(feed: FeedSnapshot, period: Period, last: Candle | null, live: Candle[]) {
+  /**
+   * Asks for the bars when there are none, or a bucket is missing between the last one and the live candles (or now);
+   * true when they were asked for.
+   */
+  private async fillGap(feed: FeedSnapshot, period: Period, last: Candle | null, live: Candle[]): Promise<boolean> {
     const ea = this.options.eaBars;
-    if (!ea) return;
+    if (!ea) return false;
     const rule = this.options.clockRule(feed.market.brokerServer) ?? UNKNOWN_RULE;
     const end = live[0]?.time ?? bucketStart(Math.floor(utcToBroker(rule, (this.options.now ?? Date.now)()) / 1000), period);
-    if (!last || bucketStart(end - 1, period) > last.time) await ea.want(feed, period);
+    return (!last || bucketStart(end - 1, period) > last.time) && (await ea.want(feed, period));
   }
 
   /** HST, continued by saved history either side; else saved history alone, when it holds any; else none. */

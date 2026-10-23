@@ -563,7 +563,15 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
   useEffect(() => {
     if (!latest || !data || data.feed !== id || data.period !== period) return;
     const next = followQuote(data.candles, period, latest, feed?.clockRule ?? data.clockRule);
-    if (next.candles !== data.candles || data.ask !== latest.ask) setData({ ...data, candles: next.candles as Candle[], ask: latest.ask });
+    // From the candles as they are now: an answer may have come in since this render (the EA's bars filling the chart),
+    // and effects run after the next paint.
+    if (next.candles !== data.candles || data.ask !== latest.ask) {
+      setData((d) => {
+        if (!d || d.feed !== id || d.period !== period) return d;
+        const now = d === data ? next : followQuote(d.candles, period, latest, feed?.clockRule ?? d.clockRule);
+        return { ...d, candles: now.candles as Candle[], ask: latest.ask };
+      });
+    }
     if (next.newBucket) setReload((n) => n + 1);
   }, [latest?.bid, latest?.ask, latest?.quoteTime]);
 

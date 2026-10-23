@@ -142,10 +142,13 @@ test("with no HST file for its chart period, a feed that connects gets the EA's 
 });
 
 test("every period from M1 to MN1 the chart opens without an HST file is asked of the EA, not only its chart period", { timeout: 30000 }, async (t) => {
-  const { connect, settled } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"));
+  const { connect, page, settled } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"));
   const ea = await connect(ready);
 
   for (const period of PERIODS) {
+    // The first page is either full or says it is filling, however fast the EA answers: never the live candle, done.
+    const first = await page(period);
+    assert.ok(first.filling || first.candles.length > 1, period);
     const p = await settled(period);
     const count = period === "W1" || period === "MN1" ? 200 : 900;
     assert.deepEqual(p.candles, [...closedBars(MINUTES[period], count).map(shown), live(period)], period);
