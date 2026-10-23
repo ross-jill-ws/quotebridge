@@ -17,6 +17,8 @@ export type Packages = {
   byId: ReadonlyMap<string, PackageInfo>;
   /** Puts in a list the server answered (after a change), before the notice comes. */
   set: (list: PackageList) => void;
+  /** Fetches the list again (the charts using each package change with no notice). */
+  refresh: () => void;
 };
 
 export function usePackages(live: Live): Packages {
@@ -35,5 +37,5 @@ export function usePackages(live: Live): Packages {
     };
   }, [live.status, reload]);
   const byId = useMemo(() => new Map((list?.packages ?? []).map((p) => [p.manifest.id, p])), [list]);
-  return { list, byId, set: setList };
+  return { list, byId, set: setList, refresh: () => setReload((n) => n + 1) };
 }

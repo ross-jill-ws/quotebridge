@@ -266,6 +266,9 @@ test("an indicator whose package is disabled or gone stays in the legend, Not av
     { id: "r", label: "RSI 9", outputs: [], notAvailable: true },
     { id: "g", label: "acme.thing", outputs: [], notAvailable: true },
   ]);
+  // The chart endpoint said so before the package list did.
+  const refused = drawnIndicators([rsi], PACKAGES, new Map([["r", { ...answer({}), notAvailable: true as const }]]), BARS, 5, LIGHT);
+  assert.deepEqual(legendOf(refused), [{ id: "r", label: "RSI 9", outputs: [], notAvailable: true }]);
   // Enabled again: drawn as before.
   const back = drawnIndicators([rsi], PACKAGES, values, BARS, 5, LIGHT);
   assert.deepEqual(legendOf(back), [{ id: "r", label: "RSI 9", outputs: [{ id: "rsi", colour: LIGHT.series[1], value: "50.00" }] }]);
@@ -470,4 +473,14 @@ test("the Candles since note goes once the chart reaches back before QuoteBridge
   assert.equal(showsCandlesSince([], since), true);
   assert.equal(showsCandlesSince([bar(Date.UTC(2027, 0, 15, 9, 26) / 1000)], since), true);
   assert.equal(showsCandlesSince([bar(Date.UTC(2027, 0, 15, 9, 25) / 1000)], since), false);
+});
+
+test("panes keep the chart's order while values arrive: an indicator still waiting is drawn empty, not left out", () => {
+  const macd = { id: "m", package: "quotebridge.macd", parameters: { fast: 12, slow: 26, signal: 9 }, colours: { macd: 1, signal: 2 } };
+  // AO's values came in first.
+  const drawn = drawnIndicators([macd, AO], HISTOGRAMS, new Map([["ao", AO_VALUES]]), BARS, 5, LIGHT);
+  assert.deepEqual(drawn.draws.map((d) => d.id), ["m", "ao"]);
+  assert.ok(drawn.draws[0].outputs.every((o) => o.values.every((v) => v === undefined)));
+  // Its legend row waits for its values.
+  assert.deepEqual(drawn.lines.map((l) => l.id), ["ao"]);
 });

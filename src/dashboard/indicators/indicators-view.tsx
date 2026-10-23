@@ -11,12 +11,12 @@ import { usePackages, type PackageList } from "./use-packages.js";
 const CHARTS_REFRESH_MS = 5000;
 
 export function IndicatorsView({ live }: { live: Live }) {
-  const { list, set } = usePackages(live);
+  const { list, set, refresh } = usePackages(live);
   const [open, setOpen] = useState<string>();
   const [error, setError] = useState("");
   // The charts using a package are counted by the windows that report them, with no notice: read again now and then.
   useEffect(() => {
-    const timer = setInterval(() => get<PackageList>("/api/indicators/packages").then(set, () => {}), CHARTS_REFRESH_MS);
+    const timer = setInterval(refresh, CHARTS_REFRESH_MS);
     return () => clearInterval(timer);
   }, []);
 
@@ -82,7 +82,7 @@ export function IndicatorsView({ live }: { live: Live }) {
                       <td>
                         <span class={`tag ${row.origin === "Bundled" ? "neutral" : "good"}`}>{row.origin}</span>
                       </td>
-                      <td class={row.charts === "None" ? "muted" : ""}>{row.charts}</td>
+                      <td class={row.charts === 0 ? "muted" : ""}>{row.chartsText}</td>
                       <td class="enabled-col">
                         <input
                           type="checkbox"
@@ -131,7 +131,7 @@ function PackageDetailsPanel({ id, description, details }: { id: string; descrip
           {details.parameters.length === 0 ? (
             <p class="muted">None.</p>
           ) : (
-            <table class="facts">
+            <table class="package-table">
               <thead>
                 <tr>
                   <th>Parameter</th>
@@ -153,7 +153,7 @@ function PackageDetailsPanel({ id, description, details }: { id: string; descrip
         </div>
         <div>
           <h3>Outputs</h3>
-          <table class="facts">
+          <table class="package-table">
             <thead>
               <tr>
                 <th>Output</th>
@@ -221,7 +221,7 @@ function ReadmeBlock({ block }: { block: Block }) {
     case "table":
       return (
         <div class="table-scroll">
-          <table class="facts">
+          <table class="package-table">
             <thead>
               <tr>
                 {block.head.map((cell, i) => (

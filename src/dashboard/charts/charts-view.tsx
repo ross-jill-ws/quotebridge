@@ -8,7 +8,7 @@ import type { Candle } from "../../server/candles/index.js";
 import { PERIODS, type Period } from "../../shared/periods.js";
 import type { ClockRule } from "../../shared/clock.js";
 import type { ChartColours, TimeShown } from "../../shared/settings-store.js";
-import { get } from "../api.js";
+import { ApiError, get } from "../api.js";
 import { browserOffsetMinutes, displayCandles } from "../display-clock.js";
 import { groupFeeds, type FeedGroup } from "../feeds/feed-row.js";
 import { duration } from "../format.js";
@@ -28,6 +28,7 @@ import {
   showsCandlesSince,
   wantsOlder,
   readChartMemory,
+  chartPackages,
   type ChartMemory,
   type ChartType,
   type Legend,
@@ -100,7 +101,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   const scheme = chartScheme(chartColours, mode);
   const packages = usePackages(live).byId;
   // The Indicators page counts the charts using each package.
-  const used = [...new Set(memory.indicators.map((i) => i.package))].sort().join("\n");
+  const used = chartPackages(memory).join("\n");
   useEffect(() => live.reportCharts(used ? used.split("\n") : []), [used]);
   const values = useIndicatorValues(feed, memory.period, memory.indicators, packages, fetched, live);
   const drawn = useMemo(
@@ -370,7 +371,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, p
   const manifestOf = (id: string) => packages.get(specs.find((s) => s.id === id)?.package ?? "")?.manifest;
   const pricePane = legendRows.filter((row) => !paneTops.has(row.id));
   return (
-    <div class={`chart-frame${greenOnBlack ? " green-on-black" : ""}`} style={{ "--chart-text": scheme.text, "--chart-strong": scheme.strong }}>
+    <div class={`chart-frame${greenOnBlack ? " green-on-black" : ""}`} style={{ "--chart-text": scheme.text, "--chart-strong": scheme.strong, "--chart-canvas": scheme.canvas }}>
       {legend && (
         <div class="chart-legend">
           <div>
@@ -596,8 +597,9 @@ function useIndicatorValues(
     for (const { id, query } of queries) {
       get<IndicatorValuesAnswer>(`/api/indicators/values?${query}&limit=${count}`).then(
         (answer) => current && store(id, query, () => answer),
-        // Refused (a parameter the package no longer has, say): the legend row says why.
-        (e: Error) => current && store(id, query, () => refused(e.message)),
+        // Refused (a parameter the package no longer has, say): the legend row says why. A package disabled or gone
+        // meanwhile reads as Not available, until the package list says so too.
+        (e: Error) => current && store(id, query, () => refused(e)),
       );
     }
     return () => {
@@ -637,9 +639,10 @@ function useIndicatorValues(
   return shown;
 }
 
-/** No values, and why: shown as Failed in the legend. */
-function refused(reason: string): IndicatorValuesAnswer {
-  return { key: "", package: "", version: "", outputs: {}, complete: true, failed: reason, stale: false };
+/** No values, and why: shown as Failed in the legend, or Not available. */
+function refused(e: Error): IndicatorValuesAnswer {
+  const notAvailable = e instanceof ApiError && e.notAvailable;
+  return { key: "", package: "", version: "", outputs: {}, complete: true, failed: e.message, stale: false, ...(notAvailable ? { notAvailable } : {}) };
 }
 
 /** The values with the latest few fetched again put on in place of their times. */
@@ -665,7 +668,7 @@ export function rememberedChartPackages(): string[] {
   } catch {
     // None known.
   }
-  return [...new Set(readChartMemory(stored).indicators.map((i) => i.package))].sort();
+  return chartPackages(readChartMemory(stored));
 }
 
 /** The view memory in localStorage, with a feed from the URL (a Feeds row's link) taking over. */

@@ -37,6 +37,8 @@ export type IndicatorValuesAnswer = {
   failed: string | null;
   /** The values are the last good ones of a failed key. */
   stale: boolean;
+  /** The chart endpoint refused it: the package is disabled or gone (the window marks it so; never sent as 200). */
+  notAvailable?: true;
 };
 
 export type IndicatorValuesOptions = {

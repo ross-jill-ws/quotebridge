@@ -7,7 +7,10 @@ exports.calculate = function ({ inputs, parameters: p, timeline }) {
     medians.map((_, i) => {
       if (i < period - 1) return null;
       let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += medians[j];
+      for (let j = i - period + 1; j <= i; j++) {
+        if (medians[j] === null) return null;
+        sum += medians[j];
+      }
       return sum / period;
     });
   const fast = sma(p.fast);

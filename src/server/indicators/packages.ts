@@ -57,6 +57,8 @@ export type IndicatorPackagesOptions = {
  */
 export class IndicatorPackages {
   private readonly listeners = new Set<() => void>();
+  /** Changes to what is enabled, one at a time. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   private constructor(
     private readonly packages: readonly IndicatorPackage[],
@@ -77,16 +79,20 @@ export class IndicatorPackages {
   }
 
   /** Switches a package on or off and keeps it in settings; false when the app has no such package. */
-  async setEnabled(id: string, enabled: boolean): Promise<boolean> {
-    if (!this.get(id)) return false;
-    if (this.enabled(id) === enabled) return true;
-    const disabled = new Set(this.disabled);
-    if (enabled) disabled.delete(id);
-    else disabled.add(id);
-    await this.settings?.update((s) => ({ ...s, disabledIndicators: [...disabled].sort() }));
-    this.disabled = disabled;
-    for (const listener of this.listeners) listener();
-    return true;
+  setEnabled(id: string, enabled: boolean): Promise<boolean> {
+    const run = this.queue.then(async () => {
+      if (!this.get(id)) return false;
+      if (this.enabled(id) === enabled) return true;
+      const disabled = new Set(this.disabled);
+      if (enabled) disabled.delete(id);
+      else disabled.add(id);
+      await this.settings?.update((s) => ({ ...s, disabledIndicators: [...disabled].sort() }));
+      this.disabled = disabled;
+      for (const listener of this.listeners) listener();
+      return true;
+    });
+    this.queue = run.catch(() => undefined);
+    return run;
   }
 
   /** `listener` hears each change to the packages or whether they are enabled; returns a function that stops it. */

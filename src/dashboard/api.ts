@@ -15,11 +15,12 @@ export async function get<T>(path: string): Promise<T> {
   return answer<T>(await fetch(path, { cache: "no-store" }));
 }
 
-/** Thrown for an error answer; `status` is the HTTP status. */
+/** Thrown for an error answer; `status` is the HTTP status; `notAvailable`: an indicator package disabled or gone. */
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly notAvailable = false,
   ) {
     super(message);
   }
@@ -34,8 +35,8 @@ async function answer<T>(res: Response): Promise<T> {
     body = undefined;
   }
   if (res.ok) return body as T;
-  const error = (body as { error?: unknown } | undefined)?.error;
-  throw new ApiError(typeof error === "string" ? error : `The app answered ${res.status}.`, res.status);
+  const { error, notAvailable } = (body ?? {}) as { error?: unknown; notAvailable?: unknown };
+  throw new ApiError(typeof error === "string" ? error : `The app answered ${res.status}.`, res.status, notAvailable === true);
 }
 
 /** Whether this page's window session still works. Rejects when the server cannot be reached. */

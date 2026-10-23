@@ -4,7 +4,8 @@
 import type { Manifest } from "../../shared/indicator-manifest.js";
 import { twoTone, type PackageInfo } from "../charts/indicators.js";
 
-export type PackageRow = { id: string; name: string; version: string; origin: "Bundled" | "Installed"; enabled: boolean; charts: string };
+/** `charts`: how many charts use it, `chartsText` the same in words. */
+export type PackageRow = { id: string; name: string; version: string; origin: "Bundled" | "Installed"; enabled: boolean; charts: number; chartsText: string };
 
 /** The packages in the server's order (bundled first, then installed ones by name). */
 export function packageRows(packages: readonly PackageInfo[]): PackageRow[] {
@@ -14,7 +15,8 @@ export function packageRows(packages: readonly PackageInfo[]): PackageRow[] {
     version: manifest.version,
     origin: bundled ? "Bundled" : "Installed",
     enabled,
-    charts: charts === 0 ? "None" : charts === 1 ? "1 chart" : `${charts} charts`,
+    charts,
+    chartsText: charts === 0 ? "None" : charts === 1 ? "1 chart" : `${charts} charts`,
   }));
 }
 

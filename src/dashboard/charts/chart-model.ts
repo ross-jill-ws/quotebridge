@@ -138,6 +138,11 @@ export function readChartMemory(text: string | null): ChartMemory {
   };
 }
 
+/** The packages the chart's indicators use, once each, sorted. */
+export function chartPackages(memory: Pick<ChartMemory, "indicators">): string[] {
+  return [...new Set(memory.indicators.map((i) => i.package))].sort();
+}
+
 /** A remembered indicator: a package's, or Milestone 2's read as its package; none when it cannot work. */
 function readIndicator(value: unknown): IndicatorSpec[] {
   if (isIndicatorSpec(value)) return [value];

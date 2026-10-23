@@ -116,6 +116,9 @@ export function isIndicatorSpec(value: unknown): value is IndicatorSpec {
   );
 }
 
+/** No values yet. */
+const WAITING: IndicatorValuesAnswer = { key: "", package: "", version: "", outputs: {}, complete: false, failed: null, stale: false };
+
 /**
  * An indicator to draw, from its package's manifest: on the price pane or its own, with dashed levels and a fixed
  * range there; each output with its colour and one value per candle. `key` names the settings its values were
@@ -153,13 +156,14 @@ export function drawnIndicators(
   for (const spec of specs) {
     const info = packages.get(spec.package);
     const manifest = info?.manifest;
-    if (!info?.enabled) {
+    if (!info?.enabled || values.get(spec.id)?.notAvailable) {
       // Before the list is in, nothing is known to be missing.
       if (packages.size) lines.push({ id: spec.id, label: manifest ? indicatorLabel(manifest, spec.parameters) : spec.package, digits, outputs: [], notAvailable: true });
       continue;
     }
-    const answer = values.get(spec.id);
-    if (!manifest || !answer) continue;
+    if (!manifest) continue;
+    // Still waiting for its values: drawn empty, so its pane opens in the chart's order whichever values come first.
+    const answer = values.get(spec.id) ?? WAITING;
     const places = indicatorDigits(manifest, digits);
     const choice = (c: ColourChoice | undefined, fallback: ColourChoice): string => {
       const chosen = c ?? fallback;
@@ -179,7 +183,7 @@ export function drawnIndicators(
     });
     draws.push({
       id: spec.id,
-      key: JSON.stringify([spec.package, answer.version, spec.parameters]),
+      key: answer === WAITING ? "" : JSON.stringify([spec.package, answer.version, spec.parameters]),
       pane: manifest.outputs[0].placement === "pane",
       levels: manifest.levels ?? [],
       range: manifest.range,
@@ -187,6 +191,8 @@ export function drawnIndicators(
       zeroLine: manifest.outputs.some((o) => o.render === "histogram"),
       outputs: outputs.map(({ tones, ...o }) => o),
     });
+    // Its legend row waits for its values.
+    if (answer === WAITING) continue;
     // One output is read by the indicator's name; several by their own labels.
     const labelled = manifest.outputs.length > 1;
     lines.push({

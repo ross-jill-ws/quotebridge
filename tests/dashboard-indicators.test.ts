@@ -20,9 +20,9 @@ test("each package is a row: name, version, Bundled or Installed, enabled, and t
     { manifest: installed, bundled: false, enabled: true, charts: 0 },
   ]);
   assert.deepEqual(rows, [
-    { id: "quotebridge.ma", name: "Moving average", version: "1.0.0", origin: "Bundled", enabled: true, charts: "2 charts" },
-    { id: "quotebridge.macd", name: "MACD", version: "1.0.0", origin: "Bundled", enabled: false, charts: "1 chart" },
-    { id: "acme.ma", name: "Acme average", version: "2.1.0", origin: "Installed", enabled: true, charts: "None" },
+    { id: "quotebridge.ma", name: "Moving average", version: "1.0.0", origin: "Bundled", enabled: true, charts: 2, chartsText: "2 charts" },
+    { id: "quotebridge.macd", name: "MACD", version: "1.0.0", origin: "Bundled", enabled: false, charts: 1, chartsText: "1 chart" },
+    { id: "acme.ma", name: "Acme average", version: "2.1.0", origin: "Installed", enabled: true, charts: 0, chartsText: "None" },
   ]);
 });
 

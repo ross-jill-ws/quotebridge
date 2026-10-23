@@ -1981,6 +1981,7 @@ a.path {
   background: var(--surface);
   --chart-text: var(--ink-2);
   --chart-strong: var(--ink);
+  --chart-canvas: var(--surface);
 }
 
 .chart-frame.green-on-black {
@@ -2003,6 +2004,20 @@ a.path {
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--chart-text);
+}
+
+/* Lines and bars run under the legend: each row sits on the canvas colour, as wide as its text, so it stays readable. */
+.chart-legend > div,
+.chart-legend .ind {
+  width: fit-content;
+  margin-left: -4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--chart-canvas) 82%, transparent);
+}
+
+.chart-legend.sub > .ind {
+  margin-left: 0;
 }
 
 .chart-legend .title {
@@ -2405,26 +2420,26 @@ a.path {
   color: var(--ink-3);
 }
 
-.facts {
+.package-table {
   border-collapse: collapse;
   font-size: 13px;
 }
 
-.facts th,
-.facts td {
+.package-table th,
+.package-table td {
   padding: 4px 18px 4px 0;
   text-align: left;
   vertical-align: top;
   color: var(--ink);
 }
 
-.facts th {
+.package-table th {
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-3);
 }
 
-.facts td {
+.package-table td {
   border-top: 1px solid var(--line-soft);
 }
 
@@ -2474,7 +2489,7 @@ a.path {
   font-size: 0.92em;
 }
 
-.readme .facts {
+.readme .package-table {
   margin-bottom: 10px;
 }
 

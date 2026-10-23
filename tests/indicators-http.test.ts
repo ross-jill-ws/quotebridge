@@ -376,3 +376,15 @@ test("a remote browser sees the packages read-only: its change is refused with 4
   assert.match(refused.body.error ?? "", /app window/);
   assert.equal((await packageList(origin, cookie)).packages.find((p) => p.manifest.id === "quotebridge.ma")!.enabled, true);
 });
+
+test("two packages switched off at once both stay off, after a restart too", { timeout: 30000 }, async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), "quotebridge-ind-settings-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settings = { store: new SettingsStore(folder) };
+  const { origin, cookie } = await start(t, { settings });
+  await Promise.all([setEnabled(origin, cookie, "quotebridge.ao", false), setEnabled(origin, cookie, "quotebridge.ac", false)]);
+  const off = (list: PackageList) => list.packages.filter((p) => !p.enabled).map((p) => p.manifest.id);
+  assert.deepEqual(off(await packageList(origin, cookie)), ["quotebridge.ao", "quotebridge.ac"]);
+  const again = await start(t, { settings });
+  assert.deepEqual(off(await packageList(again.origin, again.cookie)), ["quotebridge.ao", "quotebridge.ac"]);
+});

@@ -13,6 +13,8 @@ export const LIVE_INTERVAL_MS = 500;
 const MAX_CLIENTS = 100;
 /** A window shows at most this many indicator keys (8 per chart, several charts). */
 const MAX_SHOWN_KEYS = 64;
+/** A window's chart uses at most this many packages (8 indicators; the rest is slack). */
+const MAX_REPORTED_PACKAGES = 32;
 /** A socket this far behind is not reading; drop it rather than buffer without bound. */
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 
@@ -79,7 +81,7 @@ export class LiveSnapshots {
     }
     const { type, keys, packages } = (message ?? {}) as { type?: unknown; keys?: unknown; packages?: unknown };
     if (type === "charts" && Array.isArray(packages)) {
-      client.uses = new Set(packages.filter((p): p is string => typeof p === "string" && p.length <= 200).slice(0, MAX_SHOWN_KEYS));
+      client.uses = new Set(packages.filter((p): p is string => typeof p === "string" && p.length <= 200).slice(0, MAX_REPORTED_PACKAGES));
       return;
     }
     if (type !== "show" || !Array.isArray(keys)) return;
