@@ -1,8 +1,10 @@
 // Chart history: the bars a chart shows, newest first in pages. Closed bars come from the terminal's HST file for the
-// period (rolled up from its M1 file when the period has none); the live candles join on after the file's last bar,
-// and the bar at its last time takes HST's open with the live high, low and close, as it is still forming. Older than
-// HST's first bar, saved history continues (it holds every closed bar when there is no HST). With neither there are
-// live candles only. Times are handed out in UTC from the broker server's clock rule (ADR 11).
+// period, continued by its fill file (D1 for W1 and MN1, else M1) rolled up where the period's file is stale, or by the
+// fill file alone when the period has no file (MetaTrader writes a period's file only when its chart closes). The live
+// candles join on after the last bar, and the bar at its last time takes HST's open with the live high, low and close,
+// as it is still forming. Older than the period file's first bar, saved history continues (it holds every closed bar
+// when there is no HST). With neither there are live candles only. Times are handed out in UTC from the broker
+// server's clock rule (ADR 11).
 import { brokerToUtc, UNKNOWN_RULE, utcToBroker, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, type Period } from "../../shared/periods.js";
 import type { FeedSnapshot, Market } from "../bridge/index.js";
@@ -12,7 +14,7 @@ import { HstFile, hstPath, type HstBar } from "./hst-file.js";
 /** MetaTrader's period lengths in minutes, as in HST file names. */
 export const PERIOD_MINUTES: Record<Period, number> = { M1: 1, M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440, W1: 10080, MN1: 43200 };
 
-/** M1 bars read at a time while rolling a period up. */
+/** Fill file bars read at a time while rolling a period up. */
 const ROLLUP_PAGE = 5000;
 
 /** A page of candles, oldest first, with UTC times. `source`: "hst" when it holds HST bars, else "saved" when it holds saved ones, else "live". */
@@ -43,6 +45,11 @@ interface BarSource {
 interface HstSource extends BarSource {
   /** The oldest bar's start, or null when there is none. */
   first(): Promise<number | null>;
+}
+
+/** Bars rolled up from a finer file; `since` stops the read at the buckets that start from then on. */
+interface RollupSource extends HstSource {
+  before(before: number | undefined, limit: number, since?: number): ReturnType<BarSource["before"]>;
 }
 
 export class ChartHistory {
@@ -88,15 +95,25 @@ export class ChartHistory {
     return saved && (await saved.last()) ? saved : null;
   }
 
-  /** The period's HST file, else its M1 file rolled up, else none. */
+  /** The period's HST file, continued by its fill file where that reaches later; else the fill file rolled up; else none. */
   private async hstSource(feed: FeedSnapshot, period: Period): Promise<HstSource | null> {
     const folder = this.options.dataFolder(feed.terminal);
     if (!folder) return null;
     const file = (minutes: number) => HstFile.open(hstPath(folder, feed.market.brokerServer, feed.market.symbol, minutes));
     const own = await file(PERIOD_MINUTES[period]);
-    if (own) return fileSource(own);
-    const m1 = period === "M1" ? null : await file(1);
-    return m1 ? rollupSource(m1, period) : null;
+    const daily = period === "W1" || period === "MN1" ? await file(PERIOD_MINUTES.D1) : null;
+    const fillFile = daily ?? (period === "M1" ? null : await file(PERIOD_MINUTES.M1));
+    const fill = fillFile && rollupSource(fillFile, period);
+    const ownSource = own && fileSource(own);
+    const ownLast = (await ownSource?.last()) ?? null;
+    if (!ownSource || !ownLast) return fill ?? ownSource;
+    if (!fill) return ownSource;
+    const [fillLast, fillSpan] = await Promise.all([fill.last(), fillFile.span()]);
+    if (!fillLast || !fillSpan || fillLast.time <= ownLast.time) return ownSource;
+    // The own file's last bar may have been written while forming: the fill file's replaces it when the fill file
+    // holds that whole bucket (the moment before its first bar is in an earlier bucket).
+    const whole = bucketStart(fillSpan.first - 1, period) < ownLast.time;
+    return filled(ownSource, fill, whole ? ownLast.time : ownLast.time + 1);
   }
 }
 
@@ -116,14 +133,14 @@ function fileSource(file: HstFile): HstSource {
   };
 }
 
-/** A period built from M1 bars: each bucket of the broker clock, as the live candles are. */
-function rollupSource(m1: HstFile, period: Period): HstSource {
-  const before: BarSource["before"] = async (until, limit) => {
-    // Buckets read so far, oldest first; the oldest may still be missing earlier M1 bars until one older is seen.
+/** A period built from a finer file's bars (M1 or D1): each bucket of the broker clock, as the live candles are. */
+function rollupSource(fillFile: HstFile, period: Period): RollupSource {
+  const before: RollupSource["before"] = async (until, limit, since) => {
+    // Buckets read so far, oldest first; the oldest may still be missing earlier fill bars until one older is seen.
     let buckets: Candle[] = [];
     let cursor = until;
     for (;;) {
-      const page = await m1.before(cursor, ROLLUP_PAGE);
+      const page = await fillFile.before(cursor, ROLLUP_PAGE);
       const rolled = rollUp(page.bars, period);
       const joined = rolled.at(-1);
       if (joined && buckets[0]?.time === joined.time) {
@@ -131,16 +148,34 @@ function rollupSource(m1: HstFile, period: Period): HstSource {
         rolled.pop();
       }
       buckets = [...rolled, ...buckets];
+      // None older than `since` are wanted; once a bar older than it is read, the buckets from there on are whole.
+      const reached = since !== undefined && page.bars.length > 0 && page.bars[0].time < since;
+      if (since !== undefined) buckets = buckets.filter((b) => b.time >= since);
       if (buckets.length > limit) return { bars: buckets.slice(-limit), complete: false, source: "hst" };
-      if (page.complete || page.next === undefined) return { bars: buckets, complete: true, source: "hst" };
+      if (reached || page.complete || page.next === undefined) return { bars: buckets, complete: true, source: "hst" };
       cursor = page.next;
     }
   };
   const first = async () => {
-    const oldest = (await m1.span())?.first;
+    const oldest = (await fillFile.span())?.first;
     return oldest === undefined ? null : bucketStart(oldest, period);
   };
   return { first, last: async () => (await before(undefined, 1)).bars[0] ?? null, before };
+}
+
+/** The own file's bars older than `from`, then the fill file's from there on. */
+function filled(own: HstSource, fill: RollupSource, from: number): HstSource {
+  return {
+    first: own.first,
+    last: fill.last,
+    before: async (before, limit) => {
+      if (before !== undefined && before <= from) return own.before(before, limit);
+      const recent = await fill.before(before, limit, from);
+      if (!recent.complete) return recent;
+      const rest = await own.before(from, limit - recent.bars.length);
+      return { bars: [...rest.bars, ...recent.bars], complete: rest.complete, source: "hst" };
+    },
+  };
 }
 
 /** Saved history alone. */
@@ -166,7 +201,7 @@ function chain(hst: HstSource, saved: BarSource): BarSource {
   };
 }
 
-/** M1 bars, oldest first, into the period's buckets. */
+/** Fill file bars, oldest first, into the period's buckets. */
 function rollUp(bars: readonly HstBar[], period: Period): Candle[] {
   const out: Candle[] = [];
   for (const bar of bars) {

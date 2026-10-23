@@ -280,7 +280,7 @@ test("each feed carries its market from its terminal's latest hello; a login swi
   assert.ok(restarted[0].time >= demoTime - (demoTime % 60) - 2 * 3600);
 });
 
-test("candles and the live snapshot hand out UTC times from the broker server's rule, with the rule; W1 starts on Sunday broker time", { timeout: 10000 }, async (t) => {
+test("candles and the live snapshot hand out UTC times from the broker server's rule, with the rule; W1 bars are dated Sunday broker time", { timeout: 10000 }, async (t) => {
   const clock = new FakeClock(WINTER);
   const { ea, getJson } = await start(t, clock);
   const chart = await ea({ broker: "EasyForex-Demo" });

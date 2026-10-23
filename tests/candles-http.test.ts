@@ -117,7 +117,7 @@ test("higher periods aggregate the M1 candles, and minutes without samples have 
   ]);
 });
 
-test("W1 candles start on Sunday 00:00 broker time, as in MetaTrader's HST files, and MN1 candles on the 1st of the calendar month", { timeout: 10000 }, async (t) => {
+test("W1 candles are dated Sunday 00:00 broker time and hold Monday to the next Sunday, as in MetaTrader's HST files, and MN1 candles on the 1st of the calendar month", { timeout: 10000 }, async (t) => {
   const { ea, candles } = await start(t);
   const chart = await ea();
   const DAY = 86400;
@@ -137,9 +137,9 @@ test("W1 candles start on Sunday 00:00 broker time, as in MetaTrader's HST files
 
   assert.deepEqual(ohlc(await candles(feed, "W1")), [
     [OCT_1 - 4 * DAY, 1.1, 1.12, 1.1, 1.12], // Sun 27 Sep
-    [MONDAY - DAY, 1.09, 1.15, 1.09, 1.15], // Sun 18 Oct: Sun 23:59 and Mon 19 Oct
-    [MONDAY + 6 * DAY, 1.13, 1.13, 1.13, 1.13], // Sun 25 Oct: Sat 31 Oct
-    [NOV_1, 1.14, 1.14, 1.14, 1.14], // Sun 1 Nov
+    [MONDAY - 8 * DAY, 1.09, 1.09, 1.09, 1.09], // Sun 11 Oct: its week closes with Sun 18 Oct 23:59
+    [MONDAY - DAY, 1.15, 1.15, 1.15, 1.15], // Sun 18 Oct: Mon 19 Oct
+    [MONDAY + 6 * DAY, 1.13, 1.14, 1.13, 1.14], // Sun 25 Oct: Sat 31 Oct and Sun 1 Nov
   ]);
   assert.deepEqual(ohlc(await candles(feed, "MN1")), [
     [1788220800, 1.1, 1.1, 1.1, 1.1], // 1 Sep 2026

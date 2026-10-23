@@ -13,10 +13,14 @@ export function isIntraday(period: Period): boolean {
   return period !== "D1" && period !== "W1" && period !== "MN1";
 }
 
-/** The start of the period bucket holding `time`: W1 starts on Sunday 00:00 (as in MetaTrader's HST files), MN1 on the 1st of the calendar month. */
+/**
+ * The start of the period bucket holding `time`: MN1 starts on the 1st of the calendar month. A W1 bar is dated Sunday
+ * 00:00 and holds Monday to the next Sunday, as MetaTrader's HST files do: a broker's Sunday session counts in the week
+ * that is closing.
+ */
 export function bucketStart(time: number, period: Period): number {
   if (period === "W1") {
-    const day = time - (time % DAY);
+    const day = time - (time % DAY) - DAY;
     // 1 January 1970 was a Thursday: four days after a Sunday.
     return day - ((day / DAY + 4) % 7) * DAY;
   }

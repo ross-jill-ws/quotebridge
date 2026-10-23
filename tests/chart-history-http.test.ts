@@ -1,6 +1,6 @@
 // Chart history over HTTP: /api/candles pages backwards through the terminal's HST files (v400 and v401), rolls a
-// period up from M1 when it has no file, joins the live candles on (HST wins for closed bars), falls back to live
-// candles without HST, and says when no older bars exist. Real server, fake EAs, HST files in a temp folder.
+// period up from its fill file (M1, or D1 for W1 and MN1) when it has no file or a stale one, joins the live candles on
+// (HST wins for closed bars), falls back to live candles without HST, and says when no older bars exist. Real server, fake EAs, HST files in a temp folder.
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -68,6 +68,9 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
 }
 
 const times = (p: Page) => p.candles.map((c) => c.time);
+
+/** An HST bar as the page hands it out. */
+const toPage = (b: Page["candles"][number]): Page["candles"][number] => ({ time: utc(b.time), open: b.open, high: b.high, low: b.low, close: b.close });
 
 test("the chart pages backwards through the period's HST file (v401), with the live candles joined on after its last bar", { timeout: 15000 }, async (t) => {
   const { dataFolder, send, page } = await start(t);
@@ -195,4 +198,131 @@ test("a roll-up pages on past a long run of M1 bars that cannot be right, to the
   const d1 = await page("D1", 500);
   assert.equal(d1.complete, true);
   assert.equal(d1.candles[0].time, utc(first), "the first good day is reached");
+});
+
+/** Broker weekdays (Monday to Friday) from `start` up to before `end`, one D1 bar each. */
+const weekdays = (start: number, end: number, price?: number) => bars(start, DAY, (end - start) / DAY, price).filter((b) => ![0, 6].includes(new Date(b.time * 1000).getUTCDay()));
+
+/** The bars in [start, end) as one bar. */
+function rolled(source: readonly Page["candles"][number][], start: number, end: number) {
+  const inside = source.filter((b) => b.time >= start && b.time < end);
+  return { time: utc(start), open: inside[0].open, high: Math.max(...inside.map((b) => b.high)), low: Math.min(...inside.map((b) => b.low)), close: inside.at(-1)!.close };
+}
+
+const WEEK = 7 * DAY;
+/** Sunday 10 January 2027, the current week's start in broker time. */
+const SUNDAY = Date.UTC(2027, 0, 10) / 1000;
+
+test("a stale W1 file continues with weeks rolled up from the D1 file, its last (forming) week replaced, then pages back to its own bars", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  // MetaTrader last wrote the W1 file three weeks ago, while that week was forming; the D1 file is current to Thursday.
+  const ownLast = SUNDAY - 3 * WEEK;
+  const own = bars(ownLast - 5 * WEEK, WEEK, 6, 1.3);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 10080, digits: 5, bars: own });
+  const d1 = weekdays(ownLast - WEEK + DAY, SUNDAY + 5 * DAY);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: d1 });
+
+  const latest = await page("W1", 3);
+  assert.deepEqual(latest.candles, [2, 1, 0].map((n) => rolled(d1, SUNDAY - n * WEEK, SUNDAY - (n - 1) * WEEK)));
+  assert.equal(latest.source, "hst");
+  assert.equal(latest.complete, false);
+
+  const older = await page("W1", 500, latest.candles[0].time);
+  assert.deepEqual(older.candles, [
+    ...own.slice(0, -1).map(toPage),
+    rolled(d1, ownLast, ownLast + WEEK),
+  ], "the own file's bars, then its last week rolled up from D1: no gap, no duplicate week");
+  assert.equal(older.complete, true);
+});
+
+test("without a W1 or MN1 file, both are rolled up from the D1 file rather than M1; months start on the 1st", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  const december = Date.UTC(2026, 11, 1) / 1000;
+  const d1 = weekdays(december, SUNDAY + 5 * DAY);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: d1 });
+  // An M1 file with other prices, covering only this week.
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: bars(SUNDAY + DAY, MINUTE, 4 * 1440, 1.5) });
+
+  const w1 = await page("W1", 500);
+  assert.equal(w1.candles.length, 7);
+  assert.deepEqual(w1.candles.slice(-2), [rolled(d1, SUNDAY - WEEK, SUNDAY), rolled(d1, SUNDAY, SUNDAY + WEEK)]);
+  assert.equal(w1.complete, true);
+
+  const months = [Date.UTC(2026, 11, 1), Date.UTC(2027, 0, 1), Date.UTC(2027, 1, 1)].map((ms) => ms / 1000);
+  assert.deepEqual((await page("MN1", 500)).candles, [0, 1].map((n) => rolled(d1, months[n], months[n + 1])));
+});
+
+test("a stale H1 file is filled from the M1 file, whose last partial hour the live join merges like any forming bar", { timeout: 15000 }, async (t) => {
+  const { dataFolder, send, page } = await start(t);
+  // The H1 file was last written at 08:15, while 08:00 was forming; the M1 file runs from 07:00 to 09:39.
+  const own = [
+    { time: TEN - 4 * HOUR, open: 1.3, high: 1.31, low: 1.29, close: 1.3 },
+    { time: TEN - 3 * HOUR, open: 1.3, high: 1.32, low: 1.28, close: 1.31 },
+    { time: TEN - 2 * HOUR, open: 1.31, high: 1.31, low: 1.31, close: 1.31 },
+  ];
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: own });
+  const m1 = bars(TEN - 3 * HOUR, MINUTE, 160);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
+  await send([[TEN - 15 * MINUTE, 1.2], [TEN + 5, 1.21]]);
+
+  const partial = rolled(m1, TEN - HOUR, TEN);
+  assert.deepEqual((await page("H1", 500)).candles, [
+    toPage(own[0]),
+    toPage(own[1]),
+    rolled(m1, TEN - 2 * HOUR, TEN - HOUR),
+    { ...partial, high: 1.2, close: 1.2 },
+    { time: utc(TEN), open: 1.21, high: 1.21, low: 1.21, close: 1.21 },
+  ]);
+});
+
+test("a period file that is current is used as it is: a fill file reaching no later changes nothing", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  const own = bars(TEN - 5 * HOUR, HOUR, 5, 1.3);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: own });
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: bars(TEN - 3 * HOUR, MINUTE, 150) });
+
+  const { candles, complete } = await page("H1", 500);
+  assert.deepEqual(candles, own.map(toPage));
+  assert.equal(complete, true);
+});
+
+test("a broker's Sunday session counts in the week that is closing, as MetaTrader's W1 bars hold it", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  // D1 bars every day but Saturday, from Sunday 3 January to Thursday 14 January (EasyForex has a short Sunday session).
+  const d1 = bars(SUNDAY - WEEK, DAY, 12).filter((b) => new Date(b.time * 1000).getUTCDay() !== 6);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: d1 });
+
+  // The week dated Sunday 3 January holds Monday 4 to Sunday 10; Sunday 3 January closed the week dated 27 December.
+  assert.deepEqual((await page("W1", 500)).candles, [
+    rolled(d1, SUNDAY - WEEK, SUNDAY - WEEK + DAY),
+    rolled(d1, SUNDAY - WEEK + DAY, SUNDAY + DAY),
+    rolled(d1, SUNDAY + DAY, SUNDAY + WEEK),
+  ].map((bar, n) => ({ ...bar, time: utc(SUNDAY - (2 - n) * WEEK) })));
+});
+
+test("at the join each bucket comes once: the own file's last bar stays unless the fill file holds that whole bucket", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  const own = bars(TEN - 4 * HOUR, HOUR, 3, 1.3);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: own });
+  // The M1 file starts at 08:15, inside the own file's last hour (08:00), and runs to 09:39.
+  const m1 = bars(TEN - 2 * HOUR + 15 * MINUTE, MINUTE, 85);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
+  assert.deepEqual((await page("H1", 500)).candles, [...own.map(toPage), rolled(m1, TEN - HOUR, TEN)]);
+});
+
+test("a D1 file starting on the Monday holds that whole week, so it replaces the stale W1 file's last bar", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  const own = bars(SUNDAY - 3 * WEEK, WEEK, 2, 1.3);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 10080, digits: 5, bars: own });
+  const d1 = weekdays(SUNDAY - 2 * WEEK + DAY, SUNDAY + 5 * DAY);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: d1 });
+  assert.deepEqual((await page("W1", 500)).candles, [toPage(own[0]), ...[2, 1, 0].map((n) => rolled(d1, SUNDAY - n * WEEK, SUNDAY - (n - 1) * WEEK))]);
+});
+
+test("an empty period file counts as none: every closed bar comes from the fill file", { timeout: 15000 }, async (t) => {
+  const { dataFolder, page } = await start(t);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: [] });
+  const m1 = bars(TEN - 2 * HOUR, MINUTE, 120);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
+  assert.deepEqual((await page("H1", 500)).candles, [rolled(m1, TEN - 2 * HOUR, TEN - HOUR), rolled(m1, TEN - HOUR, TEN)]);
 });
