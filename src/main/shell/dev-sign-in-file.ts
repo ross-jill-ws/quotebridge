@@ -49,7 +49,11 @@ export class DevSignInFile {
     const { stdout } = await run(join(system32, "whoami.exe"), ["/user", "/fo", "csv", "/nh"]);
     const sid = stdout.trim().split(",").at(-1)?.replace(/"/g, "");
     if (!sid?.startsWith("S-")) throw Error(`Could not read the current user's SID from whoami: ${stdout}`);
-    await run(join(system32, "icacls.exe"), [this.path, "/inheritance:r", "/grant:r", `*${sid}:F`]);
+    // A folder without inheritable entries gives a new file explicit ones from the process token (SYSTEM,
+    // Administrators): /reset drops them, then inherited entries go and only this user's is left.
+    const icacls = join(system32, "icacls.exe");
+    await run(icacls, [this.path, "/reset"]);
+    await run(icacls, [this.path, "/inheritance:r", "/grant:r", `*${sid}:F`]);
   }
 }
 
