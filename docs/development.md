@@ -39,7 +39,8 @@ Use this for most work on the dashboard and the server. Nothing on your machine'
 - **Data folder:** `%TEMP%\quotebridge-dev`. Settings, installs into fake terminals and the database survive restarts of the dev run.
 - **Fake terminals:** a folder laid out like a MetaTrader user's machine, with four MT4 terminals and one MT5 terminal. One fails to compile, and one reports MetaEditor as open, so every state on the Terminals view and the setup screen can be seen. The compiler is a stand-in that takes about 1.5 s, so progress is visible.
 - **Fake EAs:** feeds that cover every row state of the Feeds view: live quotes, a stale quote, a symbol without a valid quote, a duplicate chart, dropped samples, and a feed that goes offline after a few seconds. Installing into a fake terminal also starts a fake EA there, which ticks that terminal's checklist.
-- **Opening the dashboard:** the terminal prints a one-time sign-in link; open it in your browser. Press Enter for a new link, for example for a second browser.
+- **Opening the dashboard:** the terminal prints a one-time sign-in link; open it in your browser. Press Enter for a new link, for example for a second browser. Only the newest link signs in: a new one uses up the one before.
+- **Sign-in link file:** the current link is also in `dev-sign-in-link.txt` in the data folder, for scripts and coding agents that should not read it from the terminal. Only your Windows user can read the file. It is rewritten with every new link and deleted when the dev run stops. Treat the link as a secret: don't paste it into issues or logs.
 - **Settings view:** the dev ports override the saved ones, and the view says so; a port change is saved but the run stays on 6655/6680. The theme applies at once in the app window and in a browser tab (the page sets `data-theme`); System follows the colour mode of the window or browser.
 
 ### `--app`: inside the app window
@@ -54,6 +55,7 @@ Runs the real Electron app (tray, window, supervisor, utility process) instead o
 - Dashboard changes reload the app window.
 - Main-process changes quit and relaunch the app.
 - The app uses the same dev data folder and ports as the mode it runs in, never the installed app's.
+- The app window signs itself in. For a browser next to it, take the one-time link from `dev-sign-in-link.txt` in the data folder (it is not printed); Enter replaces it with a new one.
 
 ### `--real`: your real terminals
 

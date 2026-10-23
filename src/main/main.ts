@@ -10,6 +10,7 @@ import { TRADINGVIEW_URL } from "../shared/licences.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
 import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, TITLE_BAR_COLOURS, type ShellPorts } from "./shell/index.js";
+import { DevSignInFile } from "./shell/dev-sign-in-file.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 
 const devRun = devRunControls(app.isPackaged, process.env);
@@ -77,6 +78,19 @@ async function boot() {
   supervisor.onEvent((event) => {
     if (event.type === "settings") settings = event.settings;
     logEvent(event);
+  });
+  // `npm run dev -- --app`: a sign-in link for a browser, besides the window's own, after every server start.
+  const signInFile = devRun.signInFile ? new DevSignInFile(devRun.signInFile) : null;
+  const newSignInLink = async () => {
+    if (!signInFile) return;
+    try {
+      await signInFile.set(await supervisor.issueWindowToken());
+    } catch (e) {
+      console.error(`[QuoteBridge] dev sign-in link: ${(e as Error).message}`);
+    }
+  };
+  supervisor.onEvent((event) => {
+    if (event.type === "window-url") void newSignInLink();
   });
 
   const window = new BrowserWindow({
@@ -209,11 +223,13 @@ async function boot() {
   shell.start();
 
   if (devRun.controlUrl) {
-    // `npm run dev -- --app`: the runner restarts the server after a rebuild and quits main before relaunching it.
+    // `npm run dev -- --app`: the runner restarts the server after a rebuild, quits main before relaunching it,
+    // and asks for a new sign-in link when Enter is pressed.
     get(devRun.controlUrl, (response) => {
       createInterface({ input: response }).on("line", (line) => {
         if (line === "event: restart-server") void supervisor.restart();
         else if (line === "event: quit") void shell.quit("quit");
+        else if (line === "event: sign-in-link") void newSignInLink();
       });
     }).on("error", (e) => console.error(`[QuoteBridge] dev control stream: ${e.message}`));
     // Ctrl+C in the runner's console reaches this process too; the runner quits it through the stop path.

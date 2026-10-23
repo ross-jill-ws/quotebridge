@@ -25,10 +25,10 @@ test("an invalid override stops the launch with a clear message instead of falli
   assert.throws(() => effectivePorts(SETTINGS_PORTS, readDevOverrides({ QUOTEBRIDGE_EA_PORT: "5580" })), /differ/);
 });
 
-test("npm run dev can swap the server entry point and drive the app from a local control stream, but never in a packaged app", () => {
-  const env = { QUOTEBRIDGE_DEV_SERVER_ENTRY: String.raw`E:\repo\.dev-build\server-entry.mjs`, QUOTEBRIDGE_DEV_CONTROL: "http://127.0.0.1:6681/control" };
-  assert.deepEqual(devRunControls(false, env), { serverEntry: String.raw`E:\repo\.dev-build\server-entry.mjs`, controlUrl: "http://127.0.0.1:6681/control" });
-  assert.deepEqual(devRunControls(true, env), { serverEntry: undefined, controlUrl: undefined });
-  assert.deepEqual(devRunControls(false, {}), { serverEntry: undefined, controlUrl: undefined });
+test("npm run dev can swap the server entry point, drive the app from a local control stream and have it write the sign-in link file, but never in a packaged app", () => {
+  const env = { QUOTEBRIDGE_DEV_SERVER_ENTRY: String.raw`E:\repo\.dev-build\server-entry.mjs`, QUOTEBRIDGE_DEV_CONTROL: "http://127.0.0.1:6681/control", QUOTEBRIDGE_DEV_SIGN_IN_FILE: String.raw`D:\qb\dev-sign-in-link.txt` };
+  assert.deepEqual(devRunControls(false, env), { serverEntry: String.raw`E:\repo\.dev-build\server-entry.mjs`, controlUrl: "http://127.0.0.1:6681/control", signInFile: String.raw`D:\qb\dev-sign-in-link.txt` });
+  assert.deepEqual(devRunControls(true, env), { serverEntry: undefined, controlUrl: undefined, signInFile: undefined });
+  assert.deepEqual(devRunControls(false, {}), { serverEntry: undefined, controlUrl: undefined, signInFile: undefined });
   assert.equal(devRunControls(false, { QUOTEBRIDGE_DEV_CONTROL: "http://example.com/control" }).controlUrl, undefined, "only this machine");
 });

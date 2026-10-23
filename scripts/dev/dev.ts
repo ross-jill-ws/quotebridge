@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { context, type Plugin } from "esbuild";
+import { DEV_SIGN_IN_FILE_NAME, DevSignInFile } from "../../src/main/shell/dev-sign-in-file.js";
 import { bridgeBundleFolders } from "../../src/main/shell/environment.js";
 import { Supervisor, type ServerProcess } from "../../src/main/supervisor/supervisor.js";
 import { ipcTransport } from "../../src/shared/host-transport.js";
@@ -40,6 +41,9 @@ try {
 }
 const { app, real, dataFolder, reloadPort } = plan;
 mkdirSync(dataFolder, { recursive: true });
+// Scripts and agents read the current sign-in link from this file, never from the console (docs/development.md).
+const signInFile = new DevSignInFile(join(dataFolder, DEV_SIGN_IN_FILE_NAME));
+await signInFile.remove();
 // A fresh --real data folder skips setup with no managed terminals: nothing is installed until Install is clicked.
 if (real && (await seedRealRunSettings(dataFolder))) log(`new dev settings in ${dataFolder}: setup done, no managed terminals`);
 const settingsPorts = (await new SettingsStore(dataFolder).read()).ports;
@@ -121,6 +125,7 @@ async function stop() {
   staticWatchers.forEach((w) => w.close());
   input.close();
   await runner.stop();
+  await signInFile.remove();
   stopFeeds();
   await Promise.all([dashboard.dispose(), serverBuild.dispose()]);
   await reload.close();
@@ -145,20 +150,24 @@ function runBrowser() {
     },
     config: () => ({ eaPort: ports.ea, httpPort: ports.http, dataFolder, bridgeBundle }),
   });
-  const signIn = (url: string) => log(`dashboard: ${url}\n      (one-time link; press Enter for another; q and Enter or Ctrl+C to stop)`);
+  const signIn = (url: string) => {
+    log(`dashboard: ${url}\n      (one-time link; press Enter for another; q and Enter or Ctrl+C to stop)`);
+    signInFile.set(url).catch((e: Error) => log(`sign-in link file: ${e.message}`));
+  };
+  const newSignIn = () => void supervisor.issueWindowToken().then(signIn, (e: Error) => log(e.message));
   supervisor.onEvent((event) => {
     if (event.type === "state") {
       const { state, lastError } = event.status;
       log(`server ${state}${lastError && state !== "running" ? ` (${lastError.message})` : ""}`);
     } else if (event.type === "window-url") {
-      signIn(event.url);
-      // Pages lost their session with the old server: they follow the new link.
-      reload.navigate(event.url);
+      // Pages lost their session with the old server: they follow the new link, and one of them uses it up.
+      if (reload.navigate(event.url) > 0) newSignIn();
+      else signIn(event.url);
     }
   });
   supervisor.start();
   return {
-    onEnter: () => void supervisor.issueWindowToken().then(signIn, (e: Error) => log(e.message)),
+    onEnter: newSignIn,
     restartServer: async () => {
       log("server rebuilt; restarting it");
       await supervisor.restart();
@@ -218,6 +227,7 @@ async function runApp() {
         ...(plan.ports?.http !== undefined ? { QUOTEBRIDGE_HTTP_PORT: String(plan.ports.http) } : {}),
         QUOTEBRIDGE_DEV_SERVER_ENTRY: SERVER_BUNDLE,
         QUOTEBRIDGE_DEV_CONTROL: reload.controlUrl,
+        QUOTEBRIDGE_DEV_SIGN_IN_FILE: signInFile.path,
       },
     });
     electronProcess = child;
@@ -248,9 +258,9 @@ async function runApp() {
     if (!stopping) launch();
   }
   launch();
-  log("q and Enter or Ctrl+C to stop");
+  log(`a one-time sign-in link for a browser is in ${signInFile.path} (Enter for another); q and Enter or Ctrl+C to stop`);
   return {
-    onEnter: () => {},
+    onEnter: () => reload.control("sign-in-link"),
     restartServer: async () => {
       log("server rebuilt; restarting it in the app");
       reload.control("restart-server");

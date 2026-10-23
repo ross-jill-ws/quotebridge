@@ -69,13 +69,18 @@ export function bridgeBundleFolders(
  * `npm run dev -- --app` only (never a packaged app): `QUOTEBRIDGE_DEV_SERVER_ENTRY` launches the dev
  * server bundle instead of `dist/server/entry.js`, and `QUOTEBRIDGE_DEV_CONTROL` names the runner's
  * event stream (on 127.0.0.1) that sends `restart-server` after a server rebuild and `quit` before
- * relaunching main.
+ * relaunching main. `QUOTEBRIDGE_DEV_SIGN_IN_FILE` is where main keeps a one-time sign-in link for a browser
+ * (`DevSignInFile`), renewed on `sign-in-link`.
  */
-export function devRunControls(isPackaged: boolean, env: Record<string, string | undefined>): { serverEntry: string | undefined; controlUrl: string | undefined } {
-  if (isPackaged) return { serverEntry: undefined, controlUrl: undefined };
+export function devRunControls(
+  isPackaged: boolean,
+  env: Record<string, string | undefined>,
+): { serverEntry: string | undefined; controlUrl: string | undefined; signInFile: string | undefined } {
+  if (isPackaged) return { serverEntry: undefined, controlUrl: undefined, signInFile: undefined };
   const control = env.QUOTEBRIDGE_DEV_CONTROL?.trim();
   return {
     serverEntry: env.QUOTEBRIDGE_DEV_SERVER_ENTRY?.trim() || undefined,
     controlUrl: control && control.startsWith("http://127.0.0.1:") ? control : undefined,
+    signInFile: env.QUOTEBRIDGE_DEV_SIGN_IN_FILE?.trim() || undefined,
   };
 }
