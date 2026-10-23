@@ -259,3 +259,24 @@ test("an offline feed can be removed over HTTP; an online feed cannot", { timeou
   assert.equal((await remove(feed)).status, 204);
   assert.deepEqual((await state()).feeds, []);
 });
+
+test("/api/state lists a rejected batch with its reason, and the feed's snapshot names it", { timeout: 10000 }, async (t) => {
+  const { origin, ea } = await start(t);
+  const cookie = await signIn(origin);
+  const chart = ea({ session: "chart-new" });
+  await chart.request(chart.helloWire());
+
+  // As after a chart change on EA 1.08: the batch's text names the old session, on the new session's route.
+  await chart.send("T|1|chart-old|7,1.1,1.1002,1700000000,1700000001");
+  await chart.request(chart.helloWire());
+
+  const state = (await (await fetch(origin + "/api/state", { headers: { cookie } })).json()) as BridgeSnapshot;
+  assert.equal(state.invalidMessages, 1);
+  assert.equal(state.rejections.length, 1);
+  assert.deepEqual(
+    { ...state.rejections[0], time: undefined },
+    { time: undefined, reason: "Routing identity mismatch", route: "chart-new", excerpt: "T|1|chart-old|7,1.1,1.1002,1700000000,1700000001", feed: chart.feedKey() },
+  );
+  assert.equal(typeof state.rejections[0].time, "number");
+  assert.deepEqual(state.feeds[0].lastRejection, state.rejections[0]);
+});

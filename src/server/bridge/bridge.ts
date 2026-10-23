@@ -12,6 +12,13 @@ export const ONLINE_WINDOW_MS = 7000;
 export const STALE_QUOTE_MS = 10000;
 
 const MAX_PEERS = 1000;
+/** Rejections the snapshot lists, newest first; older ones drop out. */
+export const MAX_REJECTIONS = 20;
+/** Characters of a rejected message's body kept in the record; routes are kept whole up to a session's 120. */
+const EXCERPT_CHARS = 60;
+const ROUTE_CHARS = 120;
+/** Account info and trading messages: a rejected one keeps only its type and session in the excerpt. */
+const PRIVATE_TYPES = /^[IPX]\|/;
 /** A peer silent this long may be evicted to make room when the peer limit is reached. */
 const STALE_PEER_MS = 60000;
 
@@ -21,6 +28,23 @@ const STALE_PEER_MS = 60000;
  */
 export type SampleEvent = { type: "samples"; feed: string; market: Market; samples: Sample[] } | { type: "removed"; feed: string };
 export type SampleListener = (event: SampleEvent) => void;
+
+/**
+ * An EA message the bridge rejected, and why. The excerpt is short, and account info and trading messages keep only their
+ * type and session in it: what is left are quotes, symbols and session ids.
+ */
+export type Rejection = {
+  time: number;
+  /** The wire protocol check that failed, e.g. "Routing identity mismatch", "Invalid quote", "Unknown message". */
+  reason: string;
+  /** The ZeroMQ routing identity the message came from, as text. */
+  route: string;
+  /** The start of the message body. */
+  excerpt: string;
+  /** The feed of the chart the route belongs to; null for a route the bridge does not know. */
+  feed: string | null;
+};
+export type RejectionListener = (rejection: Rejection) => void;
 
 /** What the server knows about a market beyond the bridge: its broker server's clock rule (ADR 11) and whether it is recorded. */
 export type MarketInfo = { clockRule: ClockRule | null; recording: boolean };
@@ -73,6 +97,8 @@ export type FeedSnapshot = {
   lastSeen: number;
   /** Samples the feed's EAs dropped from full buffers, summed over its charts. */
   dropped: number;
+  /** The latest message rejected on one of the feed's chart routes; absent when there was none. */
+  lastRejection?: Rejection;
 };
 
 /** Per Terminal ID: when a QuoteBridge EA in that terminal last said hello, and the EA version it reported. */
@@ -89,6 +115,8 @@ export type BridgeSnapshot = {
   time: number;
   /** Messages rejected by the wire protocol (malformed, invalid quote, wrong routing identity). */
   invalidMessages: number;
+  /** The latest rejected messages, newest first, at most MAX_REJECTIONS. */
+  rejections: Rejection[];
   feeds: FeedSnapshot[];
   /** Sorted by Terminal ID. */
   terminals: TerminalPresence[];
@@ -113,6 +141,9 @@ export class BridgeServer {
   private running?: Promise<void>;
   private stopped = false;
   private invalidMessages = 0;
+  private rejections: Rejection[] = [];
+  private readonly lastRejectionByFeed = new Map<string, Rejection>();
+  private readonly rejectionListeners = new Set<RejectionListener>();
   private operations: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
   private readonly sampleListeners = new Set<SampleListener>();
@@ -149,6 +180,12 @@ export class BridgeServer {
   onSamples(listener: SampleListener): () => void {
     this.sampleListeners.add(listener);
     return () => this.sampleListeners.delete(listener);
+  }
+
+  /** Calls `listener` with each rejected EA message; returns an unsubscribe function. */
+  onRejection(listener: RejectionListener): () => void {
+    this.rejectionListeners.add(listener);
+    return () => this.rejectionListeners.delete(listener);
   }
 
   private emit(event: SampleEvent) {
@@ -216,14 +253,33 @@ export class BridgeServer {
   }
 
   private async handle(frames: Buffer[]) {
-    if (frames.length !== 2) {
-      this.invalidMessages++;
-      return;
-    }
+    if (frames.length !== 2) return this.reject(frames, "Wrong frame count");
     try {
       await this.accept(frames[0], frames[1]);
-    } catch {
-      this.invalidMessages++;
+    } catch (e) {
+      this.reject(frames, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  private reject(frames: Buffer[], reason: string) {
+    this.invalidMessages++;
+    const route = frames[0]?.toString() ?? "";
+    const body = frames[1]?.subarray(0, EXCERPT_CHARS * 4).toString() ?? "";
+    const rejection: Rejection = {
+      time: this.now(),
+      reason,
+      route: printable(route, ROUTE_CHARS),
+      excerpt: printable(PRIVATE_TYPES.test(body) ? body.split("|").slice(0, 3).join("|") + "|…" : body, EXCERPT_CHARS),
+      feed: this.peers.get(route)?.feed ?? null,
+    };
+    this.rejections = [rejection, ...this.rejections.slice(0, MAX_REJECTIONS - 1)];
+    if (rejection.feed) this.lastRejectionByFeed.set(rejection.feed, rejection);
+    for (const listener of this.rejectionListeners) {
+      try {
+        listener(rejection);
+      } catch (e) {
+        console.error("Bridge rejection listener failed", e);
+      }
     }
   }
 
@@ -237,7 +293,10 @@ export class BridgeServer {
         const stale = [...this.peers.values()].find((p) => this.now() - p.lastSeen > STALE_PEER_MS);
         if (!stale) throw Error("Peer limit reached");
         this.peers.delete(stale.session);
-        if (stale.feed !== feedKey(m) && ![...this.peers.values()].some((p) => p.feed === stale.feed)) this.emit({ type: "removed", feed: stale.feed });
+        if (stale.feed !== feedKey(m) && ![...this.peers.values()].some((p) => p.feed === stale.feed)) {
+          this.lastRejectionByFeed.delete(stale.feed);
+          this.emit({ type: "removed", feed: stale.feed });
+        }
       }
       const p: Peer = { ...old, ...m, feed: feedKey(m), route, lastSeen: this.now() };
       this.peers.set(m.session, p);
@@ -295,10 +354,11 @@ export class BridgeServer {
         recording,
         lastSeen: p.lastSeen,
         dropped: instances.reduce((n, i) => n + i.dropped, 0),
+        ...(this.lastRejectionByFeed.has(feed) && { lastRejection: { ...this.lastRejectionByFeed.get(feed)! } }),
       };
     });
     const terminals = [...this.terminals.values()].sort((a, b) => (a.terminalId < b.terminalId ? -1 : 1)).map((t) => ({ ...t }));
-    return { time: now, invalidMessages: this.invalidMessages, feeds, terminals };
+    return { time: now, invalidMessages: this.invalidMessages, rejections: this.rejections.map((r) => ({ ...r })), feeds, terminals };
   }
 
   /** Forgets an offline feed and its charts. An EA that says hello again brings the feed back. */
@@ -308,6 +368,7 @@ export class BridgeServer {
       if (!known) throw Error("Unknown feed");
       if (known.online) throw Error("Feed is online; detach its EAs before removing it");
       this.owners.delete(feed);
+      this.lastRejectionByFeed.delete(feed);
       for (const [session, p] of this.peers) if (p.feed === feed) this.peers.delete(session);
       this.emit({ type: "removed", feed });
       this.changed();
@@ -321,3 +382,9 @@ export class BridgeServer {
     await this.operations;
   }
 }
+
+/** Text cut to `max` characters (whole code points), with control characters and invalid UTF-8 shown as "?". */
+const printable = (text: string, max: number) => {
+  const chars = [...text.replace(/[\x00-\x1f\x7f\ufffd]/g, "?")];
+  return chars.length > max ? chars.slice(0, max).join("") + "…" : chars.join("");
+};

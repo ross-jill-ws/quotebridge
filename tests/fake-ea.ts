@@ -1,6 +1,7 @@
 // A fake QuoteBridge EA: a real ZeroMQ DEALER speaking the EA wire protocol.
 // Synthetic fixture: no MetaTrader, broker or DLL is involved.
 import { Dealer } from "zeromq";
+import { feedKey } from "../src/server/bridge/index.js";
 import { freePort } from "./free-port.js";
 
 export type FakeEAOptions = {
@@ -50,6 +51,11 @@ export class FakeEA {
     const fields = ["H", "1", this.session, this.terminal, this.broker, this.symbol, this.digits, 500, this.dropped, this.quoteStatus, this.timeframe, 2000, 1];
     if (this.eaVersion !== null) fields.push(this.eaVersion);
     return fields.join("|");
+  }
+
+  /** The feed this chart sends, as the bridge keys it. */
+  feedKey() {
+    return feedKey(this);
   }
 
   tickWire(quotes: Quote[]) {

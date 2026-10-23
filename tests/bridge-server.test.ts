@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { BridgeServer } from "../src/server/bridge/index.js";
+import { BridgeServer, MAX_REJECTIONS } from "../src/server/bridge/index.js";
 import { FakeClock, FakeEA, freeEndpoint, type FakeEAOptions } from "./fake-ea.js";
 
 async function startBridge(t: TestContext, clock = new FakeClock()) {
@@ -249,4 +249,90 @@ test("only an offline feed can be removed; its EA brings it back with the next h
 
   assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
   assert.equal(bridge.snapshot().feeds[0].feed, feed);
+});
+
+test("a batch naming an old session on its new session's route is listed with its reason and attributed to the feed", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const chart = ea({ session: "chart-new" });
+  await chart.request(chart.helloWire());
+
+  // EA 1.08 after a chart change: the new session's socket sends a batch still naming the old session.
+  await chart.send("T|1|chart-old|7,1.1,1.1002,1700000000,1700000001");
+  await chart.request(chart.helloWire());
+
+  const rejection = { time: clock.time, reason: "Routing identity mismatch", route: "chart-new", excerpt: "T|1|chart-old|7,1.1,1.1002,1700000000,1700000001", feed: chart.feedKey() };
+  assert.deepEqual(bridge.snapshot().rejections, [rejection]);
+  assert.deepEqual(bridge.snapshot().feeds[0].lastRejection, rejection);
+  assert.equal(bridge.snapshot().invalidMessages, 1);
+});
+
+test("malformed and invalid-quote messages are listed with their reasons; an unknown route's is attributed to no feed", { timeout: 10000 }, async (t) => {
+  const { bridge, ea } = await startBridge(t);
+  const chart = ea({ session: "chart-known" });
+  const stranger = ea({ session: "chart-stranger" });
+  await chart.request(chart.helloWire());
+
+  await chart.ticks([{ seq: 1, bid: 1.2, ask: 1.1, quoteTime: 1700000000 }]); // ask below bid
+  await chart.send("garbage\x01" + "x".repeat(100));
+  await chart.request(chart.helloWire());
+  // Another socket: its message is not ordered after the chart's, so wait for it.
+  await stranger.send(`Z|1|chart-stranger|what`);
+  while (bridge.snapshot().invalidMessages < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const { rejections, feeds } = bridge.snapshot();
+  assert.deepEqual(
+    rejections.map(({ reason, route, feed }) => ({ reason, route, feed })),
+    [
+      { reason: "Unknown message", route: "chart-stranger", feed: null },
+      { reason: "Invalid protocol/session", route: "chart-known", feed: chart.feedKey() },
+      { reason: "Invalid quote", route: "chart-known", feed: chart.feedKey() },
+    ],
+  );
+  assert.equal(rejections[1].excerpt, "garbage?" + "x".repeat(52) + "…");
+  assert.equal(feeds[0].lastRejection?.reason, "Invalid protocol/session");
+  assert.equal(bridge.snapshot().invalidMessages, 3);
+});
+
+test("the rejection list stays bounded, oldest dropping out, while the count keeps counting", { timeout: 10000 }, async (t) => {
+  const { bridge, ea } = await startBridge(t);
+  const chart = ea();
+  await chart.request(chart.helloWire());
+
+  for (let i = 1; i <= MAX_REJECTIONS + 5; i++) await chart.send(`T|1|${chart.session}|bad-${i}`);
+  await chart.request(chart.helloWire());
+
+  const { rejections, invalidMessages } = bridge.snapshot();
+  assert.equal(invalidMessages, MAX_REJECTIONS + 5);
+  assert.equal(rejections.length, MAX_REJECTIONS);
+  assert.match(rejections[0].excerpt, new RegExp(`bad-${MAX_REJECTIONS + 5}$`));
+  assert.match(rejections.at(-1)!.excerpt, /bad-6$/);
+});
+
+test("removing a feed forgets its latest rejection", { timeout: 10000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  const chart = ea();
+  await chart.request(chart.helloWire());
+  await chart.send(`T|1|${chart.session}|bad`);
+  await chart.request(chart.helloWire());
+  chart.close();
+  clock.advance(60000);
+
+  await bridge.remove(chart.feedKey());
+  const again = ea({ session: chart.session });
+  await again.request(again.helloWire());
+
+  assert.equal(bridge.snapshot().feeds[0].lastRejection, undefined);
+  assert.equal(bridge.snapshot().rejections.length, 1);
+});
+
+test("a rejected account-info or trading message keeps only its type and session in the excerpt", { timeout: 10000 }, async (t) => {
+  const { bridge, ea } = await startBridge(t);
+  const chart = ea({ session: "chart-new" });
+  await chart.request(chart.helloWire());
+
+  await chart.send("I|1|chart-old|123456|USD|1|0|1");
+  await chart.request(chart.helloWire());
+
+  assert.equal(bridge.snapshot().rejections[0].reason, "Routing identity mismatch");
+  assert.equal(bridge.snapshot().rejections[0].excerpt, "I|1|chart-old|…");
 });

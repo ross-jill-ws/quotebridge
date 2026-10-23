@@ -2,10 +2,11 @@
 // launched like src/server/entry.ts: by the runner (Node child, IPC) or by the app (Electron utility
 // process, with QUOTEBRIDGE_DEV_SERVER_ENTRY). It serves the dev dashboard build and, unless --real,
 // swaps in fake terminals and their fake EAs;
-// with --real, the Terminals view warns that its terminals are real.
+// with --real, the Terminals view warns that its terminals are real. Rejected EA messages are logged, rate-limited.
 import { join } from "node:path";
 import { ipcTransport, parentPortTransport, type HostTransport, type ParentPortLike } from "../../src/shared/host-transport.js";
 import type { HostMessage, ServerMessage } from "../../src/shared/server-host-protocol.js";
+import { rejectionLogger } from "./rejection-log.js";
 import { runServerHost } from "../../src/server/host.js";
 import { fakeTerminalEAs, fakeTerminalOptions } from "./fake-terminals.js";
 import { realTerminalOptions } from "./real-run.js";
@@ -33,13 +34,18 @@ const withDashboard: HostTransport<HostMessage, ServerMessage> = {
 
 runServerHost(withDashboard, {
   ...(fakes
-    ? {
-        terminals: (options) => fakeTerminalOptions(join(options.appDataFolder, "fake-terminals"), options),
-        onRunning: (server, config) => fakeTerminalEAs(server, `tcp://127.0.0.1:${config.eaPort}`),
-      }
+    ? { terminals: (options) => fakeTerminalOptions(join(options.appDataFolder, "fake-terminals"), options) }
     : real
       ? { terminals: realTerminalOptions }
       : {}),
+  onRunning(server, config) {
+    const stopLog = server.bridge.onRejection(rejectionLogger());
+    const stopFakes = fakes ? fakeTerminalEAs(server, `tcp://127.0.0.1:${config.eaPort}`) : undefined;
+    return () => {
+      stopLog();
+      stopFakes?.();
+    };
+  },
   onStopped() {
     setTimeout(() => process.exit(0), 50);
   },
