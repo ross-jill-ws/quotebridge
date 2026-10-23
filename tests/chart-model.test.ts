@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, latestView, readChartMemory, showsCandlesSince, viewAfterSet, wantsOlder } from "../src/dashboard/charts/chart-model.js";
+import { candlesSince, chartLegend, daySeparators, followQuote, mergeLatest, prependOlder, latestView, PAGE_BARS, readChartMemory, showsCandlesSince, viewAfterSet, wantsOlder } from "../src/dashboard/charts/chart-model.js";
 import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
 import { indicatorLabel, nextColour } from "../src/dashboard/charts/indicators.js";
@@ -236,7 +236,8 @@ test("Latest keeps the view's width and puts the newest bar 6 from the right edg
   assert.equal(latestView(500, null), "latest");
 });
 
-test("older bars are asked for when fewer than 100 remain left of the view, until there are none", () => {
+test("older bars are asked for, 900 at a time, when fewer than 100 remain left of the view, until there are none", () => {
+  assert.equal(PAGE_BARS, 900, "MetaTrader's default, and what the EA sends");
   assert.equal(wantsOlder(99, false), true);
   assert.equal(wantsOlder(100, false), false);
   assert.equal(wantsOlder(-20, false), true, "scrolled past the first bar");

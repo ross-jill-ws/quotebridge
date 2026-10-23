@@ -78,27 +78,27 @@ const toPage = (b: Page["candles"][number]): Page["candles"][number] => ({ time:
 
 test("the chart pages backwards through the period's HST file (v401), with the live candles joined on after its last bar", { timeout: 15000 }, async (t) => {
   const { dataFolder, send, page } = await start(t);
-  // 1,200 H1 bars ending at 09:00 on 9 January; the app has seen quotes this morning.
-  const first = TEN - 6 * DAY - 1200 * HOUR;
-  const hst = bars(first, HOUR, 1200);
+  // 2,000 H1 bars ending at 09:00 on 9 January; the app has seen quotes this morning.
+  const first = TEN - 6 * DAY - 2000 * HOUR;
+  const hst = bars(first, HOUR, 2000);
   await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: hst });
   await send([[TEN - HOUR + 30, 1.2], [TEN + 5, 1.21]]);
 
-  const latest = await page("H1", 500);
+  const latest = await page("H1", 900);
   assert.equal(latest.source, "hst");
   assert.equal(latest.complete, false);
-  assert.equal(latest.candles.length, 500);
+  assert.equal(latest.candles.length, 900);
   assert.deepEqual(times(latest).slice(-2), [utc(TEN - HOUR), utc(TEN)], "the live candles after the HST file's last bar");
-  assert.deepEqual(times(latest).slice(0, -2), hst.slice(-498).map((b) => utc(b.time)));
-  assert.deepEqual(latest.candles[0], { time: utc(hst[702].time), open: hst[702].open, high: hst[702].high, low: hst[702].low, close: hst[702].close });
+  assert.deepEqual(times(latest).slice(0, -2), hst.slice(-898).map((b) => utc(b.time)));
+  assert.deepEqual(latest.candles[0], { time: utc(hst[1102].time), open: hst[1102].open, high: hst[1102].high, low: hst[1102].low, close: hst[1102].close });
 
-  const older = await page("H1", 500, latest.candles[0].time);
-  assert.deepEqual(times(older), hst.slice(202, 702).map((b) => utc(b.time)));
+  const older = await page("H1", 900, latest.candles[0].time);
+  assert.deepEqual(times(older), hst.slice(202, 1102).map((b) => utc(b.time)));
   assert.equal(older.complete, false);
-  const oldest = await page("H1", 500, older.candles[0].time);
+  const oldest = await page("H1", 900, older.candles[0].time);
   assert.deepEqual(times(oldest), hst.slice(0, 202).map((b) => utc(b.time)));
   assert.equal(oldest.complete, true, "no older bars exist");
-  assert.deepEqual((await page("H1", 500, oldest.candles[0].time)).candles, []);
+  assert.deepEqual((await page("H1", 900, oldest.candles[0].time)).candles, []);
 });
 
 test("HST wins for closed bars; the bar still forming keeps HST's open with the live high, low and close; live bars follow", { timeout: 15000 }, async (t) => {

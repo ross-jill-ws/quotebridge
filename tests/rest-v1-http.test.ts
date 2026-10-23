@@ -269,14 +269,26 @@ test("candles: auto joins HST and the live candles, live has the live ones only,
   assert.equal(history.source, "history");
   assert.deepEqual(history.bars, [h1[8], h1[9]].map((b) => ({ ...ohlc(b), volume: b.volume, spread: 0 })));
 
-  assert.equal((await app.read("/api/v1/symbols/EURUSD/candles", { period: "H1" })).bars.length, 11, "30 by default; all there are");
+  assert.equal((await app.read("/api/v1/symbols/EURUSD/candles", { period: "H1" })).bars.length, 11, "all there are");
   await app.read("/api/v1/symbols/EURUSD/candles", { period: "H2" }, 400);
-  await app.read("/api/v1/symbols/EURUSD/candles", { period: "H1", count: 2001 }, 400);
   await app.read("/api/v1/symbols/EURUSD/candles", { period: "H1", source: "tape" }, 400);
 
   // A feed with neither history nor a quote yet has no candles to give.
   await app.connect({ symbol: "GBPUSD" });
   assert.match((await app.read("/api/v1/symbols/GBPUSD/candles", { period: "H1" }, 404)).error, /No H1 candles of GBPUSD/);
+});
+
+test("candles: 900 by default, as MetaTrader's charts show, and up to 5000", { timeout: 20000 }, async (t) => {
+  const data = await tempFolder(t, "rest-data");
+  const m1 = bars(MIDNIGHT - 6000 * 60, 60, 6000);
+  await writeHst(data, DEMO, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
+  const app = await start(t, await tempFolder(t, "rest-data-db"), { [TERMINAL]: data });
+  await app.connect();
+
+  const byDefault = await app.read("/api/v1/symbols/EURUSD/candles", { period: "M1" });
+  assert.deepEqual(byDefault.bars.map((b: Json) => b.time), m1.slice(-900).map((b) => b.time));
+  assert.equal((await app.read("/api/v1/symbols/EURUSD/candles", { period: "M1", count: 5000, source: "history" })).bars.length, 5000);
+  for (const count of [0, 5001]) await app.read("/api/v1/symbols/EURUSD/candles", { period: "M1", count }, 400);
 });
 
 test("history lists each market's periods and reads bars from HST joined with saved history, also with no terminal running", { timeout: 30000 }, async (t) => {

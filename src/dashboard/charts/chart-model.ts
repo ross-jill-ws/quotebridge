@@ -130,8 +130,8 @@ export function candlesSince(since: number, now: number): string {
 
 /** Older bars are fetched when fewer than this many remain left of the visible range. */
 export const OLDER_WHEN_FEWER_THAN = 100;
-/** Bars per page of chart history. */
-export const PAGE_BARS = 500;
+/** Bars per page of chart history: MetaTrader's default, and what the EA sends. */
+export const PAGE_BARS = 900;
 
 /** `fromIndex`: the logical index of the leftmost visible bar (negative past the first bar). */
 export function wantsOlder(fromIndex: number, complete: boolean): boolean {

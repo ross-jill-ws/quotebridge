@@ -139,7 +139,7 @@ export class RestV1 {
    */
   private async candles(symbol: string, q: URLSearchParams) {
     const period = parsePeriod(q.get("period"));
-    const count = integer(q.get("count"), "count", 1, 2000, 30);
+    const count = integer(q.get("count"), "count", 1, 5000, 900);
     const mode = q.get("source") || "auto";
     if (mode !== "auto" && mode !== "live" && mode !== "history") throw new RestRequestError(400, "source must be auto, live or history");
     const resolved =
