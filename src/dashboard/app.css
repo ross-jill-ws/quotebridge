@@ -270,33 +270,35 @@ a {
   outline-color: var(--accent);
 }
 
+/* The curved corners are painted with a hard-stop gradient (a shape, not a glow), not cut from a shadow: at a
+   fractional display scale a shadow's edges leave a faint seam. Each overlaps the item by 1px, so no two edges meet
+   on the same fractional pixel, and ends where the page begins (.content takes the rail's last pixel). */
 .rail-item[aria-current="page"]::before,
 .rail-item[aria-current="page"]::after {
   content: "";
   position: absolute;
-  right: 0;
-  width: 14px;
-  height: 14px;
+  right: 1px;
+  width: var(--radius-small);
+  height: calc(var(--radius-small) + 1px);
+  background: radial-gradient(circle at var(--corner-centre), var(--rail) calc(var(--radius-small) - 0.5px), var(--ground) calc(var(--radius-small) + 0.5px));
   pointer-events: none;
 }
 
 .rail-item[aria-current="page"]::before {
-  top: -14px;
-  border-bottom-right-radius: var(--radius-small);
-  box-shadow: 4px 4px 0 4px var(--ground);
+  top: calc(-1 * var(--radius-small));
+  --corner-centre: 0 0;
 }
 
 .rail-item[aria-current="page"]::after {
-  bottom: -14px;
-  border-top-right-radius: var(--radius-small);
-  box-shadow: 4px -4px 0 4px var(--ground);
+  bottom: calc(-1 * var(--radius-small));
+  --corner-centre: 0 100%;
 }
 
 .rail-foot {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  /* Clears the current item's curved corner (14px) above the status rule. */
+  /* Clears the current item's curved corner above the status rule. */
   gap: 18px;
   padding-top: 18px;
 }
@@ -547,11 +549,14 @@ input[type="checkbox"]:focus-visible {
   outline-offset: 1px;
 }
 
-/* Views */
+/* Views. The page takes the rail's last pixel and paints its ground over it, so the current rail item's edge lands on
+   the page's ground and not on the rail's fractional edge (a faint seam at a scale such as 125%). */
 .content {
   min-height: 0;
   overflow: auto;
-  padding: 26px 32px 32px;
+  margin-left: -1px;
+  padding: 26px 32px 32px 33px;
+  background: var(--ground);
 }
 
 .view-heading {
@@ -725,7 +730,7 @@ input[type="checkbox"]:focus-visible {
 }
 
 .feeds .symbol-col {
-  width: 20%;
+  width: 17%;
 }
 
 .feeds .price-col {
@@ -733,19 +738,49 @@ input[type="checkbox"]:focus-visible {
 }
 
 .feeds .spread-col {
-  width: 9%;
+  width: 8%;
 }
 
 .feeds .time-col {
-  width: 12%;
+  width: 11%;
 }
 
 .feeds .action-col {
   width: 96px;
 }
 
+/* Status takes what the fixed columns leave. The centred Record switch keeps it clear on the right, and a flag
+   wraps inside the cell rather than running under the switch. */
 .feeds .status-col {
+  padding-right: 8px;
   white-space: normal;
+}
+
+.feeds td.status-col .flag {
+  max-width: 100%;
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/* A narrow window: tighter cells, so the table fits beside the collapsed rail without scrolling and Remove shows. */
+@media (max-width: 960px) {
+  .feeds {
+    min-width: 680px;
+  }
+
+  .feeds th,
+  .feeds td {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .feeds .status-col {
+    padding-right: 6px;
+  }
+
+  .feeds .action-col {
+    width: 88px;
+  }
 }
 
 .feeds .record-col {
