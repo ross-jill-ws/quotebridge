@@ -1,9 +1,9 @@
 #property strict
-#property version "1.08"
+#property version "1.09"
 #property description "Quote Bridge: live quotes and holdings; opt-in DEMO trading only."
 // Installed and compiled by QuoteBridge for MetaTrader with the terminal's own MetaEditor; do not edit here.
 // Sent as the last hello field; keep equal to #property version.
-#define QB_EA_VERSION "1.08"
+#define QB_EA_VERSION "1.09"
 #include "..\Include\QuoteBridgeZmq.mqh"
 input string ServerEndpoint="tcp://127.0.0.1:5555";
 input string TerminalId="mt4-main";
@@ -92,6 +92,10 @@ int OnInit() {
  if(!MathIsValidNumber(MaxDemoOrderLots)||MaxDemoOrderLots<=0)return INIT_PARAMETERS_INCORRECT;
  if(!IsDllsAllowed()){Print("QuoteBridge requires Allow DLL imports");return INIT_FAILED;}
  if((SamplingMilliseconds!=500 && SamplingMilliseconds!=1000)||BufferCapacity<32||BufferCapacity>20000||StringLen(TerminalId)<1||StringLen(TerminalId)>100||StringFind(ServerEndpoint,"tcp://127.0.0.1:")!=0) return INIT_PARAMETERS_INCORRECT;
+ // A chart or parameter change re-inits the EA but keeps its globals. The batch in flight names the old session, which
+ // the server refuses from the new one, so it is rebuilt from the queue; a resized buffer no longer fits its positions.
+ inflight="";inflightLast=0;
+ if(ArraySize(rows)!=BufferCapacity){head=0;count=0;}
  ArrayResize(rows,BufferCapacity);ArrayResize(sequences,BufferCapacity);
  // Chart ID + local epoch + monotonic clock separates simultaneous attachments/restarts.
  session=IntegerToString(ChartID())+"-"+IntegerToString((long)TimeLocal())+"-"+IntegerToString((long)GetMicrosecondCount());
@@ -160,6 +164,8 @@ void OnTimer() {
  Comment("QuoteBridge | ",Symbol()," | ",serverConfirmed?"server connected":"SERVER NOT CONFIRMED"," | errno ",sendError," | ",subscribed?"subscribed":"idle"," | queued ",count," | dropped ",dropped," | ",quoteStatus);
 }
 void OnDeinit(const int reason) {
- Print("QuoteBridge stopped; unacknowledged samples lost: ",count,"; dropped: ",dropped);
+ // A chart or parameter change keeps the EA loaded, queue and all; any other reason unloads it.
+ bool kept=reason==REASON_CHARTCHANGE||reason==REASON_PARAMETERS;
+ Print("QuoteBridge stopped; queued samples ",kept?"kept for the restart: ":"lost: ",count,"; dropped: ",dropped);
  Cleanup();
 }

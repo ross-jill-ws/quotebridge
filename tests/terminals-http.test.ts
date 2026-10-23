@@ -124,7 +124,7 @@ test("first run lists every detected terminal: MT4 offered for install, MT5 show
   const s = await state();
   assert.equal(s.setupCompleted, false);
   assert.equal(s.startWithWindows, true);
-  assert.equal(s.bundledEaVersion, "1.08");
+  assert.equal(s.bundledEaVersion, "1.09");
   assert.deepEqual(
     s.terminals.map((x) => [x.name, x.kind, x.supported, x.managed, x.offered]),
     [
@@ -150,7 +150,7 @@ test("setup installs into the ticked terminals, declines the others and saves St
 
   const cmc = await until(CMC, (x) => x.state === "installed");
   assert.equal(cmc.managed, true);
-  assert.equal(cmc.installedEaVersion, "1.08");
+  assert.equal(cmc.installedEaVersion, "1.09");
   assert.deepEqual(await readFile(join(spike.cmcData, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
   const easyForex = (await state()).terminals.find((x) => x.name === EASY_FOREX)!;
   assert.equal(easyForex.managed, false);

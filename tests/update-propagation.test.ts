@@ -153,7 +153,7 @@ test("an update that fails to compile keeps the old EA, records the error and ne
   const cmc = view(app.cmc);
   assert.equal(cmc.state, "compile-failed");
   assert.equal(cmc.lastFailure?.reason, "compile-errors");
-  assert.equal(cmc.installedEaVersion, "1.08", "the record still names the EA that stays installed");
+  assert.equal(cmc.installedEaVersion, "1.09", "the record still names the EA that stays installed");
   assert.deepEqual(server.terminals!.attention().map((a) => a.terminalId), [app.cmc.terminalId], "drives the tray warning");
 });
 

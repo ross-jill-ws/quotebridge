@@ -35,8 +35,8 @@ function helloFields(): string[] {
   return sends[0][1].split("|");
 }
 
-test("QuoteBridge EA version is 1.08", () => {
-  assert.match(source, /^#property version "1\.08"$/m);
+test("QuoteBridge EA version is 1.09", () => {
+  assert.match(source, /^#property version "1\.09"$/m);
 });
 
 test("hello keeps the 1.07 fields and carries the EA version as its last field", () => {
@@ -46,7 +46,7 @@ test("hello keeps the 1.07 fields and carries the EA version as its last field",
   const version = fields.at(-1)!.match(/^"\+(\w+)$/)?.[1];
   assert.ok(version, `last hello field must be a version constant, got ${fields.at(-1)}`);
   const defined = source.match(new RegExp(`^#define ${version} "([^"]*)"$`, "m"))?.[1];
-  assert.equal(defined, "1.08", "the hello reports the same version as #property version");
+  assert.equal(defined, "1.09", "the hello reports the same version as #property version");
 });
 
 test("EA timer updates trade freshness before receiving commands, independent of recording", () => {
@@ -58,4 +58,25 @@ test("EA timer updates trade freshness before receiving commands, independent of
   assert.match(trading, /bool clockObserved=false;/);
   assert.match(trading, /if\(lastServerClock!=0\)clockObserved=true/);
   assert.match(trading, /clockObserved && GetTickCount\(\)-lastServerClockTick<=30000/);
+});
+
+// A chart or parameter change re-inits the EA but keeps its globals (MQL4). The batch in flight carries the old session
+// in its text, which the app refuses from the new session's route, so resending it would stall the feed for good.
+test("a re-init starts its new session with no batch in flight, and empties the buffer when its size changed", () => {
+  const init = source.match(/int OnInit\(\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(init, "EA must have OnInit");
+  const code = init.replace(/\/\/[^\n]*/g, "");
+  const cleared = code.search(/inflight="";inflightLast=0;/);
+  assert.ok(cleared >= 0, "OnInit clears the batch in flight");
+  assert.ok(cleared < code.search(/ConnectSocket\(\)/), "before connecting, so nothing goes out with the old session");
+  const reset = code.search(/if\(ArraySize\(rows\)!=BufferCapacity\)\{head=0;count=0;\}/);
+  assert.ok(reset >= 0 && reset < code.search(/ArrayResize\(rows,BufferCapacity\)/), "a changed buffer size starts the buffer empty");
+});
+
+test("the EA's stop line says whether queued samples are kept for the restart or lost", () => {
+  const deinit = source.match(/void OnDeinit\(const int reason\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(deinit, "EA must have OnDeinit");
+  assert.match(deinit, /REASON_CHARTCHANGE/);
+  assert.match(deinit, /REASON_PARAMETERS/);
+  assert.doesNotMatch(deinit, /unacknowledged samples lost/);
 });
