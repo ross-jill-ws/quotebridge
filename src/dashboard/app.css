@@ -58,6 +58,9 @@
   --downtick-vivid: light-dark(#e5384f, #ff5e6e);
   --up-wash: light-dark(rgb(0 168 107 / 16%), rgb(46 230 160 / 18%));
   --down-wash: light-dark(rgb(229 56 79 / 14%), rgb(255 94 110 / 18%));
+  /* The Feeds view's Bid and Ask cells on a tick: strong enough to spot across a table of feeds. */
+  --up-cell: light-dark(rgb(0 168 107 / 36%), rgb(46 230 160 / 32%));
+  --down-cell: light-dark(rgb(229 56 79 / 32%), rgb(255 94 110 / 34%));
 
   --caution: light-dark(#9c5c00, #f5b94a);
   --caution-bg: light-dark(#fdf1dc, #33270f);
@@ -887,6 +890,49 @@ input[type="checkbox"]:focus-visible {
   from {
     background: var(--down-wash);
     box-shadow: inset 0 -2px 0 var(--downtick-vivid);
+  }
+}
+
+/* In the Feeds view the whole Bid and Ask cell flashes instead: Uptick or Downtick behind the price, held for a
+   moment and faded out over 1.2 s. The pips stay ink, readable on the colour. The colour sits on the price's
+   ::before, so a tick (a new price element) restarts it, and fills the cell (the positioned ancestor). */
+.feeds .price-cell {
+  position: relative;
+  isolation: isolate;
+}
+
+.feeds .price-cell .px::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feeds .price-cell .px.up::before {
+  background: var(--up-cell);
+}
+
+.feeds .price-cell .px.down::before {
+  background: var(--down-cell);
+}
+
+.flashing .price-cell .px.up::before,
+.flashing .price-cell .px.down::before {
+  animation: cell-flash 1.2s ease-in;
+}
+
+.flashing .price-cell .px.up,
+.flashing .price-cell .px.down,
+.flashing .price-cell .px .moving > * {
+  animation: none;
+}
+
+@keyframes cell-flash {
+  from,
+  25% {
+    opacity: 1;
   }
 }
 
@@ -2097,6 +2143,19 @@ a.path {
   .px,
   .moving > * {
     animation: none !important;
+  }
+
+  /* Except the Feeds view's Bid and Ask cells: a steady tint for 1 s, on and off with no fade (a colour change, not
+     motion), so a tick can still be spotted. */
+  .flashing .price-cell .px.up::before,
+  .flashing .price-cell .px.down::before {
+    animation: cell-flash-steady 1s step-end !important;
+  }
+
+  @keyframes cell-flash-steady {
+    from {
+      opacity: 1;
+    }
   }
 }
 

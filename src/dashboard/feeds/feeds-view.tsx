@@ -172,10 +172,10 @@ function FeedGroupView({
                       {row.timeframe}
                     </span>
                   </td>
-                  <td class="num">
+                  <td class="num price-cell">
                     <Price value={feed.latest?.bid} digits={feed.digits} flash={flash} />
                   </td>
-                  <td class="num">
+                  <td class="num price-cell">
                     <Price value={feed.latest?.ask} digits={feed.digits} flash={flash} />
                   </td>
                   <td class="num spread">{row.spread}</td>
