@@ -9,8 +9,9 @@ export const USAGE = `Usage: npm run dev [-- --app] [-- --real]
 
 /** Dev ports, away from the app's 5555/5580. */
 export const DEV_PORTS = { ea: 6655, http: 6680 };
-/** Where pages listen for the dev reload signal. */
+/** Where pages listen for the dev reload signal; a --real run has its own, so it can run beside a fake one. */
 export const DEV_RELOAD_PORT = 6681;
+export const REAL_RUN_RELOAD_PORT = 6682;
 
 export type DevPlan = {
   /** Electron window (supervisor) instead of a browser tab. */
@@ -39,7 +40,7 @@ export function planDevRun(args: string[], env: Record<string, string | undefine
   if (!real) ports = { ea: overrides.eaPort ?? DEV_PORTS.ea, http: overrides.httpPort ?? DEV_PORTS.http };
   else if (overrides.eaPort !== undefined || overrides.httpPort !== undefined) ports = { ea: overrides.eaPort, http: overrides.httpPort };
 
-  const reloadPort = env.QUOTEBRIDGE_DEV_RELOAD_PORT?.trim() ? Number(env.QUOTEBRIDGE_DEV_RELOAD_PORT) : DEV_RELOAD_PORT;
+  const reloadPort = env.QUOTEBRIDGE_DEV_RELOAD_PORT?.trim() ? Number(env.QUOTEBRIDGE_DEV_RELOAD_PORT) : real ? REAL_RUN_RELOAD_PORT : DEV_RELOAD_PORT;
   if (!Number.isInteger(reloadPort) || reloadPort < 1 || reloadPort > 65535) throw Error(`QUOTEBRIDGE_DEV_RELOAD_PORT must be a port from 1 to 65535.`);
   return { app, real, dataFolder, ports, reloadPort };
 }

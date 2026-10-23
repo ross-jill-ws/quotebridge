@@ -57,7 +57,10 @@ if (real) {
 }
 log(`${real ? "real terminals" : "fake terminals and fake EAs"}${app ? " in the app window" : ""}; data folder ${dataFolder}; EA port ${ports.ea}, HTTP port ${ports.http}`);
 
-const reload = await startReloadServer(reloadPort);
+const reload = await startReloadServer(reloadPort).catch((e: Error) => {
+  console.error(e.message);
+  process.exit(1);
+});
 const serverEnv = {
   QUOTEBRIDGE_DEV_DASHBOARD_FOLDER: DASHBOARD_OUT,
   QUOTEBRIDGE_DEV_FAKES: real ? "0" : "1",

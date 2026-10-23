@@ -17,4 +17,4 @@ Requires Node.js 24 on Windows. Install the dependencies with `npm ci`. See [doc
 | `npm start` | Builds, then runs the app with Electron. |
 | `npm run package` | Builds the Windows installer into `release/`. |
 
-`QUOTEBRIDGE_DATA_FOLDER`, `QUOTEBRIDGE_EA_PORT` and `QUOTEBRIDGE_HTTP_PORT` override the data folder and ports of a dev run. A dev run never uses the installed app's `%APPDATA%\QuoteBridge`. The reload signal uses port 6681 (`QUOTEBRIDGE_DEV_RELOAD_PORT`), and only dev builds of the dashboard listen for it.
+`QUOTEBRIDGE_DATA_FOLDER`, `QUOTEBRIDGE_EA_PORT` and `QUOTEBRIDGE_HTTP_PORT` override the data folder and ports of a dev run. A dev run never uses the installed app's `%APPDATA%\QuoteBridge`. The reload signal uses port 6681, or 6682 with `--real` (`QUOTEBRIDGE_DEV_RELOAD_PORT`), and only dev builds of the dashboard listen for it.

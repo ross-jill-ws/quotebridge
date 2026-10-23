@@ -89,7 +89,7 @@ When you are done, Quit the dev run and start the installed QuoteBridge again so
 | `QUOTEBRIDGE_DATA_FOLDER` | see the modes above | Data folder of the dev run. The installed app's `%APPDATA%\QuoteBridge` is refused. |
 | `QUOTEBRIDGE_EA_PORT` | 6655, or the settings with `--real` | Port EAs connect to. |
 | `QUOTEBRIDGE_HTTP_PORT` | 6680, or the settings with `--real` | Port of the dashboard and API. |
-| `QUOTEBRIDGE_DEV_RELOAD_PORT` | 6681 | Port the reload signal uses. Only dev builds of the dashboard listen for it; production builds contain no reload code. |
+| `QUOTEBRIDGE_DEV_RELOAD_PORT` | 6681; 6682 with `--real` | Port the reload signal uses, so a fake run and a `--real` run can run at once. Only dev builds of the dashboard listen for it; production builds contain no reload code. |
 
 In PowerShell, set one for a single run like this:
 

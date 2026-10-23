@@ -36,7 +36,9 @@ export async function startReloadServer(port: number): Promise<ReloadServer> {
     req.on("close", () => subscribers.delete(res));
   });
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    server.once("error", (e: NodeJS.ErrnoException) =>
+      reject(e.code === "EADDRINUSE" ? Error(`The reload port ${port} is in use, probably by another dev run. Stop it, or choose another port with QUOTEBRIDGE_DEV_RELOAD_PORT.`) : e),
+    );
     server.listen(port, "127.0.0.1", resolve);
   });
   const send = (to: Set<ServerResponse>, event: string, data = "") => {

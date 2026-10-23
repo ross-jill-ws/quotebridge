@@ -36,6 +36,13 @@ test("--real uses the ports from settings and its own data folder beside, never 
   assert.equal(plan.ports, undefined);
 });
 
+test("a fake run and a --real run signal reloads on ports of their own, so both can run at once", () => {
+  assert.equal(planDevRun([], {}, PLACES).reloadPort, 6681);
+  assert.equal(planDevRun(["--app"], {}, PLACES).reloadPort, 6681);
+  assert.equal(planDevRun(["--real"], {}, PLACES).reloadPort, 6682);
+  assert.equal(planDevRun(["--real"], { QUOTEBRIDGE_DEV_RELOAD_PORT: "7681" }, PLACES).reloadPort, 7681);
+});
+
 test("the environment can choose another data folder and ports, but never the installed app's data folder", () => {
   const plan = planDevRun(["--real"], { QUOTEBRIDGE_DATA_FOLDER: String.raw`D:\qb-dev`, QUOTEBRIDGE_EA_PORT: "7655" }, PLACES);
   assert.equal(plan.dataFolder, String.raw`D:\qb-dev`);
@@ -158,6 +165,13 @@ test("the dev reload server tells every open page to reload, or where to go afte
   assert.equal(await next(), "event: navigate\ndata: http://127.0.0.1:6680/session?token=abc");
   await reader.cancel();
   await reloads.close();
+});
+
+test("a reload port already in use says so, and how to choose another", async (t) => {
+  const first = await startReloadServer(await freePort());
+  t.after(() => first.close());
+  const port = Number(new URL(first.url).port);
+  await assert.rejects(startReloadServer(port), new RegExp(`port ${port} is in use.*another dev run.*QUOTEBRIDGE_DEV_RELOAD_PORT`, "s"));
 });
 
 test("the app's main process gets its commands on a separate control stream", async () => {
