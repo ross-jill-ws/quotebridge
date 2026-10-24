@@ -3,6 +3,9 @@
 
 export const MAX_MESSAGE_BYTES = 16384;
 
+/** Identity refusals have a stable diagnostic category, independent of their human-readable wording. */
+export class TerminalIdentityError extends Error {}
+
 export type Hello = {
   type: "hello";
   session: string;
@@ -78,7 +81,7 @@ function parseHello(p: string[]): Hello {
   if (p[9] !== "ok" && p[9] !== "no-quote") throw Error("Invalid status");
   if (p.length >= 14 && !/^[0-9A-Za-z.-]{1,32}$/.test(p[13])) throw Error("Invalid EA version");
   if (p.length === 16 && p.slice(14).some((s) => !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+[\\/])/.test(s) || s.length > 1000 || /[\x00-\x1f]/.test(s) || /(?:^|[\\/])\.{1,2}(?:[\\/]|$)/.test(s))) {
-    throw Error("Invalid terminal paths");
+    throw new TerminalIdentityError("Invalid terminal paths");
   }
   return {
     type: "hello",

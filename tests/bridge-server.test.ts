@@ -468,3 +468,19 @@ test("malformed bar pages are rejected with their reasons", { timeout: 10000 }, 
     ["Invalid bar page size", "Invalid bar", "Invalid bar", "Invalid bar", "Invalid bar page size", "Invalid bar page size", "Invalid period"],
   );
 });
+
+test("a broker replacement refused at the peer limit cannot retire existing registrations", { timeout: 60000 }, async (t) => {
+  const { bridge, clock, ea } = await startBridge(t);
+  for (let i = 0; i < 1000; i++) {
+    const chart = ea({ session: `capacity-${i}`, symbol: `SYM${i}` });
+    assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  }
+  const replacement = ea({ symbol: "SYM0", broker: "Other-Broker" });
+  assert.equal(await replacement.request(replacement.helloWire()), `C|1|${replacement.session}|0`);
+  assert.equal(bridge.snapshot().rejections[0].reason, "Peer limit reached");
+  assert.equal(bridge.snapshot().feeds.length, 1000);
+  assert.deepEqual(bridge.snapshot().terminals.map((p) => p.brokerServer), ["Demo-Broker"]);
+  clock.advance(60001);
+  assert.equal(await replacement.request(replacement.helloWire()), `C|1|${replacement.session}|1`);
+  assert.deepEqual(bridge.snapshot().feeds.map((f) => f.market.brokerServer), ["Other-Broker"]);
+});

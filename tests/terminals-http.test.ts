@@ -160,6 +160,8 @@ test("a broker switch keeps the installation ID but never relabels its old quote
   assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]), [[terminal.terminalId, "Other-Broker"]]);
   assert.deepEqual(snapshot.feeds.map((f) => [f.symbol, f.market.brokerServer, f.latest]), [["EURUSD", "Other-Broker", undefined]]);
   assert.equal(await gold.request(gold.tickWire([{ seq: 1, bid: 2000, ask: 2001, quoteTime: 1800000001 }])), `R|1|${gold.session}`);
+  assert.equal(await gold.request(gold.helloWire()), `C|1|${gold.session}|0`, "an old-market session cannot flip the terminal back");
+  assert.deepEqual((await app.get<BridgeSnapshot>("/api/state")).body.terminals.map((p) => p.brokerServer), ["Other-Broker"]);
 });
 
 test("separate installations sharing broker, login, symbol and default label stay distinct", { timeout: 15000 }, async (t) => {
@@ -220,6 +222,7 @@ test("legacy, unknown and mismatched paths stay unsubscribed even when their lab
   assert.deepEqual(snapshot.feeds, []);
   assert.deepEqual(snapshot.terminals, []);
   assert.equal(snapshot.rejections.length, 3);
+  assert.ok(snapshot.rejections.every((r) => r.code === "terminal-identity"));
   assert.ok(snapshot.rejections.every((r) => r.reason.startsWith("Terminal identity unverified")));
   assert.ok((await app.state()).terminals.every((t) => !t.checklist.eaConnected));
 });
@@ -286,10 +289,63 @@ test("a session cannot switch installations or reset another terminal's broker s
   fields[2] = first.session;
   fields[4] = "Different-Broker";
   assert.equal(await first.request(fields.join("|")), `C|1|${first.session}|0`);
+  assert.equal(await first.request(fields.join("|")), `C|1|${first.session}|0`, "retry cannot erase the original session binding");
   const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
   assert.equal(snapshot.rejections[0].reason, "Session identity changed");
   assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]), [[easy.terminalId, "Demo-Broker"]]);
   assert.equal(snapshot.feeds[0].online, true);
+});
+
+test("identity refusal and recovery retain replay protection for multiple prices within one broker second", { timeout: 15000 }, async (t) => {
+  const app = await start(t, { recording: true, now: new FakeClock().now });
+  const terminal = await app.terminal(EASY_FOREX);
+  await app.post("/api/clock-rules", { brokerServer: "Demo-Broker", winterOffsetMinutes: 0, dst: "none" });
+  const chart = app.ea(terminal.terminalId!, { bars: () => "loading" });
+  await chart.request(chart.helloWire());
+  await app.post("/api/markets/recording", { brokerServer: "Demo-Broker", symbol: "EURUSD", on: true });
+  const batch = chart.tickWire([
+    { seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 },
+    { seq: 2, bid: 1.3, ask: 1.4, quoteTime: 1800000000 },
+  ]);
+  await chart.request(batch);
+  const refused = chart.helloWire().split("|").slice(0, 14).join("|");
+  await chart.request(refused);
+  await chart.request(chart.helloWire());
+  await chart.request(batch);
+  const { body } = await app.get<{ recordings: { samples: number }[] }>("/api/recordings");
+  assert.deepEqual(body.recordings.map((r) => r.samples), [2]);
+});
+
+test("a revoked last chart cannot restore its old market after a replacement logs into another broker", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const old = app.ea(terminal.terminalId!);
+  await old.request(old.helloWire());
+  await old.request(old.helloWire().split("|").slice(0, 14).join("|"));
+  const replacement = app.ea(terminal.terminalId!, { broker: "Other-Broker" });
+  await replacement.request(replacement.helloWire());
+  assert.equal(await old.request(old.helloWire()), `C|1|${old.session}|0`);
+  assert.deepEqual((await app.get<BridgeSnapshot>("/api/state")).body.terminals.map((p) => p.brokerServer), ["Other-Broker"]);
+});
+
+test("broker replacement at capacity clears the evicted feed's old-market candles before new samples", { timeout: 60000 }, async (t) => {
+  const clock = new FakeClock();
+  const app = await start(t, { now: clock.now });
+  const terminal = await app.terminal(EASY_FOREX);
+  const first = app.ea(terminal.terminalId!, { symbol: "SYM0" });
+  await first.request(first.helloWire());
+  await first.request(first.tickWire([{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }]));
+  for (let i = 1; i < 1000; i++) {
+    const chart = app.ea(terminal.terminalId!, { symbol: `SYM${i}` });
+    await chart.request(chart.helloWire());
+  }
+  const query = new URLSearchParams({ feed: JSON.stringify([terminal.terminalId, "SYM0"]), period: "M1" });
+  const page = async () => (await app.get<{ candles: unknown[]; ask: number | null }>(`/api/candles?${query}`)).body;
+  assert.equal((await page()).candles.length, 1);
+  clock.advance(60001);
+  const replacement = app.ea(terminal.terminalId!, { symbol: "SYM0", broker: "Other-Broker" });
+  assert.equal(await replacement.request(replacement.helloWire()), `C|1|${replacement.session}|1`);
+  assert.deepEqual([(await page()).candles, (await page()).ask], [[], null]);
 });
 
 test("a portable terminal becomes verifiable after catalog confirmation, with no EA label edits", { timeout: 15000 }, async (t) => {

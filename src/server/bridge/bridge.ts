@@ -3,7 +3,7 @@
 import { Router } from "zeromq";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { asPortInUse } from "../port-in-use.js";
-import { barRequestWire, feedKey, MAX_MESSAGE_BYTES, parseMessage, type BarPage, type Hello, type Market, type Sample } from "./protocol.js";
+import { barRequestWire, feedKey, MAX_MESSAGE_BYTES, parseMessage, TerminalIdentityError, type BarPage, type Hello, type Market, type Sample } from "./protocol.js";
 
 /** A feed is online while its last message is younger than this. EAs re-send hello every 2 s. */
 export const ONLINE_WINDOW_MS = 7000;
@@ -49,6 +49,8 @@ const answersBars = (version: string | undefined) => {
  */
 export type Rejection = {
   time: number;
+  /** Stable category for actionable terminal setup/upgrade guidance; absent for other wire failures. */
+  code?: "terminal-identity";
   /** The wire protocol check that failed, e.g. "Routing identity mismatch", "Invalid quote", "Unknown message". */
   reason: string;
   /** The ZeroMQ routing identity the message came from, as text. */
@@ -73,6 +75,9 @@ export type BridgeServerOptions = {
 };
 
 type Peer = Hello & {
+  /** Revoked peers retain binding/replay evidence, but never appear as feeds or supply data. */
+  registration: "verified" | "revoked" | "retired";
+  acceptedSeq?: number;
   feed: string;
   route: Buffer;
   lastSeen: number;
@@ -287,12 +292,12 @@ export class BridgeServer {
     }
   }
 
-  private isOnline(p: Pick<Peer, "lastSeen">, now = this.now()) {
-    return now - p.lastSeen < ONLINE_WINDOW_MS;
+  private isOnline(p: Pick<Peer, "lastSeen" | "registration">, now = this.now()) {
+    return p.registration === "verified" && now - p.lastSeen < ONLINE_WINDOW_MS;
   }
 
   /** A chart's times on any message from it: heard now, and a new online spell if it was offline. */
-  private heard(p: Pick<Peer, "lastSeen" | "onlineSince"> | undefined) {
+  private heard(p: Pick<Peer, "lastSeen" | "onlineSince" | "registration"> | undefined) {
     const now = this.now();
     return { lastSeen: now, onlineSince: p && this.isOnline(p, now) ? p.onlineSince : now };
   }
@@ -320,31 +325,37 @@ export class BridgeServer {
       // A rejected hello cannot leave an earlier subscription usable on the same route.
       const head = frames[1].toString().split("|", 3);
       if (head[0] === "H" && head[1] === "1" && head[2] === frames[0].toString()) {
-        this.forgetPeer(head[2]);
+        this.revokePeer(head[2]);
         await this.send(frames[0], `C|1|${head[2]}|0`);
       }
-      this.reject(frames, e instanceof Error ? e.message : String(e));
+      this.reject(frames, e instanceof Error ? e.message : String(e), e instanceof TerminalIdentityError ? "terminal-identity" : undefined);
     }
   }
 
-  private forgetPeer(session: string) {
+  private revokePeer(session: string, retire = false) {
     const p = this.peers.get(session);
     if (!p) return;
-    this.peers.delete(session);
+    const wasVerified = p.registration === "verified";
+    p.registration = retire || p.registration === "retired" ? "retired" : "revoked";
+    p.latest = undefined;
+    p.samplesAcceptedAt = undefined;
+    p.quoteUnchangedSince = undefined;
+    if (!wasVerified) return;
     if (this.owners.get(p.feed) === session) this.owners.delete(p.feed);
-    if (![...this.peers.values()].some((peer) => peer.feed === p.feed)) {
+    if (![...this.peers.values()].some((peer) => peer.registration === "verified" && peer.feed === p.feed)) {
       this.lastRejectionByFeed.delete(p.feed);
       this.emit({ type: "removed", feed: p.feed });
     }
-    if (![...this.peers.values()].some((peer) => peer.terminal === p.terminal)) this.terminals.delete(p.terminal);
+    if (![...this.peers.values()].some((peer) => peer.registration === "verified" && peer.terminal === p.terminal)) this.terminals.delete(p.terminal);
   }
 
-  private reject(frames: Buffer[], reason: string) {
+  private reject(frames: Buffer[], reason: string, code?: Rejection["code"]) {
     this.invalidMessages++;
     const route = frames[0]?.toString() ?? "";
     const body = frames[1]?.subarray(0, EXCERPT_CHARS * 4).toString() ?? "";
     const rejection: Rejection = {
       time: this.now(),
+      ...(code ? { code } : {}),
       reason,
       route: printable(route, ROUTE_CHARS),
       excerpt: printable(PRIVATE_TYPES.test(body) ? body.split("|").slice(0, 3).join("|") + "|…" : body, EXCERPT_CHARS),
@@ -363,56 +374,57 @@ export class BridgeServer {
         ? await this.resolveTerminal?.({ installationFolder: m.installationFolder, dataFolder: m.dataFolder })
         : undefined;
       if (!terminal) {
-        throw Error("Terminal identity unverified: upgrade the EA to 1.11 or later, then rescan/setup the terminal in Terminals.");
+        throw new TerminalIdentityError("Terminal identity unverified: upgrade the EA to 1.11 or later, then rescan/setup the terminal in Terminals.");
       }
       m.terminal = terminal;
       const known = this.peers.get(m.session);
-      if (known && known.feed !== feedKey(m)) throw Error("Session identity changed");
-      // A new login/server spell cannot inherit quotes, buffers or bar requests from the old market.
-      // Other charts must say hello again before supplying samples under that terminal's new broker server.
-      const previous = this.terminals.get(terminal);
-      if (previous && previous.brokerServer !== m.broker) {
-        for (const peer of this.peers.values()) if (peer.terminal === terminal) this.forgetPeer(peer.session);
-      }
-      const old = this.peers.get(m.session);
-      if (!old && this.peers.size >= MAX_PEERS) {
+      if (known && (known.registration === "retired" || known.feed !== feedKey(m) || known.broker !== m.broker)) throw new TerminalIdentityError("Session identity changed");
+      // Reserve capacity before retiring any existing registrations for a broker switch.
+      if (!known && this.peers.size >= MAX_PEERS) {
         const stale = [...this.peers.values()].find((p) => this.now() - p.lastSeen > STALE_PEER_MS);
         if (!stale) throw Error("Peer limit reached");
         this.peers.delete(stale.session);
-        if (stale.feed !== feedKey(m) && ![...this.peers.values()].some((p) => p.feed === stale.feed)) {
+        if ((stale.feed !== feedKey(m) || stale.broker !== m.broker) && ![...this.peers.values()].some((p) => p.registration === "verified" && p.feed === stale.feed)) {
           this.lastRejectionByFeed.delete(stale.feed);
           this.emit({ type: "removed", feed: stale.feed });
         }
       }
+      // Include revoked sessions too: removing visible presence must not erase the old market's binding history.
+      // A new login/server spell cannot inherit quotes, buffers or bar requests from the old market.
+      for (const peer of this.peers.values()) if (peer.terminal === terminal && peer.broker !== m.broker) this.revokePeer(peer.session, true);
+      const old = this.peers.get(m.session);
       const wasOnline = old !== undefined && this.isOnline(old);
-      const p: Peer = { ...old, ...m, feed: feedKey(m), route, ...this.heard(old) };
+      const p: Peer = { ...old, ...m, registration: "verified", feed: feedKey(m), route, ...this.heard(old) };
       this.peers.set(m.session, p);
       this.terminals.set(m.terminal, { terminalId: m.terminal, lastHello: p.lastSeen, eaVersion: m.eaVersion ?? null, brokerServer: m.broker });
       // The hello reply is the subscription state; duplicates may hand ownership over, so refresh every chart of the feed.
-      for (const peer of this.peers.values()) if (peer.feed === p.feed) await this.control(peer);
+      for (const peer of this.peers.values()) if (peer.registration === "verified" && peer.feed === p.feed) await this.control(peer);
       if (!wasOnline) this.notify(this.onlineListeners, p.feed, "online");
     } else if (m.type === "bars") {
       const p = this.peers.get(m.session);
-      if (!p) return this.send(route, `R|1|${m.session}`);
+      if (!p || p.registration !== "verified") return this.send(route, `R|1|${m.session}`);
       Object.assign(p, this.heard(p));
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       const { type: _type, session: _session, ...page } = m;
       this.notify(this.barsListeners, { ...page, feed: p.feed, market: { brokerServer, symbol: p.symbol } }, "bars");
     } else if (m.type === "samples") {
       const p = this.peers.get(m.session);
-      if (!p) {
+      if (!p || p.registration !== "verified") {
         await this.send(route, `R|1|${m.session}`);
         return;
       }
       Object.assign(p, this.heard(p));
       const latest = m.samples.at(-1)!;
-      const fresh = m.samples.filter((s) => !p.latest || s.seq > p.latest.seq);
+      const fresh = m.samples.filter((s) => s.seq > (p.acceptedSeq ?? 0));
       // A replayed batch is ACKed again, but brings no new samples.
-      if (fresh.length) p.samplesAcceptedAt = this.now();
+      if (fresh.length) {
+        p.samplesAcceptedAt = this.now();
+        p.acceptedSeq = latest.seq;
+      }
       // The market of the terminal's latest hello, as in the snapshot: one feed's charts never disagree about it.
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       if (fresh.length) this.emit({ type: "samples", feed: p.feed, market: { brokerServer, symbol: p.symbol }, samples: fresh });
-      if (!p.latest || latest.seq > p.latest.seq) {
+      if (fresh.length) {
         if (!p.latest || latest.quoteTime !== p.latest.quoteTime) p.quoteUnchangedSince = this.now();
         p.latest = latest;
       }
@@ -423,8 +435,9 @@ export class BridgeServer {
 
   snapshot(): BridgeSnapshot {
     const now = this.now();
-    const feeds = [...new Set([...this.peers.values()].map((p) => p.feed))].map((feed): FeedSnapshot => {
-      const instances = [...this.peers.values()].filter((p) => p.feed === feed);
+    const registered = [...this.peers.values()].filter((p) => p.registration === "verified");
+    const feeds = [...new Set(registered.map((p) => p.feed))].map((feed): FeedSnapshot => {
+      const instances = registered.filter((p) => p.feed === feed);
       const online = instances.filter((p) => this.isOnline(p, now));
       const p = this.owner(feed) ?? instances.sort((a, b) => b.lastSeen - a.lastSeen)[0];
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;

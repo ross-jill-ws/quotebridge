@@ -68,8 +68,7 @@ export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props
   // (but not while disconnected, when the values are no longer current).
   const time = connected ? snapshot.time + Math.max(0, now - live.receivedAt) : snapshot.time;
   const { groups, summary, attention } = groupFeeds(snapshot, terminalNames, time);
-  const identityRefused = snapshot.rejections.some((r) => time - r.time < 7000 &&
-    (r.reason.startsWith("Terminal identity unverified") || r.reason === "Invalid terminal paths"));
+  const identityRefused = snapshot.rejections.some((r) => time - r.time < 7000 && r.code === "terminal-identity");
 
   return (
     <section class="view" aria-labelledby="feeds-title">
