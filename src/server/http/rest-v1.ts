@@ -4,10 +4,12 @@
 // saved data, which answers with no terminal running. What later milestones bring answers 501 naming the milestone.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
+import { ManifestError, parametersFromQuery } from "../../shared/indicator-manifest.js";
 import { PAGE_BARS, PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeServer, type FeedSnapshot, type Market } from "../bridge/index.js";
 import type { Candle, CandleBuilder } from "../candles/index.js";
 import { CSV_HEADER, csvRows, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HstBar } from "../history/index.js";
+import type { IndicatorPackage, IndicatorPackages, IndicatorValues } from "../indicators/index.js";
 import type { Recorder } from "../recording/index.js";
 import { json, write } from "./respond.js";
 
@@ -31,6 +33,8 @@ export type RestV1Options = {
   clockRule: (brokerServer: string) => ClockRule | null;
   /** Recording, when the server has a database. */
   recorder?: Recorder;
+  /** Indicator packages and their cached values, shared with the charts. */
+  indicators?: { packages: IndicatorPackages; values: IndicatorValues };
   /** A terminal's name as the Terminals view shows it; undefined when unknown. */
   terminalName: (terminalId: string) => string | undefined;
 };
@@ -52,7 +56,6 @@ class RestRequestError extends Error {
 /** Paths later milestones answer, and which milestone brings them. */
 const LATER: [RegExp, number, string][] = [
   [/^\/symbols\/[^/]+\/info$/, 5, "Symbol info (contract details from the account EA)"],
-  [/^\/indicators(\/.*)?$/, 4, "Indicators"],
   [/^\/(accounts|positions)(\/.*)?$/, 5, "Accounts and positions"],
   [/^\/budget$/, 5, "The budget"],
   [/^\/orders(\/.*)?$/, 5, "Trading"],
@@ -71,6 +74,10 @@ export class RestV1 {
     const q = url.searchParams;
     try {
       if (path === "/symbols") return json(res, 200, await this.symbols());
+      if (path === "/indicators") return json(res, 200, { indicators: this.packages().enabled.map(summary) });
+      const indicator = /^\/indicators\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+      if (indicator && !indicator[2]) return json(res, 200, summary(this.indicatorPackage(segment(indicator[1], "indicator"))));
+      if (indicator) return json(res, 200, await this.indicatorValues(segment(indicator[1], "indicator"), symbolOf(indicator[2]), q));
       if (path === "/history") return json(res, 200, await this.historyList());
       if (path === "/history/files") return json(res, 200, await this.historyFiles(q));
       if (path === "/history/files/csv") return await this.historyFileCsv(q, res);
@@ -85,6 +92,85 @@ export class RestV1 {
       if (!(e instanceof RestRequestError)) throw e;
       json(res, e.status, { error: e.message, ...(e.details === undefined ? {} : { details: e.details }) });
     }
+  }
+
+  /** The packages, and those enabled. */
+  private packages() {
+    const packages = this.options.indicators?.packages;
+    const all = packages?.list() ?? [];
+    return { all, enabled: all.filter((p) => packages!.enabled(p.manifest.id)) };
+  }
+
+  /** An enabled package by its id or short name (`macd`), in any case; unknown or disabled answers 404 with the names there are, a short name of two packages 409. */
+  private indicatorPackage(name: string): IndicatorPackage {
+    const wanted = name.toLowerCase();
+    const { enabled } = this.packages();
+    const matches = enabled.filter((p) => p.manifest.id === wanted || shortName(p) === wanted);
+    if (!matches.length) throw new RestRequestError(404, `Unknown or disabled indicator ${name}. List indicators with "indicator list".`, enabled.map(shortName));
+    if (matches.length > 1) throw new RestRequestError(409, `Indicator name ${name} is ambiguous; use the full package ID.`, matches.map((p) => p.manifest.id));
+    return matches[0];
+  }
+
+  /**
+   * A package's values over a feed's last `count` candles, as the chart's history joins them, with parameters
+   * `p.<id>` (their defaults when left out): read from the cache the charts use, warmed up on the bars before them.
+   * The last bar is the forming one, `complete: false` when it is live; a closed-bars-only package has no row for it,
+   * as the cache never runs it there. A failed calculation answers 422 with the reason.
+   */
+  private async indicatorValues(name: string, symbol: string, q: URLSearchParams) {
+    const pkg = this.indicatorPackage(name);
+    const indicators = this.options.indicators!;
+    const { manifest } = pkg;
+    const period = parsePeriod(q.get("period"));
+    const count = integer(q.get("count"), "count", 1, 5000, PAGE_BARS);
+    const source = q.get("source");
+    if (source && source !== "auto") throw new RestRequestError(400, "Indicators are calculated over the chart's candles: source must be auto.");
+    let parameters;
+    try {
+      parameters = parametersFromQuery(manifest, q);
+    } catch (e) {
+      if (!(e instanceof ManifestError)) throw e;
+      throw new RestRequestError(400, e.message);
+    }
+    const feed = this.resolveFeed(symbol, q);
+    const brokerServer = feed.market.brokerServer;
+    const page = await this.options.history.brokerPage(feed, period, count);
+    if (!page.candles.length) throw noCandles(period, feed);
+    // The cache works over this same page, in UTC seconds, and times its values so.
+    const utcPage = { ...page, candles: page.candles.map((c) => ({ ...c, time: this.utcMs(brokerServer, c.time) / 1000 })) };
+    const answer = await indicators.values.valuesOver(feed, period, pkg, parameters, utcPage);
+    if (answer.failed !== null) throw new RestRequestError(422, `${manifest.name} failed: ${answer.failed}`);
+    const byTime = manifest.outputs.map((o) => ({ o, points: new Map(answer.outputs[o.id].map((p) => [p.time, p])) }));
+    // The chart's last bar is the forming one, which a closed-bars-only package never sees.
+    const rows = manifest.closedBarsOnly ? page.candles.slice(0, -1) : page.candles;
+    const live = Math.min(page.live, page.candles.length);
+    return {
+      indicator: shortName(pkg),
+      id: manifest.id,
+      version: manifest.version,
+      parameters,
+      outputs: manifest.outputs.map((o) => ({ id: o.id, label: o.label })),
+      period,
+      timeframe: PERIOD_MINUTES[period],
+      symbol: feed.symbol,
+      broker: brokerServer,
+      terminal: feed.terminal,
+      feed: feed.feed,
+      source: live ? "live" : "history",
+      status: live ? "live" : "history",
+      barsUsed: answer.barsUsed,
+      values: rows.map((c, i) => {
+        const timeUtc = this.utcMs(brokerServer, c.time);
+        const row: Record<string, unknown> = { time: c.time, timeUtc, close: c.close };
+        if (live && i === page.candles.length - 1) row.complete = false;
+        for (const { o, points } of byTime) {
+          const point = points.get(timeUtc / 1000);
+          row[o.id] = point?.value ?? null;
+          if (o.palette) row[`${o.id}_style`] = point?.styleKey ?? null;
+        }
+        return row;
+      }),
+    };
   }
 
   /** One row per feed. */
@@ -167,7 +253,7 @@ export class RestV1 {
       if (!page.candles.length) {
         throw mode === "live"
           ? new RestRequestError(503, `No live candles of ${feed.symbol} yet: none of its quotes has arrived since the app started.`)
-          : new RestRequestError(404, `No ${period} candles of ${feed.symbol}: no quote has arrived, and MetaTrader keeps no history of it. See "hist list".`);
+          : noCandles(period, feed);
       }
       const firstLive = page.candles.length - live;
       return {
@@ -415,12 +501,39 @@ export function info() {
 }
 
 /** A path's `:symbol`. */
-function symbolOf(segment: string): string {
+const symbolOf = (text: string) => segment(text, "symbol");
+
+/** A path segment, decoded. */
+function segment(text: string, what: string): string {
   try {
-    return decodeURIComponent(segment);
+    return decodeURIComponent(text);
   } catch {
-    throw new RestRequestError(400, "Invalid symbol");
+    throw new RestRequestError(400, `Invalid ${what}`);
   }
+}
+
+/** A package's short name: its id's last segment (`macd` of `quotebridge.macd`). */
+const shortName = (p: IndicatorPackage) => p.manifest.id.split(".").at(-1)!;
+
+/** A package as the legacy contract summarises it, with a choice parameter's choices and `closedBarsOnly`. */
+function summary(p: IndicatorPackage) {
+  const { manifest } = p;
+  return {
+    name: shortName(p),
+    id: manifest.id,
+    version: manifest.version,
+    title: manifest.name,
+    description: manifest.description,
+    placement: manifest.outputs[0].placement,
+    closedBarsOnly: manifest.closedBarsOnly ?? false,
+    parameters: manifest.parameters.map((x) =>
+      x.type === "choice"
+        ? { id: x.id, label: x.label, type: x.type, default: x.default, choices: x.choices }
+        : { id: x.id, label: x.label, type: x.type, default: x.default, min: x.min, max: x.max, ...(x.lessThan ? { lessThan: x.lessThan } : {}) },
+    ),
+    outputs: manifest.outputs.map((o) => ({ id: o.id, label: o.label, render: o.render, ...(o.palette ? { styles: Object.keys(o.palette) } : {}) })),
+    hash: p.hash,
+  };
 }
 
 /** A period as the legacy API takes it: M1 … MN1, reversed (1H, 15M), or minutes (60). */
@@ -461,4 +574,7 @@ const spread = (bid: number, ask: number, digits: number) => Number(((ask - bid)
 
 const unknownSymbol = (symbol: string) => new RestRequestError(404, `Unknown symbol ${symbol}. List available symbols with "symbols list".`);
 
-const noHistory = (period: Period, m: Market) => new RestRequestError(404, `No ${period} history of ${m.symbol} on ${m.brokerServer}. See "hist list".`);
+const noCandles = (period: Period, feed: FeedSnapshot) =>
+  new RestRequestError(404, `No ${period} candles of ${feed.symbol}: no quote has arrived, and MetaTrader keeps no history of it. See "hist list".`);
+
+const noHistory =(period: Period, m: Market) => new RestRequestError(404, `No ${period} history of ${m.symbol} on ${m.brokerServer}. See "hist list".`);

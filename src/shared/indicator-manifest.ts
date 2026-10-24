@@ -214,6 +214,12 @@ export function valuesFromText(manifest: Manifest, texts: Record<string, string>
   return out;
 }
 
+/** The package's parameters from a query's `p.<id>` values, their defaults when left out, checked; throws ManifestError with the reason otherwise. */
+export function parametersFromQuery(manifest: Manifest, query: URLSearchParams): ParameterValues {
+  const texts = Object.fromEntries([...query].filter(([name]) => name.startsWith("p.")).map(([name, text]) => [name.slice(2), text]));
+  return parameterValues(manifest, { ...defaultValues(manifest), ...valuesFromText(manifest, texts) });
+}
+
 /** Every parameter at its default. */
 export function defaultValues(manifest: Manifest): ParameterValues {
   return Object.fromEntries(manifest.parameters.map((p) => [p.id, p.default]));

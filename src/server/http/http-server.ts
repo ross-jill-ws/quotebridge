@@ -15,7 +15,7 @@ import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
 import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HistorySaver } from "../history/index.js";
 import { MAX_BARS, MAX_ZIP_BYTES, PackageRequestError, type IndicatorPackage, type IndicatorPackages, type IndicatorValues } from "../indicators/index.js";
 import { asPortInUse } from "../port-in-use.js";
-import { defaultValues, ManifestError, MAX_HISTORY_BARS, parameterValues, valuesFromText } from "../../shared/indicator-manifest.js";
+import { ManifestError, MAX_HISTORY_BARS, parametersFromQuery } from "../../shared/indicator-manifest.js";
 import { PAGE_BARS } from "../../shared/periods.js";
 import { RecordingRequestError, type Recorder } from "../recording/index.js";
 import { SettingsRequestError, type AppSettings } from "../settings/index.js";
@@ -106,6 +106,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     history: options.history,
     clockRule: (brokerServer) => options.clockRules.rule(brokerServer),
     recorder: options.recorder,
+    indicators: options.indicators,
     terminalName: (terminalId) => options.terminals?.()?.name(terminalId),
   });
   server.on("upgrade", (req, socket: Socket, head: Buffer) => {
@@ -395,10 +396,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     const beforeText = query.get("before");
     const before = beforeText === null ? undefined : Number(beforeText);
     if (before !== undefined && !(/^\d{1,12}$/.test(beforeText!) && Number.isSafeInteger(before))) return json(res, 400, { error: "Expected before as UTC seconds" });
-    const texts = Object.fromEntries([...query].filter(([name]) => name.startsWith("p.")).map(([name, text]) => [name.slice(2), text]));
     let parameters;
     try {
-      parameters = parameterValues(pkg.manifest, { ...defaultValues(pkg.manifest), ...valuesFromText(pkg.manifest, texts) });
+      parameters = parametersFromQuery(pkg.manifest, query);
     } catch (e) {
       if (!(e instanceof ManifestError)) throw e;
       return json(res, 400, { error: e.message });

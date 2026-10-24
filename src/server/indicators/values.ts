@@ -41,6 +41,9 @@ export type IndicatorValuesAnswer = {
   notAvailable?: true;
 };
 
+/** The cache's answer: the chart's, with `barsUsed`, the bars the package ran over (the warm-up and every bar from the oldest page asked for). */
+export type CachedValues = IndicatorValuesAnswer & { barsUsed: number };
+
 export type IndicatorValuesOptions = {
   /** A page of the chart history, as /api/candles reads it (UTC seconds). */
   page: (feed: FeedSnapshot, period: Period, limit: number, before?: number) => Promise<HistoryPage>;
@@ -94,8 +97,12 @@ export class IndicatorValues {
   }
 
   /** The package's values for `feed` and `period` over the candles page `limit` older than `before` (UTC seconds). */
-  async values(feed: FeedSnapshot, period: Period, pkg: IndicatorPackage, parameters: ParameterValues, limit: number, before?: number): Promise<IndicatorValuesAnswer> {
-    const page = await this.options.page(feed, period, limit, before);
+  async values(feed: FeedSnapshot, period: Period, pkg: IndicatorPackage, parameters: ParameterValues, limit: number, before?: number): Promise<CachedValues> {
+    return this.valuesOver(feed, period, pkg, parameters, await this.options.page(feed, period, limit, before));
+  }
+
+  /** The package's values over a candles page already read (UTC seconds), as `values` reads it. */
+  async valuesOver(feed: FeedSnapshot, period: Period, pkg: IndicatorPackage, parameters: ParameterValues, page: HistoryPage): Promise<CachedValues> {
     const key = JSON.stringify([marketKey(feed.market), period, pkg.manifest.id, pkg.manifest.version, pkg.hash, parameters]);
     let entry = this.entries.get(key);
     if (!entry) {
@@ -229,7 +236,7 @@ export class IndicatorValues {
     return JSON.stringify([entry.outputs, entry.failed]) !== before;
   }
 
-  private answer(entry: Entry, page: HistoryPage): IndicatorValuesAnswer {
+  private answer(entry: Entry, page: HistoryPage): CachedValues {
     const { manifest } = entry.pkg;
     const times = new Set(page.candles.map((c) => c.time));
     const forming = entry.bars.at(-1)?.time;
@@ -237,7 +244,8 @@ export class IndicatorValues {
     for (const o of manifest.outputs) {
       outputs[o.id] = (entry.outputs?.[o.id] ?? []).filter((p) => times.has(p.time)).map((p) => (p.time === forming ? { ...p, complete: false } : p));
     }
-    return { key: entry.key, package: manifest.id, version: manifest.version, outputs, complete: page.complete, failed: entry.failed, stale: entry.failed !== null && entry.outputs !== null };
+    const barsUsed = manifest.closedBarsOnly ? Math.max(0, entry.bars.length - 1) : entry.bars.length;
+    return { key: entry.key, package: manifest.id, version: manifest.version, outputs, complete: page.complete, barsUsed, failed: entry.failed, stale: entry.failed !== null && entry.outputs !== null };
   }
 
   /** Drops the keys nobody uses. */

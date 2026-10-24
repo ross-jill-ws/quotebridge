@@ -148,9 +148,6 @@ test("what later milestones bring answers 501 naming the milestone; unknown path
   const app = await start(t, await tempFolder(t, "rest-db"));
   for (const [path, milestone] of [
     ["/api/v1/symbols/EURUSD/info", 5],
-    ["/api/v1/indicators", 4],
-    ["/api/v1/indicators/macd", 4],
-    ["/api/v1/indicators/macd/EURUSD", 4],
     ["/api/v1/accounts", 5],
     ["/api/v1/accounts/12345", 5],
     ["/api/v1/positions", 5],

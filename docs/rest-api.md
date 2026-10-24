@@ -49,11 +49,36 @@ symbol), so it answers even when no terminal is running.
 | `GET /api/v1/history/:symbol?period=H1&from=&to=&limit=10000&source=` | Bars in `[from, to]` (broker seconds), oldest first, `limit` ≤ 100,000, each `{ time, timeUtc, open, high, low, close, volume, spread }`. With `truncated: true`, continue from the last `time + 1`. `source` picks the broker server. |
 | `GET /api/v1/history/files?symbol=&period=` | The HST files of the terminals the app has heard from: `{ files: [{ file, symbol, broker, terminal, period, timeframe, digits, bars, from, to, fromUtc, toUtc }] }`. |
 | `GET /api/v1/history/files/csv?file=&from=&to=` | One file as a CSV attachment (`time,open,high,low,close,tick_volume,spread,real_volume,time_utc`), with no row limit. `file` is the `file` value from the list. |
+| `GET /api/v1/indicators` | The enabled indicator packages: `{ indicators: [{ name, id, version, title, description, placement, closedBarsOnly, parameters[], outputs[], hash }] }`. `name` is the last part of the package ID (`macd` of `quotebridge.macd`). A parameter is `{ id, label, type, default, min, max, lessThan? }`, or `{ id, label, type: "choice", default, choices: [{ value, label }] }`. An output is `{ id, label, render, styles? }`; `styles` are the keys its `<output>_style` takes. |
+| `GET /api/v1/indicators/:name` | One enabled package, as listed. `:name` is its `name` or its ID, in any case. |
+| `GET /api/v1/indicators/:name/:symbol?period=H1&count=900&p.<param>=` | The package's values over the feed's last `count` bars, 900 when not given (1–5000): `{ indicator, id, version, parameters, outputs: [{ id, label }], period, timeframe, symbol, broker, terminal, feed, source, status, barsUsed, values: [{ time, timeUtc, close, complete?, <output>, <output>_style? }] }`. See [Indicators](#indicators). |
 
 `period` accepts `M1 M5 M15 M30 H1 H4 D1 W1 MN1`, the reversed forms (`1H`, `15M`) or minutes (`60`).
 
-Errors are `{ error, details? }` with `400` (bad input), `401`, `403`, `404` (unknown symbol or no history), `409`
-(ambiguous symbol, or no quote yet) and `503` (no live candles yet).
+Errors are `{ error, details? }` with `400` (bad input), `401`, `403`, `404` (unknown symbol, no history, or an
+unknown or disabled indicator), `409` (ambiguous symbol or indicator name, or no quote yet), `422` (an indicator's calculation failed)
+and `503` (no live candles yet).
+
+## Indicators
+
+The app calculates an indicator over the same bars as the Charts view (see [Chart history](#chart-history)), and
+the CLI gets the very values the chart shows: both read one cache.
+
+- Parameters are passed as `p.<id>` (`p.fast=8&p.slow=21`). Any left out take their defaults; values outside a
+  parameter's range, or a `lessThan` broken, answer `400`.
+- The package also gets the warm-up bars it declares before the first of the `count` bars, so the first value is as
+  correct as the last. `barsUsed` is how many bars the calculation ran over: the warm-up and the `count` bars at
+  least, more when a chart has loaded older bars with the same settings, as the two share one calculation.
+- The last bar is the forming one. While it is live it has `complete: false`. A package that works on closed bars
+  only (`closedBarsOnly`) has no row for it, so it answers one row fewer than `count`.
+- `source` takes only `auto`, the chart's bars; `live` and `history` answer `400`.
+- An `<output>` is `null` where the package has no value, during its warm-up for instance. `<output>_style` is there
+  only for an output that is coloured by style, such as rising and falling.
+- `:symbol` needs a feed: an indicator works from a terminal's live chart, not from recorded or saved data alone.
+  `?broker=`, `?terminal=` and `?feed=` narrow it as above.
+- An unknown or disabled `:name` answers `404` with the available names in `details`. A short name that two
+  installed packages share answers `409` with their IDs; use the ID. A calculation that throws, runs
+  too long or returns bad values answers `422` with the reason.
 
 ## Chart history
 
@@ -81,5 +106,4 @@ near its oldest bar.
 
 These answer `501`, naming the milestone that brings them:
 
-- `/symbols/:symbol/info` (contract details), `/accounts…`, `/positions…`, `/budget` and `/orders…`: milestone 5;
-- `/indicators…`: milestone 4.
+- `/symbols/:symbol/info` (contract details), `/accounts…`, `/positions…`, `/budget` and `/orders…`: milestone 5.
