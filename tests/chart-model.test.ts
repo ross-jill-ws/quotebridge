@@ -8,6 +8,7 @@ import { chartScheme } from "../src/dashboard/charts/chart-scheme.js";
 import { COLOUR_TOKENS } from "../src/dashboard/colour-tokens.js";
 import {
   checkSettings,
+  currentParameters,
   drawnIndicators,
   indicatorDigits,
   indicatorLabel,
@@ -483,4 +484,32 @@ test("panes keep the chart's order while values arrive: an indicator still waiti
   assert.ok(drawn.draws[0].outputs.every((o) => o.values.every((v) => v === undefined)));
   // Its legend row waits for its values.
   assert.deepEqual(drawn.lines.map((l) => l.id), ["ao"]);
+});
+
+test("after an upgrade an indicator keeps the parameters that still exist; new ones take their defaults, removed ones go", () => {
+  const before = { period: 34, smooth: 3 };
+  const upgraded: Manifest = {
+    ...MA_MANIFEST,
+    parameters: [
+      { id: "period", label: "Period", type: "integer", default: 14, min: 1, max: 500 },
+      { id: "type", label: "Type", type: "choice", default: "simple", choices: [{ value: "simple", label: "Simple" }, { value: "exponential", label: "Exponential" }] },
+    ],
+  };
+  assert.deepEqual(currentParameters(upgraded, before), { period: 34, type: "simple" });
+});
+
+test("a kept value the new version no longer allows takes its default; two that break a rule between them, both", () => {
+  const narrowed: Manifest = { ...MA_MANIFEST, parameters: [{ id: "period", label: "Period", type: "integer", default: 14, min: 1, max: 100 }] };
+  assert.deepEqual(currentParameters(narrowed, { period: 300 }), { period: 14 });
+  const ruled: Manifest = {
+    ...MA_MANIFEST,
+    parameters: [
+      { id: "fast", label: "Fast", type: "integer", default: 12, min: 1, max: 500, lessThan: "slow" },
+      { id: "slow", label: "Slow", type: "integer", default: 26, min: 1, max: 500 },
+    ],
+  };
+  assert.deepEqual(currentParameters(ruled, { fast: 40 }), { fast: 12, slow: 26 });
+  const withSignal: Manifest = { ...ruled, parameters: [...ruled.parameters, { id: "signal", label: "Signal", type: "integer", default: 9, min: 1, max: 500 }] };
+  assert.deepEqual(currentParameters(withSignal, { fast: 40, slow: 30, signal: 5 }), { fast: 12, slow: 26, signal: 5 }, "the others are kept");
+  assert.deepEqual(currentParameters(ruled, { fast: 5, slow: 9 }), { fast: 5, slow: 9 });
 });

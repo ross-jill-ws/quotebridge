@@ -5,7 +5,7 @@ import type { Candle } from "../../server/candles/index.js";
 import type { ChartScheme } from "./chart-scheme.js";
 import type { IndicatorLine } from "./chart-model.js";
 import type { IndicatorValuesAnswer, ValuePoint } from "../../server/indicators/index.js";
-import { ManifestError, parameterValues, valuesFromText, type Manifest, type ParameterValues } from "../../shared/indicator-manifest.js";
+import { defaultValues, ManifestError, parameterValues, valuesFromText, type Manifest, type ParameterValues } from "../../shared/indicator-manifest.js";
 
 export type { IndicatorValuesAnswer, ValuePoint };
 
@@ -20,7 +20,7 @@ export type IndicatorSpec = { id: string; package: string; parameters: Parameter
 export type ColourChoice = number | "up" | "down";
 
 /** A package as /api/indicators/packages lists it; `charts`: how many windows' charts use it, as they report. */
-export type PackageInfo = { manifest: Manifest; bundled: boolean; enabled: boolean; charts?: number };
+export type PackageInfo = { manifest: Manifest; hash?: string; bundled: boolean; enabled: boolean; charts?: number };
 
 /** A chart has at most this many indicators. */
 export const MAX_INDICATORS = 8;
@@ -91,6 +91,45 @@ export function checkSettings(manifest: Manifest, texts: Record<string, string>)
     if (e instanceof ManifestError) return { ok: false, error: e.message };
     throw e;
   }
+}
+
+/**
+ * An indicator's parameters for the package's version now (after an upgrade or downgrade): the values that still exist
+ * and are still allowed, new parameters at their defaults, removed ones gone. Two kept values that break a rule between
+ * them (`lessThan`) both take their defaults.
+ */
+export function currentParameters(manifest: Manifest, parameters: ParameterValues): ParameterValues {
+  const kept: ParameterValues = defaultValues(manifest);
+  for (const p of manifest.parameters) {
+    if (!(p.id in parameters)) continue;
+    try {
+      // Checked alone: each value against its own parameter, the others at their defaults but for lessThan.
+      const value = parameterValues({ ...manifest, parameters: [{ ...p, lessThan: undefined }] as Manifest["parameters"] }, { [p.id]: parameters[p.id] });
+      kept[p.id] = value[p.id];
+    } catch (e) {
+      if (!(e instanceof ManifestError)) throw e;
+    }
+  }
+  for (const p of manifest.parameters) {
+    if (p.type === "choice" || p.lessThan === undefined || (kept[p.id] as number) < (kept[p.lessThan] as number)) continue;
+    kept[p.id] = p.default;
+    kept[p.lessThan] = defaultValues(manifest)[p.lessThan];
+  }
+  try {
+    return parameterValues(manifest, kept);
+  } catch (e) {
+    if (!(e instanceof ManifestError)) throw e;
+    // Rules that chain (a below b below c) may still clash.
+    return defaultValues(manifest);
+  }
+}
+
+/** The indicators with their parameters for their packages as installed now; one whose package is missing as kept. */
+export function currentIndicators(specs: readonly IndicatorSpec[], packages: ReadonlyMap<string, PackageInfo>): IndicatorSpec[] {
+  return specs.map((s) => {
+    const manifest = packages.get(s.package)?.manifest;
+    return manifest ? { ...s, parameters: currentParameters(manifest, s.parameters) } : s;
+  });
 }
 
 /** Milestone 2 kept { kind, period, type?, colour }: read as the package it became. */

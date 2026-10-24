@@ -1,6 +1,6 @@
 // The app's DuckDB database in the data folder: the schema-version table, then each migration in order.
 // Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and their recorded
-// samples; version 4 saved history; version 5 API keys. The WAL is never deleted or rewritten:
+// samples; version 4 saved history; version 5 API keys; version 6 (milestone 4) installed indicator packages. The WAL is never deleted or rewritten:
 // if CHECKPOINT does not happen, DuckDB replays the WAL on the next open.
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { ApiKeyStore } from "./auth/index.js";
 import { duckDbClockRuleStore, type ClockRuleStore } from "./clock/index.js";
 import { SavedBarStore } from "./history/saved-store.js";
+import { DuckDbPackageStore } from "./indicators/package-store.js";
 import { RecordingStore } from "./recording/index.js";
 
 export const DATABASE_FILE_NAME = "quotebridge.duckdb";
@@ -72,6 +73,19 @@ const MIGRATIONS: string[][] = [
       revoked_at BIGINT
     )`,
   ],
+  [
+    `CREATE TABLE indicator_packages (
+      id VARCHAR PRIMARY KEY,
+      version VARCHAR NOT NULL,
+      hash VARCHAR NOT NULL,
+      manifest VARCHAR NOT NULL,
+      calculate VARCHAR NOT NULL,
+      readme VARCHAR NOT NULL,
+      licence VARCHAR NOT NULL,
+      enabled BOOLEAN NOT NULL,
+      installed_at BIGINT NOT NULL
+    )`,
+  ],
 ];
 
 export const SCHEMA_VERSION = 1 + MIGRATIONS.length;
@@ -95,6 +109,8 @@ export type AppDatabase = {
   savedBars: SavedBarStore;
   /** API keys, on a connection of their own. */
   apiKeys: ApiKeyStore;
+  /** Installed indicator packages, on a connection of their own. */
+  indicatorPackages: DuckDbPackageStore;
   /** CHECKPOINT, then close. Closes even when CHECKPOINT fails (the WAL then stays for replay) and rethrows. */
   checkpointAndClose(): Promise<void>;
 };
@@ -131,6 +147,7 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
     const inst = instance;
     const savedBars = new SavedBarStore(await inst.connect());
     const apiKeys = new ApiKeyStore(await inst.connect());
+    const indicatorPackages = new DuckDbPackageStore(await inst.connect());
     return {
       file,
       schemaVersion,
@@ -138,15 +155,18 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
       recordings: new RecordingStore(conn),
       savedBars,
       apiKeys,
+      indicatorPackages,
       async checkpointAndClose() {
         try {
           await apiKeys.settled();
+          await indicatorPackages.settled();
           await savedBars.settled();
           await conn.run("CHECKPOINT");
         } catch (e) {
           throw new DatabaseError(`The database could not be checkpointed: ${(e as Error).message}`, { cause: e });
         } finally {
           apiKeys.close();
+          indicatorPackages.close();
           savedBars.close();
           conn.closeSync();
           inst.closeSync();

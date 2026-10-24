@@ -13,7 +13,7 @@ import type { BridgeServer } from "../bridge/index.js";
 import { MAX_M1_CANDLES, PERIODS, type CandleBuilder, type Period } from "../candles/index.js";
 import { ClockRuleRequestError, type ClockRules } from "../clock/index.js";
 import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HistorySaver } from "../history/index.js";
-import { MAX_BARS, type IndicatorPackages, type IndicatorValues } from "../indicators/index.js";
+import { MAX_BARS, MAX_ZIP_BYTES, PackageRequestError, type IndicatorPackage, type IndicatorPackages, type IndicatorValues } from "../indicators/index.js";
 import { asPortInUse } from "../port-in-use.js";
 import { defaultValues, ManifestError, MAX_HISTORY_BARS, parameterValues, valuesFromText } from "../../shared/indicator-manifest.js";
 import { PAGE_BARS } from "../../shared/periods.js";
@@ -313,16 +313,19 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   }
 
   /**
-   * The Indicators page: GET /api/indicators/packages lists every package with its manifest, whether it is bundled
-   * and enabled, and how many windows' charts use it (as they report it), and `manage`: whether this session may
-   * change them; GET /api/indicators/package?id= gives one's README and licence; POST
-   * /api/indicators/packages/enabled { id, enabled } switches one on or off, from the app window only (ADR 5, ADR 12),
-   * and answers the list. Returns false when the route is not one of them.
+   * The Indicators page: GET /api/indicators/packages lists every package with its manifest and hash, whether it is
+   * bundled and enabled, and how many windows' charts use it (as they report it), and `manage`: whether this session
+   * may change them; GET /api/indicators/package?id= gives one's README and licence. From the app window only (ADR 5,
+   * ADR 12): POST /api/indicators/packages/enabled { id, enabled } switches one on or off; POST
+   * /api/indicators/packages/preview (a ZIP, application/zip) checks a package and answers what it is and what it
+   * replaces, installing nothing; POST /api/indicators/packages/install (the same ZIP; `?downgrade=1` to confirm an
+   * older version) installs it; POST /api/indicators/packages/delete { id } deletes an installed one. The changes
+   * answer the list. Returns false when the route is not one of them.
    */
   async function handlePackages(packages: IndicatorPackages, session: SessionKind, url: URL, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const list = () => ({
       manage: session === "window",
-      packages: packages.list().map((p) => ({ manifest: p.manifest, bundled: p.bundled, enabled: packages.enabled(p.manifest.id), charts: live.chartsUsing(p.manifest.id) })),
+      packages: packages.list().map((p) => ({ manifest: p.manifest, hash: p.hash, bundled: p.bundled, enabled: packages.enabled(p.manifest.id), charts: live.chartsUsing(p.manifest.id) })),
     });
     const route = `${req.method} ${url.pathname}`;
     if (route === "GET /api/indicators/packages") {
@@ -335,18 +338,39 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       else json(res, 200, { id: pkg.manifest.id, readme: pkg.readme, licence: pkg.licence });
       return true;
     }
-    if (route !== "POST /api/indicators/packages/enabled") return false;
+    const changes = ["enabled", "preview", "install", "delete"].map((name) => `POST /api/indicators/packages/${name}`);
+    if (!changes.includes(route)) return false;
     if (session !== "window") {
-      json(res, 403, { error: "Only the app window can enable or disable indicator packages." });
+      json(res, 403, { error: "Only the app window can install, enable, disable or delete indicator packages." });
       return true;
     }
-    const body = (await readJson(req).catch(() => undefined)) as { id?: unknown; enabled?: unknown } | undefined;
-    if (typeof body?.id !== "string" || typeof body.enabled !== "boolean") {
-      json(res, 400, { error: "Expected { id, enabled }." });
-      return true;
+    try {
+      if (route === "POST /api/indicators/packages/preview" || route === "POST /api/indicators/packages/install") {
+        const zip = await readZip(req);
+        if (route === "POST /api/indicators/packages/install") {
+          await packages.install(zip, { downgrade: url.searchParams.get("downgrade") === "1" });
+          json(res, 200, list());
+          return true;
+        }
+        const { package: pkg, replaces, downgrade } = await packages.preview(zip);
+        const about = (p: IndicatorPackage) => ({ manifest: p.manifest, hash: p.hash });
+        json(res, 200, { ...about(pkg), readme: pkg.readme, licence: pkg.licence, replaces: replaces && about(replaces), downgrade });
+        return true;
+      }
+      const body = (await readJson(req).catch(() => undefined)) as { id?: unknown; enabled?: unknown } | undefined;
+      if (route === "POST /api/indicators/packages/delete") {
+        if (typeof body?.id !== "string") throw new PackageRequestError(400, "Expected { id }.");
+        await packages.delete(body.id);
+        json(res, 200, list());
+        return true;
+      }
+      if (typeof body?.id !== "string" || typeof body.enabled !== "boolean") throw new PackageRequestError(400, "Expected { id, enabled }.");
+      if (!(await packages.setEnabled(body.id, body.enabled))) throw new PackageRequestError(404, "Unknown indicator package");
+      json(res, 200, list());
+    } catch (e) {
+      if (!(e instanceof PackageRequestError)) throw e;
+      json(res, e.status, { error: e.message, ...e.details });
     }
-    if (!(await packages.setEnabled(body.id, body.enabled))) json(res, 404, { error: "Unknown indicator package" });
-    else json(res, 200, list());
     return true;
   }
 
@@ -544,6 +568,20 @@ function parseMarket(text: string | null): { brokerServer: string; symbol: strin
 }
 
 const MAX_BODY_BYTES = 16 * 1024;
+
+/** A package ZIP as the request's body; throws PackageRequestError when it is not one or is too large. */
+async function readZip(req: IncomingMessage): Promise<Buffer> {
+  if (!/^application\/(zip|x-zip-compressed|octet-stream)\b/.test(req.headers["content-type"] ?? "")) throw new PackageRequestError(415, "Expected a ZIP (application/zip).");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    // Read on to the end: the answer reaches a client still sending.
+    if (size <= MAX_ZIP_BYTES) chunks.push(chunk);
+  }
+  if (size > MAX_ZIP_BYTES) throw new PackageRequestError(413, "The ZIP is larger than 2 MiB.");
+  return Buffer.concat(chunks);
+}
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   if (!/^application\/json\b/.test(req.headers["content-type"] ?? "")) throw Error("Expected JSON");

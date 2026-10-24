@@ -36,6 +36,7 @@ import {
 import { chartScheme, type ChartScheme, type ColourMode } from "./chart-scheme.js";
 import {
   checkSettings,
+  currentIndicators,
   drawnIndicators,
   MAX_INDICATORS,
   newColours,
@@ -103,10 +104,12 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   // The Indicators page counts the charts using each package.
   const used = chartPackages(memory).join("\n");
   useEffect(() => live.reportCharts(used ? used.split("\n") : []), [used]);
-  const values = useIndicatorValues(feed, memory.period, memory.indicators, packages, fetched, live);
+  // Each indicator's parameters as its package has them now: an upgrade keeps those that still exist.
+  const indicators = useMemo(() => currentIndicators(memory.indicators, packages), [memory.indicators, packages]);
+  const values = useIndicatorValues(feed, memory.period, indicators, packages, fetched, live);
   const drawn = useMemo(
-    () => drawnIndicators(memory.indicators, packages, values, fetched?.candles ?? [], data?.digits ?? 5, scheme),
-    [memory.indicators, packages, values, fetched?.candles, data?.digits, scheme],
+    () => drawnIndicators(indicators, packages, values, fetched?.candles ?? [], data?.digits ?? 5, scheme),
+    [indicators, packages, values, fetched?.candles, data?.digits, scheme],
   );
   const [crosshair, setCrosshair] = useState<number>();
   // Asks the chart to scroll back to the latest bar.
@@ -208,7 +211,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
         scheme={scheme}
         greenOnBlack={chartColours === "green-on-black"}
         draws={drawn.draws}
-        specs={memory.indicators}
+        specs={indicators}
         packages={packages}
         legend={legend}
         toLatest={toLatest}
@@ -573,33 +576,34 @@ function useIndicatorValues(
   data: CandlesAnswer | undefined,
   live: Live,
 ): ReadonlyMap<string, IndicatorValuesAnswer> {
-  const [fetched, setFetched] = useState<ReadonlyMap<string, { query: string; answer: IndicatorValuesAnswer }>>(new Map());
+  const [fetched, setFetched] = useState<ReadonlyMap<string, { tag: string; answer: IndicatorValuesAnswer }>>(new Map());
   const count = data && data.feed === feed?.feed && data.period === period ? data.candles.length : 0;
   const queries = specs
     .filter((s) => packages.get(s.package)?.enabled && feed)
     .map((s) => {
       const query = new URLSearchParams({ feed: feed!.feed, period, package: s.package });
       for (const [id, value] of Object.entries(s.parameters)) query.set(`p.${id}`, String(value));
-      return { id: s.id, query: query.toString() };
+      // The package's hash too: another version installed computes other values with the same query.
+      return { id: s.id, query: query.toString(), tag: `${query}#${packages.get(s.package)!.hash ?? ""}` };
     });
   const queriesKey = JSON.stringify(queries);
-  /** Keeps what `change` makes of the values fetched with the same query (undefined leaves them). */
-  const store = (id: string, query: string, change: (old: IndicatorValuesAnswer | undefined) => IndicatorValuesAnswer | undefined) =>
+  /** Keeps what `change` makes of the values fetched with the same query and package (undefined leaves them). */
+  const store = (id: string, tag: string, change: (old: IndicatorValuesAnswer | undefined) => IndicatorValuesAnswer | undefined) =>
     setFetched((m) => {
       const old = m.get(id);
-      const answer = change(old?.query === query ? old.answer : undefined);
-      return answer ? new Map(m).set(id, { query, answer }) : m;
+      const answer = change(old?.tag === tag ? old.answer : undefined);
+      return answer ? new Map(m).set(id, { tag, answer }) : m;
     });
 
   useEffect(() => {
     if (!count || live.status !== "live") return;
     let current = true;
-    for (const { id, query } of queries) {
+    for (const { id, query, tag } of queries) {
       get<IndicatorValuesAnswer>(`/api/indicators/values?${query}&limit=${count}`).then(
-        (answer) => current && store(id, query, () => answer),
+        (answer) => current && store(id, tag, () => answer),
         // Refused (a parameter the package no longer has, say): the legend row says why. A package disabled or gone
         // meanwhile reads as Not available, until the package list says so too.
-        (e: Error) => current && store(id, query, () => refused(e)),
+        (e: Error) => current && store(id, tag, () => refused(e)),
       );
     }
     return () => {
@@ -609,9 +613,9 @@ function useIndicatorValues(
 
   // Only values fetched with the settings shown now.
   const shown = new Map<string, IndicatorValuesAnswer>();
-  for (const { id, query } of queries) {
+  for (const { id, tag } of queries) {
     const entry = fetched.get(id);
-    if (entry?.query === query) shown.set(id, entry.answer);
+    if (entry?.tag === tag) shown.set(id, entry.answer);
   }
   const keys = [...new Set([...shown.values()].map((v) => v.key).filter(Boolean))].sort();
   const keysKey = keys.join("\n");
@@ -624,12 +628,12 @@ function useIndicatorValues(
   useEffect(
     () =>
       live.onIndicators((changed) => {
-        for (const { id, query } of latest.current.queries) {
+        for (const { id, query, tag } of latest.current.queries) {
           const answer = latest.current.shown.get(id);
           if (!answer || !changed.includes(answer.key)) continue;
           // Joined only onto values of the same query: settings changed meanwhile fetch their own.
           get<IndicatorValuesAnswer>(`/api/indicators/values?${query}&limit=${TAIL_VALUES}`).then(
-            (tail) => store(id, query, (old) => old && withTail(old, tail)),
+            (tail) => store(id, tag, (old) => old && withTail(old, tail)),
             () => {},
           );
         }

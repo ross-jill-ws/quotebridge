@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { packageDetails, packageRows, readmeBlocks } from "../src/dashboard/indicators/indicators-model.js";
+import { packageDetails, packageRows, previewChanges, readmeBlocks } from "../src/dashboard/indicators/indicators-model.js";
 import type { Manifest } from "../src/shared/indicator-manifest.js";
 
 const manifest = (name: string): Manifest => JSON.parse(readFileSync(new URL(`../src/server/indicators/bundled/${name}/manifest.json`, import.meta.url), "utf8"));
@@ -71,4 +71,27 @@ test("a README reads as headings, paragraphs, lists, tables and code, its inline
     { type: "list", items: [[{ text: "Rising", bold: true }, { text: " bars" }], [{ text: "falling ones" }]] },
     { type: "code", text: "eo = (temp + temp before) / 2" },
   ]);
+});
+
+const withParameters = (version: string, parameters: Manifest["parameters"]): Manifest => ({ ...MA, id: "acme.ma", name: "Acme average", version, parameters });
+const PERIOD = MA.parameters[0];
+const SHIFT = { id: "shift", label: "Shift", type: "integer", default: 0, min: 0, max: 50 } as const;
+const SMOOTH = { id: "smooth", label: "Smoothing", type: "integer", default: 3, min: 1, max: 10 } as const;
+
+test("a package installed for the first time reads as Install, with nothing it replaces", () => {
+  assert.deepEqual(previewChanges(withParameters("1.0.0", [PERIOD]), null, false), { action: "Install", changes: [] });
+});
+
+test("a newer version reads as an upgrade from the old version, with the parameters added and removed", () => {
+  const old = withParameters("1.0.0", [PERIOD, SMOOTH]);
+  const next = withParameters("1.1.0", [PERIOD, SHIFT]);
+  assert.deepEqual(previewChanges(next, old, false), {
+    action: "Upgrade",
+    changes: ["Version 1.0.0 → 1.1.0", "Parameter added: Shift (default 0)", "Parameter removed: Smoothing"],
+  });
+});
+
+test("an older version reads as a downgrade; the same version as a reinstall with nothing changed", () => {
+  assert.deepEqual(previewChanges(withParameters("0.9.0", [PERIOD]), withParameters("1.0.0", [PERIOD]), true), { action: "Downgrade", changes: ["Version 1.0.0 → 0.9.0"] });
+  assert.deepEqual(previewChanges(withParameters("1.0.0", [PERIOD]), withParameters("1.0.0", [PERIOD]), false), { action: "Reinstall", changes: ["Nothing changes: the same version and files."] });
 });

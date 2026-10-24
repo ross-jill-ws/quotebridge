@@ -10,6 +10,11 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
   return answer<T>(res);
 }
 
+/** Sends a ZIP as the body; resolves and rejects as post does. */
+export async function postZip<T = unknown>(path: string, zip: Blob): Promise<T> {
+  return answer<T>(await fetch(path, { method: "POST", headers: { "content-type": "application/zip" }, body: zip }));
+}
+
 /** GETs JSON; rejects with the server's message on an error status. */
 export async function get<T>(path: string): Promise<T> {
   return answer<T>(await fetch(path, { cache: "no-store" }));

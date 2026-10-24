@@ -140,8 +140,14 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     saved,
     saving: (market) => saver?.progress(market) ?? null,
   });
-  const packages = await IndicatorPackages.open({ extraFolder: config.extraIndicatorPackages, settings: config.settings?.store });
   const engine = new IndicatorEngine();
+  const packages = await IndicatorPackages.open({
+    extraFolder: config.extraIndicatorPackages,
+    settings: config.settings?.store,
+    store: config.database?.indicatorPackages,
+    run: (pkg, bars, parameters) => engine.run(pkg, bars, parameters),
+    now: config.now,
+  });
   const indicatorValues = new IndicatorValues({
     page: (feed, period, limit, before) => history.page(feed, period, limit, before),
     engine,

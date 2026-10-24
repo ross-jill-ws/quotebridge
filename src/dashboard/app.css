@@ -2322,8 +2322,124 @@ a.path {
 }
 
 /* Indicators */
+.indicators {
+  position: relative;
+}
+
 .indicators .notice {
   margin-bottom: 16px;
+}
+
+.notice.good {
+  background: var(--up-wash);
+  color: var(--ink);
+}
+
+.indicators-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 22px;
+}
+
+.indicators-head h1 {
+  margin-bottom: 4px;
+}
+
+.install-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+/* A ZIP dragged over the page: the whole page takes it. */
+.drop-overlay {
+  position: absolute;
+  inset: -10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent-soft) 82%, transparent);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.install-preview {
+  margin: 0 0 20px;
+  padding: 16px 20px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.install-preview header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.install-preview h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.install-preview header .package-id {
+  margin-left: 0;
+}
+
+.install-preview > .muted {
+  margin: 6px 0 14px;
+  font-size: 13px;
+}
+
+.install-preview .package-details {
+  padding: 0;
+  margin-bottom: 16px;
+}
+
+.preview-changes {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-small);
+  background: var(--accent-soft);
+}
+
+.preview-changes h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.preview-changes ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.preview-changes p {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+}
+
+.downgrade-confirm {
+  cursor: pointer;
+}
+
+.downgrade-confirm input {
+  margin: 0;
+}
+
+.package-actions {
+  max-width: 80ch;
+  margin-top: 14px;
 }
 
 .packages-table .enabled-col {
@@ -2343,11 +2459,11 @@ a.path {
 }
 
 .packages-table tr.off .package-name,
-.packages-table tr.off td:not(.enabled-col) {
+.packages-table > tbody > tr.off > td:not(.enabled-col) {
   color: var(--ink-3);
 }
 
-.packages-table tr.open td {
+.packages-table > tbody > tr.open > td {
   background: var(--sunk);
 }
 
@@ -2387,7 +2503,8 @@ a.path {
   color: var(--ink-3);
 }
 
-.packages-table tr.package-details-row td {
+/* Child cells only: the tables inside the details keep their own. */
+.packages-table > tbody > tr.package-details-row > td {
   padding: 0;
   border-top: 0;
   background: var(--sunk);

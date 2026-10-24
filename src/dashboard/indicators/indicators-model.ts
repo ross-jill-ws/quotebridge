@@ -40,6 +40,25 @@ export function packageDetails(manifest: Manifest): PackageDetails {
   };
 }
 
+/** What installing a previewed package does: its action, and what changes from the package it replaces. */
+export type PreviewChanges = { action: "Install" | "Upgrade" | "Downgrade" | "Reinstall"; changes: string[] };
+
+/** The preview's change list: the old version to the new, and the parameters added (with their defaults) or removed. */
+export function previewChanges(manifest: Manifest, replaces: Manifest | null, downgrade: boolean): PreviewChanges {
+  if (!replaces) return { action: "Install", changes: [] };
+  if (replaces.version === manifest.version) return { action: "Reinstall", changes: ["Nothing changes: the same version and files."] };
+  const has = (m: Manifest, id: string) => m.parameters.some((p) => p.id === id);
+  const defaultText = (p: Manifest["parameters"][number]) => (p.type === "choice" ? (p.choices.find((c) => c.value === p.default)?.label ?? p.default) : String(p.default));
+  return {
+    action: downgrade ? "Downgrade" : "Upgrade",
+    changes: [
+      `Version ${replaces.version} → ${manifest.version}`,
+      ...manifest.parameters.filter((p) => !has(replaces, p.id)).map((p) => `Parameter added: ${p.label} (default ${defaultText(p)})`),
+      ...replaces.parameters.filter((p) => !has(manifest, p.id)).map((p) => `Parameter removed: ${p.label}`),
+    ],
+  };
+}
+
 /** A run of text, perhaps inline code or bold. */
 export type Inline = { text: string; code?: true; bold?: true };
 
