@@ -11,3 +11,7 @@ CLAUDE.local.md
 # Packaging output; the CI-built DLL bundle (dev default for the DLL folder)
 /release/
 /native/libzmq/out/
+
+# Indicator packages converted or written in this working copy, and their ZIPs (npm run indicator-package)
+/indicators/
+/build/

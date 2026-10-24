@@ -1,7 +1,7 @@
 // A package ZIP as the legacy server took it: at most 2 MiB, holding exactly manifest.json, calculate.js, README.md and
 // LICENSE at its root, each at most 256 KB of UTF-8 text; no folders, links, encryption or ZIP64. Read from the
-// central directory, each file inflated with a cap on its size.
-import { crc32, inflateRawSync } from "node:zlib";
+// central directory, each file inflated with a cap on its size. writePackageZip makes one (npm run indicator-package).
+import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 import { PACKAGE_FILES, type PackageFiles } from "./packages.js";
 
 export const MAX_ZIP_BYTES = 2 * 1024 * 1024;
@@ -79,4 +79,48 @@ export function readPackageZip(bytes: Buffer): PackageFiles {
   const missing = PACKAGE_FILES.filter((name) => files[name] === undefined);
   if (missing.length) fail(`The ZIP lacks ${missing.join(", ")}. ${FILES}`);
   return files as PackageFiles;
+}
+
+/** The four files deflated into a ZIP at its root, as readPackageZip takes it: UTF-8 names, every date 1980-01-01, so the same files always make the same bytes. */
+export function writePackageZip(files: PackageFiles): Buffer {
+  const parts: Buffer[] = [];
+  const directory: Buffer[] = [];
+  let offset = 0;
+  for (const name of PACKAGE_FILES) {
+    const data = Buffer.from(files[name], "utf8");
+    const packed = deflateRawSync(data);
+    const fileName = Buffer.from(name, "utf8");
+    // Version 2.0, UTF-8 names, deflate, 00:00 on 1980-01-01, then the checksum and sizes.
+    const fields = (header: Buffer, at: number) => {
+      header.writeUInt16LE(20, at);
+      header.writeUInt16LE(0x800, at + 2);
+      header.writeUInt16LE(8, at + 4);
+      header.writeUInt16LE(0, at + 6);
+      header.writeUInt16LE(0x21, at + 8);
+      header.writeUInt32LE(crc32(data), at + 10);
+      header.writeUInt32LE(packed.length, at + 14);
+      header.writeUInt32LE(data.length, at + 18);
+      header.writeUInt16LE(fileName.length, at + 22);
+    };
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    fields(local, 4);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(0x0314, 4);
+    fields(central, 6);
+    central.writeUInt32LE((0x81a4 << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    parts.push(local, fileName, packed);
+    directory.push(central, fileName);
+    offset += local.length + fileName.length + packed.length;
+  }
+  const centralDirectory = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(PACKAGE_FILES.length, 8);
+  end.writeUInt16LE(PACKAGE_FILES.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, centralDirectory, end]);
 }

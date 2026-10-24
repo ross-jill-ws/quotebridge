@@ -1,6 +1,6 @@
 # QuoteBridge for MetaTrader
 
-A Windows desktop app that bridges MetaTrader 4 quotes to a dashboard.
+A Windows desktop app that bridges MetaTrader 4 quotes to a dashboard. The [user manual](docs/README.md) covers indicator packages and the REST API.
 
 ## Development
 
@@ -16,5 +16,6 @@ Requires Node.js 24 on Windows. Install the dependencies with `npm ci`. See [doc
 | `npm run build` | Builds the main process, server and production dashboard into `dist/`. |
 | `npm start` | Builds, then runs the app with Electron. |
 | `npm run package` | Builds the Windows installer into `release/`. |
+| `npm run indicator-package -- <folder>` | Checks an indicator package's four files as Install does and builds its ZIP into `build/` (see [Indicator packages](docs/indicator-packages.md)). |
 
 `QUOTEBRIDGE_DATA_FOLDER`, `QUOTEBRIDGE_EA_PORT` and `QUOTEBRIDGE_HTTP_PORT` override the data folder and ports of a dev run. A dev run never uses the installed app's `%APPDATA%\QuoteBridge`. The reload signal uses port 6681, or 6682 with `--real` (`QUOTEBRIDGE_DEV_RELOAD_PORT`), and only dev builds of the dashboard listen for it.
