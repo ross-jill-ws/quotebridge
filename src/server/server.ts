@@ -70,6 +70,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   let terminals: TerminalManager | undefined;
   const bridge = new BridgeServer({
     now: config.now,
+    identityStore: config.database?.identities,
     resolveTerminal: config.resolveTerminal ?? ((identity) => terminals?.resolveTerminal(identity)),
     marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: recorder?.isRecording(market) ?? false }),
   });

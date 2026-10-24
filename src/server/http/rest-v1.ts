@@ -7,6 +7,8 @@ import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js
 import { ManifestError, parametersFromQuery } from "../../shared/indicator-manifest.js";
 import { PAGE_BARS, PERIODS, type Period } from "../../shared/periods.js";
 import { marketKey, type BridgeServer, type FeedSnapshot, type Market } from "../bridge/index.js";
+import { selectMarketSource } from "../bridge/market-source.js";
+import { marketId } from "../identity/index.js";
 import type { Candle, CandleBuilder } from "../candles/index.js";
 import { CSV_HEADER, csvRows, PERIOD_MINUTES, type ChartHistory, type HistoryCatalog, type HstBar } from "../history/index.js";
 import type { IndicatorPackage, IndicatorPackages, IndicatorValues } from "../indicators/index.js";
@@ -193,14 +195,18 @@ export class RestV1 {
     };
   }
 
-  /** An online feed's latest sample (`source: "live"`), else the market's last recorded one (`source: "recorded"`). */
+  /** Current or explicitly last-known source quote, else the last recorded sample. */
   private async quote(symbol: string, q: URLSearchParams) {
     const { market, feed, digits } = await this.feedElseMarket(symbol, q, async () => this.options.recorder?.storedMarkets() ?? []);
-    const where = { symbol: market.symbol, broker: market.brokerServer, terminal: feed?.terminal ?? null, feed: feed?.feed ?? null };
+    const where = { marketId: marketId(market.brokerServer, market.symbol), symbol: market.symbol, broker: market.brokerServer, terminal: feed?.terminal ?? null, feed: feed?.feed ?? null };
     const shown = digits ?? 5;
-    if (feed?.online && feed.latest) {
+    const snapshot = this.options.bridge.snapshot();
+    const source = feed && selectMarketSource({ time: snapshot.time, feeds: [feed] }, market);
+    if (feed?.latest && source) {
       const { bid, ask, quoteTime } = feed.latest;
-      return { ...where, source: "live", online: true, bid, ask, spread: spread(bid, ask, shown), digits: shown, time: quoteTime, timeUtc: this.utcMs(market.brokerServer, quoteTime) };
+      return { ...where, source: feed.online ? "live" : "last-known", online: feed.online, stale: !feed.online || feed.stale || source.sourceSilent,
+        provenance: source.provenance, quoteAgeMs: source.quoteAgeMs, sourceSilenceMs: source.sourceSilenceMs, sourceSilent: source.sourceSilent,
+        bid, ask, spread: spread(bid, ask, shown), digits: shown, time: quoteTime, timeUtc: this.utcMs(market.brokerServer, quoteTime) };
     }
     const [last] = (await this.options.recorder?.samples(market, 0, MAX_MS, 1, true)) ?? [];
     if (!last) throw new RestRequestError(409, `No current quote for ${market.symbol}. Switch on recording for it in the app, or check the EA.`);
@@ -208,6 +214,11 @@ export class RestV1 {
       ...where,
       source: "recorded",
       online: feed?.online ?? false,
+      stale: true,
+      provenance: { terminalId: null, feedId: null, brokerServer: market.brokerServer, symbol: market.symbol, quoteTime: last.brokerSeconds, receivedAt: last.receivedMs },
+      quoteAgeMs: Math.max(0, snapshot.time - last.utcMs),
+      sourceSilenceMs: Math.max(0, snapshot.time - last.receivedMs),
+      sourceSilent: true,
       bid: last.bid,
       ask: last.ask,
       spread: spread(last.bid, last.ask, shown),
@@ -397,10 +408,11 @@ export class RestV1 {
     res.end();
   }
 
-  /** The one feed of a symbol: online feeds are preferred, and several still matching answer 409 with the candidates. */
+  /** One exact market's best source; distinct markets remain ambiguous, even if just one is online. */
   private resolveFeed(symbol: string, q: URLSearchParams): FeedSnapshot {
     const { broker, terminal, feed } = narrowing(q);
-    const feeds = this.options.bridge.snapshot().feeds;
+    const snapshot = this.options.bridge.snapshot();
+    const feeds = snapshot.feeds;
     if (feed) {
       const exact = feeds.find((f) => f.feed === feed);
       if (!exact) throw new RestRequestError(404, "Unknown feed");
@@ -408,10 +420,8 @@ export class RestV1 {
     }
     const matches = feeds.filter((f) => f.symbol.toUpperCase() === symbol.toUpperCase() && (!broker || f.broker.toLowerCase().includes(broker)) && this.matchesTerminal(f.terminal, terminal));
     if (!matches.length) throw unknownSymbol(symbol);
-    const online = matches.filter((f) => f.online);
-    const pick = online.length ? online : matches;
-    if (pick.length > 1) throw new RestRequestError(409, `Symbol ${symbol} is ambiguous; pass --broker, --terminal or --feed.`, pick.map(feedInfo));
-    return pick[0];
+    if (new Set(matches.map((f) => marketKey(f.market))).size > 1) throw new RestRequestError(409, `Symbol ${symbol} is ambiguous; pass --broker, --terminal or --feed.`, matches.map(feedInfo));
+    return selectMarketSource({ time: snapshot.time, feeds: matches }, matches[0].market)!.feed;
   }
 
   /**
@@ -429,9 +439,17 @@ export class RestV1 {
     }
     const snapshot = this.options.bridge.snapshot();
     const candidates = new Map<string, MarketAndFeed>();
+    const groups = new Map<string, FeedSnapshot[]>();
     for (const f of snapshot.feeds) {
-      const best = candidates.get(marketKey(f.market))?.feed;
-      if (!best || (f.online && !best.online)) candidates.set(marketKey(f.market), withFeed(f));
+      const key = marketKey(f.market);
+      const group = groups.get(key) ?? [];
+      group.push(f);
+      groups.set(key, group);
+    }
+    for (const [key, feeds] of groups) {
+      const narrowed = feeds.filter((f) => this.matchesTerminal(f.terminal, terminal));
+      const best = selectMarketSource({ time: snapshot.time, feeds: narrowed.length ? narrowed : feeds }, feeds[0].market)!;
+      candidates.set(key, withFeed(best.feed));
     }
     for (const m of known) {
       if (!candidates.has(marketKey(m))) candidates.set(marketKey(m), { market: { brokerServer: m.brokerServer, symbol: m.symbol }, feed: null, digits: m.digits });

@@ -11,10 +11,13 @@ mt4-quote-bridge auth login --server http://127.0.0.1:<port>
 
 ## Authentication
 
-- Create a key in **Settings › API keys** (scope `read`, or `trade`, which includes `read`). The app shows the key
-  once.
+- Create a key in the **app window › Settings › API keys** with scope `readonly` (view only) or `trader`
+  (reads plus trading preview, execute and review). The app shows the key once. Creation accepts only these scope names.
 - Send it as `Authorization: Bearer qbk_…`.
-- A missing, unknown or revoked key gets `401`. A `read` key on anything but `GET` or `HEAD` gets `403`.
+- A missing, unknown or revoked key, or one with an unrecognized stored scope, gets `401`. A `readonly` key on
+  anything but `GET` or `HEAD` gets `403`, including preview and review.
+- Existing stored scopes are migrated automatically without changing privileges or secrets. Keys and remote browsers
+  cannot administer the app: installation/setup, key management and settings changes remain app-window-only.
 - `GET /api/v1/info` is public: `{ "service": "mt4-quote-bridge", "apiVersion": 1 }`.
 - `GET /api/auth/session` answers `{ username, key: { name, prefix, scope }, expires: null }`.
 
@@ -34,15 +37,16 @@ with:
 - `?terminal=`: the terminal's ID or name, as a substring;
 - `?feed=`: the exact feed key from `/symbols`.
 
-When several feeds match, online feeds are preferred. Recorded and saved data belongs to a market (broker server and
-symbol), so it answers even when no terminal is running.
+Within one exact market, sources are ordered by connection state, newest broker quote time, newest sample receipt,
+then stable terminal ID. Different markets remain ambiguous even when only one is online. Recorded and saved data
+belongs to a market (broker server and symbol), so it answers even when no terminal is running.
 
 ## Endpoints
 
 | Endpoint | Answer |
 | --- | --- |
 | `GET /api/v1/symbols` | `{ symbols: [{ symbol, broker, terminal, feed, online, recording, digits, bid, ask, quoteTime, quoteTimeUtc, livePeriods[], historyPeriods[] }] }`, one row per feed. `broker` is the broker server. |
-| `GET /api/v1/symbols/:symbol/quote` | The feed's latest sample (`source: "live"`), else the market's last recorded sample (`source: "recorded"`, with `received` in UTC ms). `{ symbol, broker, terminal, feed, source, online, bid, ask, spread (points), digits, time, timeUtc }`. |
+| `GET /api/v1/symbols/:symbol/quote` | The best source's latest sample (`source: "live"` when connected, `"last-known"` when offline), else the market's last recorded sample (`source: "recorded"`, with `received` in UTC ms). `{ marketId, symbol, broker, terminal, feed, source, online, stale, provenance, quoteAgeMs, sourceSilenceMs, sourceSilent, bid, ask, spread (points), digits, time, timeUtc }`. Provenance names the source terminal/feed, exact market, broker quote time and sample receipt time; recorded-only sources have null terminal/feed. Source silence at five seconds is separate from broker quote age. |
 | `GET /api/v1/symbols/:symbol/candles?period=H1&count=900&source=auto` | The last `count` bars, 900 when not given (1–5000): `{ period, timeframe, symbol, broker, terminal, feed, digits, source, status, message, bars: [{ time, timeUtc, open, high, low, close, complete? }] }`. `auto` is the chart's history (see [Chart history](#chart-history)), with the live candles after it. `live` gives the live candles only; `history` gives HST and saved bars, with `volume` and `spread`. The last live bar has `complete: false`. |
 | `GET /api/v1/symbols/:symbol/samples?from=&to=&limit=10000` | Recorded samples from `from` to `to` (UTC ms), oldest first, `limit` ≤ 100,000: `{ symbol, broker, from, to, truncated, samples: [{ time, timeUtc, bid, ask, received }] }`. With `truncated: true`, continue from the last `timeUtc + 1`: a page ends at a whole second, unless one second holds more than `limit` samples (the rest of that second is then skipped). |
 | `GET /api/v1/history` | `{ series: [{ source, symbol, broker, period, timeframe, bars, from, to, fromUtc, toUtc }] }`: each market's periods, from MetaTrader's HST file joined with the app's saved history. `source` is the broker server. |

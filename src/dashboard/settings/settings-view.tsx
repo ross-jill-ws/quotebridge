@@ -314,7 +314,7 @@ function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
   const [confirming, setConfirming] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const [scope, setScope] = useState<ApiKeyScope>("read");
+  const [scope, setScope] = useState<ApiKeyScope>("readonly");
   const [made, setMade] = useState<{ key: string; name: string }>();
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -342,7 +342,7 @@ function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
       setCopied(false);
       setCreating(false);
       setName("");
-      setScope("read");
+      setScope("readonly");
     });
   const revoke = (id: string) =>
     act(async () => {
@@ -367,7 +367,7 @@ function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
         )
       }
     >
-      <p class="setting-row setting-hint">The CLI and your scripts send a key to read from this app. Make one key per computer or script, so you can revoke each on its own.</p>
+      <p class="setting-row setting-hint">The CLI and your scripts send a key: Readonly can only view; Trader can also preview, execute and review trades. Neither can administer the app. Make one key per computer or script, so you can revoke each on its own.</p>
       {made && (
         <div class="setting-row key-made" role="status">
           <div class="setting-text">
@@ -441,7 +441,7 @@ function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
             </label>
             <fieldset class="key-field key-scope">
               <legend class="setting-label">Scope</legend>
-              {(["read", "trade"] as const).map((s) => (
+              {(["readonly", "trader"] as const).map((s) => (
                 <label key={s}>
                   <input type="radio" name="api-key-scope" checked={scope === s} onChange={() => setScope(s)} /> {SCOPE_LABELS[s]}
                 </label>
@@ -467,7 +467,7 @@ function ApiKeysGroup({ timeShown }: { timeShown: TimeShown }) {
   );
 }
 
-const SCOPE_LABELS: Record<ApiKeyScope, string> = { read: "Read", trade: "Read and trade" };
+const SCOPE_LABELS: Record<ApiKeyScope, string> = { readonly: "Readonly (view only)", trader: "Trader (view and trade)" };
 
 /** A group of setting rows on one panel; `after` is a note under the panel. */
 function SettingsGroup({ title, children, after }: { title: string; children: ComponentChildren; after?: ComponentChildren }) {

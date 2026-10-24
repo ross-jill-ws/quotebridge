@@ -175,7 +175,14 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });
 
     if (api) return handleApi(url, req, res, null);
-    if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) return handleApiKeys(options.apiKeys, url, req, res);
+    if (session !== "window" && req.method !== "GET" && req.method !== "HEAD" &&
+      (["/api/settings", "/api/setup", "/api/clock-rules", "/api/recordings/delete", "/api/markets/recording", "/api/history/save", "/api/feeds/remove"].includes(url.pathname) || url.pathname.startsWith("/api/terminals/"))) {
+      return json(res, 403, { error: "Only the app window can change administrative settings, recordings or terminal setup." });
+    }
+    if (options.apiKeys && (url.pathname === "/api/api-keys" || url.pathname === "/api/api-keys/revoke")) {
+      if (session !== "window") return json(res, 403, { error: "Only the app window can manage API keys." });
+      return handleApiKeys(options.apiKeys, url, req, res);
+    }
     if (url.pathname === "/api/state" && req.method === "GET") return json(res, 200, bridge.snapshot());
     if (url.pathname === "/api/candles" && req.method === "GET") return handleCandles(url, res);
     if (options.indicators && url.pathname.startsWith("/api/indicators/package")) {

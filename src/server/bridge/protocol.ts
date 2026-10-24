@@ -1,5 +1,8 @@
 // QuoteBridge EA wire protocol (EA → app), ported from the legacy server.
 // The 14th hello field carries the EA version (1.08+); 1.11 adds installation and data-folder paths.
+import { parseAccountMessage, type AccountMessage } from "./account-protocol.js";
+export type { AccountHello, AccountPage, AccountOrder, Conditions, TradeResult, ReadError, AccountMessage } from "./account-protocol.js";
+export { ORDERS_PER_PAGE, MAX_ACCOUNT_ORDERS } from "./account-protocol.js";
 
 export const MAX_MESSAGE_BYTES = 16384;
 
@@ -52,12 +55,10 @@ export type BarPage = { type: "bars"; session: string; request: number; timefram
 export const barRequestWire = (session: string, request: number, timeframe: number, count: number, shift: number) =>
   `G|1|${session}|${request}|${timeframe}|${count}|${shift}`;
 
-/** Messages this milestone does not handle (candles, trading, account info, read errors); dropped unread. */
+/** Legacy unsolicited candle messages; dropped unread. */
 export type Ignored = { type: "ignored"; session: string };
 
-export type EAMessage = Hello | TickBatch | BarPage | Ignored;
-
-const IGNORED_TYPES = new Set(["B", "I", "V", "P", "X", "E"]);
+export type EAMessage = Hello | TickBatch | BarPage | AccountMessage | Ignored;
 
 const integer = (value: string, min: number, max: number) => {
   const n = Number(value);
@@ -72,7 +73,8 @@ export function parseMessage(buffer: Buffer): EAMessage {
   if (p[0] === "H" && ((p.length >= 10 && p.length <= 14) || p.length === 16)) return parseHello(p);
   if (p[0] === "T" && p.length === 4) return parseTicks(p);
   if (p[0] === "G" && p.length === 9) return parseBars(p);
-  if (IGNORED_TYPES.has(p[0])) return { type: "ignored", session: p[2] };
+  if (p[0] === "I" || p[0] === "V" || p[0] === "P" || p[0] === "X" || p[0] === "E") return parseAccountMessage(p);
+  if (p[0] === "B") return { type: "ignored", session: p[2] };
   throw Error("Unknown message");
 }
 

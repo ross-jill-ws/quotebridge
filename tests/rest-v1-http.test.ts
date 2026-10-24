@@ -66,7 +66,7 @@ async function start(t: TestContext, dbFolder: string, dataFolders: Record<strin
     return (await res.json()) as Json;
   };
   for (const brokerServer of [DEMO, REAL]) await post("/api/clock-rules", { brokerServer, winterOffsetMinutes: 120, dst: "us" });
-  const { key } = await post("/api/api-keys", { name: "CLI", scope: "read" });
+  const { key } = await post("/api/api-keys", { name: "CLI", scope: "readonly" });
   /** As the CLI: a Bearer key, no cookie. */
   const cli = (path: string, query: Record<string, string | number> = {}, init: RequestInit = {}) => {
     const search = new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]));
@@ -177,12 +177,18 @@ test("quote answers the feed's latest sample live; an ambiguous symbol answers 4
   );
   const quote = await app.read("/api/v1/symbols/eurusd/quote", { broker: "demo" });
   assert.deepEqual({ ...quote, feed: "" }, {
+    marketId: "market-57ac1ac479eb2e7cd521f22114128b07dd79517844a62697f532d18548e2a13b",
     symbol: "EURUSD",
     broker: DEMO,
     terminal: TERMINAL,
     feed: "",
     source: "live",
     online: true,
+    stale: false,
+    provenance: { terminalId: TERMINAL, feedId: demo.feedKey(), brokerServer: DEMO, symbol: "EURUSD", quoteTime: MIDNIGHT + 10 * HOUR, receivedAt: NOW },
+    quoteAgeMs: 0,
+    sourceSilenceMs: 0,
+    sourceSilent: false,
     bid: 1.1,
     ask: 1.10015,
     spread: 15,
@@ -208,18 +214,24 @@ test("with no terminal running, quote answers the market's last recorded sample"
   // The terminal goes quiet: its feed is offline, and its last quote is no longer live.
   clock.advance(8000);
   const offline = await app.read("/api/v1/symbols/EURUSD/quote");
-  assert.deepEqual([offline.source, offline.online, offline.terminal, offline.bid], ["recorded", false, TERMINAL, 1.1001]);
+  assert.deepEqual([offline.source, offline.online, offline.terminal, offline.bid], ["last-known", false, TERMINAL, 1.1001]);
   await app.stop();
 
   const again = await start(t, db, {}, clock);
   const quote = await again.read("/api/v1/symbols/EURUSD/quote");
   assert.deepEqual(quote, {
+    marketId: "market-57ac1ac479eb2e7cd521f22114128b07dd79517844a62697f532d18548e2a13b",
     symbol: "EURUSD",
     broker: DEMO,
     terminal: null,
     feed: null,
     source: "recorded",
     online: false,
+    stale: true,
+    provenance: { terminalId: null, feedId: null, brokerServer: DEMO, symbol: "EURUSD", quoteTime: MIDNIGHT + 10 * HOUR, receivedAt: NOW },
+    quoteAgeMs: 8000,
+    sourceSilenceMs: 8000,
+    sourceSilent: true,
     bid: 1.1001,
     ask: 1.1003,
     spread: 20,

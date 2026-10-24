@@ -1,6 +1,8 @@
 // The app's DuckDB database in the data folder: the schema-version table, then each migration in order.
 // Schema version 2 (milestone 3) adds clock rules per broker server (ADR 11); version 3 markets and their recorded
-// samples; version 4 saved history; version 5 API keys; version 6 (milestone 4) installed indicator packages. The WAL is never deleted or rewritten:
+// samples; version 4 saved history; version 5 API keys; version 6 (milestone 4) installed indicator packages;
+// version 7 renames API-key scopes without changing privileges; version 8 remembers account identities only.
+// The WAL is never deleted or rewritten:
 // if CHECKPOINT does not happen, DuckDB replays the WAL on the next open.
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
@@ -10,6 +12,7 @@ import { duckDbClockRuleStore, type ClockRuleStore } from "./clock/index.js";
 import { SavedBarStore } from "./history/saved-store.js";
 import { DuckDbPackageStore } from "./indicators/package-store.js";
 import { RecordingStore } from "./recording/index.js";
+import { DuckDbIdentityStore } from "./identity/index.js";
 
 export const DATABASE_FILE_NAME = "quotebridge.duckdb";
 
@@ -86,6 +89,19 @@ const MIGRATIONS: string[][] = [
       installed_at BIGINT NOT NULL
     )`,
   ],
+  [
+    // Rename only known legacy scopes, including revoked keys. Unknown scopes must never acquire privileges.
+    "UPDATE api_keys SET scope = CASE scope WHEN 'read' THEN 'readonly' WHEN 'trade' THEN 'trader' END WHERE scope IN ('read', 'trade')",
+  ],
+  [
+    `CREATE TABLE account_identities (
+      id VARCHAR PRIMARY KEY,
+      broker_server VARCHAR NOT NULL,
+      login VARCHAR NOT NULL,
+      label VARCHAR NOT NULL,
+      UNIQUE (broker_server, login)
+    )`,
+  ],
 ];
 
 export const SCHEMA_VERSION = 1 + MIGRATIONS.length;
@@ -111,6 +127,8 @@ export type AppDatabase = {
   apiKeys: ApiKeyStore;
   /** Installed indicator packages, on a connection of their own. */
   indicatorPackages: DuckDbPackageStore;
+  /** Known account identities only, on a connection of their own (no financial snapshots). */
+  identities: DuckDbIdentityStore;
   /** CHECKPOINT, then close. Closes even when CHECKPOINT fails (the WAL then stays for replay) and rethrows. */
   checkpointAndClose(): Promise<void>;
 };
@@ -148,6 +166,7 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
     const savedBars = new SavedBarStore(await inst.connect());
     const apiKeys = new ApiKeyStore(await inst.connect());
     const indicatorPackages = new DuckDbPackageStore(await inst.connect());
+    const identities = new DuckDbIdentityStore(await inst.connect());
     return {
       file,
       schemaVersion,
@@ -156,8 +175,10 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
       savedBars,
       apiKeys,
       indicatorPackages,
+      identities,
       async checkpointAndClose() {
         try {
+          await identities.settled();
           await apiKeys.settled();
           await indicatorPackages.settled();
           await savedBars.settled();
@@ -165,6 +186,7 @@ export async function openDatabase(dataFolder: string): Promise<AppDatabase> {
         } catch (e) {
           throw new DatabaseError(`The database could not be checkpointed: ${(e as Error).message}`, { cause: e });
         } finally {
+          identities.close();
           apiKeys.close();
           indicatorPackages.close();
           savedBars.close();

@@ -87,7 +87,7 @@ async function start(t: TestContext) {
     return (await res.json()) as Json;
   };
   for (const brokerServer of [DEMO, REAL]) await post("/api/clock-rules", { brokerServer, winterOffsetMinutes: 120, dst: "us" });
-  const { key } = await post("/api/api-keys", { name: "CLI", scope: "read" });
+  const { key } = await post("/api/api-keys", { name: "CLI", scope: "readonly" });
   const search = (query: Record<string, string | number>) => {
     const s = new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]));
     return s.size ? `?${s}` : "";
@@ -286,7 +286,7 @@ test("an ambiguous symbol answers 409 with the candidates, narrowed by broker or
   assert.deepEqual([byTerminal.broker, byTerminal.values.at(-1).close], [DEMO, 1.2]);
 });
 
-test("the indicator endpoints need a key; a read key may only GET them, and reaches no chart endpoint", { timeout: 20000 }, async (t) => {
+test("the indicator endpoints need a key; a readonly key may only GET them, and reaches no chart endpoint", { timeout: 20000 }, async (t) => {
   const app = await start(t);
   for (const path of ["/api/v1/indicators", "/api/v1/indicators/ma", "/api/v1/indicators/ma/EURUSD?period=H1"]) {
     assert.equal((await fetch(`${app.origin}${path}`)).status, 401, path);

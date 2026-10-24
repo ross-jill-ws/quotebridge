@@ -24,6 +24,7 @@ function feed(overrides: Partial<FeedSnapshot> = {}): FeedSnapshot {
     stale: false,
     latest: { seq: 7, bid: 1.08421, ask: 1.08433, quoteTime: 1_800_000_000, sampledTime: 1_800_000_001 },
     quoteTimeUtc: (1_800_000_000 - 7200) * 1000,
+    quoteReceivedAt: NOW - 500,
     clockRule: { winterOffsetMinutes: 120, dst: "us" },
     recording: false,
     lastSeen: NOW - 500,

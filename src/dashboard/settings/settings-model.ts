@@ -112,7 +112,7 @@ export type ApiKeyRow = {
   name: string;
   /** "qbk_1a2b3c4d…": enough to tell keys apart, never the key. */
   prefix: string;
-  /** "Read" or "Read and trade". */
+  /** "Readonly" or "Trader". */
   scope: string;
   /** "Created 2027-01-15 09:00". */
   created: string;
@@ -130,7 +130,7 @@ export function apiKeyRows(keys: readonly ApiKeyView[], shown: TimeShown, localO
     id: k.id,
     name: k.name,
     prefix: `${k.prefix}…`,
-    scope: k.scope === "trade" ? "Read and trade" : "Read",
+    scope: k.scope === "trader" ? "Trader" : "Readonly",
     created: `Created ${when(k.createdAt)}`,
     lastUsed: k.lastUsedAt === null ? "Never used" : `Last used ${when(k.lastUsedAt)}`,
   }));

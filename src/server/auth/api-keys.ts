@@ -1,11 +1,11 @@
 // API keys for the CLI and scripts: `qbk_` + 64 hex characters (32 random bytes), shown once when created. Only the
 // SHA-256 is stored (schema version 5): the keys are random, so a fast hash is safe, and legacy keys import unchanged
-// in milestone 6 (ADR 5's scrypt is for the low-entropy password). Scope `read` reads; `trade` also sends changes.
+// in milestone 6 (ADR 5's scrypt is for the low-entropy password). Scope `readonly` reads; `trader` also sends changes.
 // Keys are created and revoked from the app window only; the HTTP server checks the Bearer header against them.
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { createHash, randomBytes } from "node:crypto";
 
-export type ApiKeyScope = "read" | "trade";
+export type ApiKeyScope = "readonly" | "trader";
 
 /** A key as listed: never the key itself. Times are UTC epoch milliseconds. */
 export type ApiKeyView = { id: string; name: string; scope: ApiKeyScope; prefix: string; createdAt: number; lastUsedAt: number | null };
@@ -43,22 +43,26 @@ export class ApiKeyStore {
 
   constructor(private readonly connection: DuckDBConnection) {}
 
-  /** The keys not revoked, oldest first. */
+  /** The keys not revoked with a recognized scope, oldest first. Unknown stored scopes grant no access. */
   async active(): Promise<StoredApiKey[]> {
     const rows = await this.serial(async () =>
       (
         await this.connection.runAndReadAll("SELECT id, name, scope, prefix, hash, created_at, last_used_at FROM api_keys WHERE revoked_at IS NULL ORDER BY created_at, id")
       ).getRowObjectsJS(),
     );
-    return rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      scope: row.scope === "trade" ? "trade" : "read",
-      prefix: String(row.prefix),
-      hash: String(row.hash),
-      createdAt: Number(row.created_at),
-      lastUsedAt: row.last_used_at === null ? null : Number(row.last_used_at),
-    }));
+    return rows.flatMap((row): StoredApiKey[] => {
+      const scope = row.scope;
+      if (scope !== "readonly" && scope !== "trader") return [];
+      return [{
+        id: String(row.id),
+        name: String(row.name),
+        scope,
+        prefix: String(row.prefix),
+        hash: String(row.hash),
+        createdAt: Number(row.created_at),
+        lastUsedAt: row.last_used_at === null ? null : Number(row.last_used_at),
+      }];
+    });
   }
 
   add(k: StoredApiKey): Promise<void> {
@@ -120,7 +124,7 @@ export class ApiKeys {
     const { name, scope } = (request ?? {}) as { name?: unknown; scope?: unknown };
     const trimmed = typeof name === "string" ? name.trim() : "";
     if (!trimmed || trimmed.length > MAX_KEY_NAME) throw new ApiKeyRequestError(400, `Name the key (up to ${MAX_KEY_NAME} characters).`);
-    if (scope !== "read" && scope !== "trade") throw new ApiKeyRequestError(400, 'The scope must be "read" or "trade".');
+    if (scope !== "readonly" && scope !== "trader") throw new ApiKeyRequestError(400, 'The scope must be "readonly" or "trader".');
     const key = `qbk_${randomBytes(32).toString("hex")}`;
     const stored: Cached = {
       id: randomBytes(8).toString("hex"),
@@ -151,7 +155,7 @@ export class ApiKeys {
   check(key: string, writes: boolean): KeyCheck {
     const stored = KEY_PATTERN.test(key) ? this.keys.get(sha256(key)) : undefined;
     if (!stored) return { ok: false, status: 401, error: "This API key is not known or has been revoked. Create one in Settings › API keys." };
-    if (writes && stored.scope !== "trade") return { ok: false, status: 403, error: "This API key may only read. Create a key with the trade scope to send changes." };
+    if (writes && stored.scope !== "trader") return { ok: false, status: 403, error: "This API key may only read. Create a key with the trader scope to send changes." };
     const now = this.now();
     stored.lastUsedAt = now;
     if (stored.written === null || now - stored.written >= LAST_USED_WRITE_MS) {

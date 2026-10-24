@@ -3,6 +3,8 @@
 import { Router } from "zeromq";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { asPortInUse } from "../port-in-use.js";
+import type { IdentityStore } from "../identity/index.js";
+import { AccountState } from "./accounts.js";
 import { barRequestWire, feedKey, MAX_MESSAGE_BYTES, parseMessage, TerminalIdentityError, type BarPage, type Hello, type Market, type Sample } from "./protocol.js";
 
 /** A feed is online while its last message is younger than this. EAs re-send hello every 2 s. */
@@ -21,7 +23,7 @@ export const MAX_REJECTIONS = 20;
 const EXCERPT_CHARS = 60;
 const ROUTE_CHARS = 120;
 /** Account info and trading messages: a rejected one keeps only its type and session in the excerpt. */
-const PRIVATE_TYPES = /^[IPX]\|/;
+const PRIVATE_TYPES = /^[IVPXE]\|/;
 /** A peer silent this long may be evicted to make room when the peer limit is reached. */
 const STALE_PEER_MS = 60000;
 
@@ -66,6 +68,7 @@ export type RejectionListener = (rejection: Rejection) => void;
 export type MarketInfo = { clockRule: ClockRule | null; recording: boolean };
 
 export type BridgeServerOptions = {
+  identityStore?: IdentityStore;
   /** Clock in epoch milliseconds; injectable for tests. */
   now?: () => number;
   /** Adds each feed's market info to snapshots; without it, rules are unknown and nothing is recorded. */
@@ -115,6 +118,8 @@ export type FeedSnapshot = {
   latest?: Sample;
   /** The latest quote time in UTC milliseconds (its broker time as it is while the clock rule is unknown). */
   quoteTimeUtc: number | null;
+  /** Receipt of this exact latest quote, not the aggregate receipt of other chart instances' batches. */
+  quoteReceivedAt: number | null;
   /** The clock rule of the market's broker server; null while unknown. */
   clockRule: ClockRule | null;
   /** Whether the feed's market is recorded; every feed of the market shows the same. */
@@ -152,6 +157,8 @@ export type BridgeSnapshot = {
 };
 
 export class BridgeServer {
+  /** Private identities/funds for authenticated callers; deliberately absent from diagnostic snapshots. */
+  readonly accounts: AccountState;
   private readonly now: () => number;
   private readonly marketInfo: (market: Market) => MarketInfo;
   private readonly resolveTerminal: BridgeServerOptions["resolveTerminal"];
@@ -185,9 +192,22 @@ export class BridgeServer {
     this.now = options.now ?? Date.now;
     this.marketInfo = options.marketInfo ?? (() => ({ clockRule: null, recording: false }));
     this.resolveTerminal = options.resolveTerminal;
+    this.accounts = new AccountState({
+      peer: (session) => {
+        const p = this.peers.get(session);
+        return p?.registration === "verified" ? { terminalId: p.terminal, brokerServer: p.broker, lastSeen: p.lastSeen } : undefined;
+      },
+      send: async (session, wire) => {
+        const p = this.peers.get(session);
+        if (!p || p.registration !== "verified") throw Error("Source unavailable");
+        await this.socket.send([p.route, wire]);
+      },
+      retire: (session) => this.revokePeer(session, true),
+    }, this.now, options.identityStore);
   }
 
   async start(endpoint: string) {
+    await this.accounts.open();
     const port = /^tcp:\/\/127\.0\.0\.1:(\d+)$/.exec(endpoint)?.[1];
     if (!port) throw Error("ZeroMQ must bind to 127.0.0.1");
     try {
@@ -253,8 +273,8 @@ export class BridgeServer {
     for (const listener of listeners) {
       try {
         listener(value);
-      } catch (e) {
-        console.error(`Bridge ${what} listener failed`, e);
+      } catch {
+        console.error(`Bridge ${what} listener failed`);
       }
     }
   }
@@ -324,6 +344,7 @@ export class BridgeServer {
     } catch (e) {
       // A rejected hello cannot leave an earlier subscription usable on the same route.
       const head = frames[1].toString().split("|", 3);
+      this.accounts.rejectResponse(frames[0].toString(), frames[1].toString().split("|", 4)[3]);
       if (head[0] === "H" && head[1] === "1" && head[2] === frames[0].toString()) {
         this.revokePeer(head[2]);
         await this.send(frames[0], `C|1|${head[2]}|0`);
@@ -337,6 +358,7 @@ export class BridgeServer {
     if (!p) return;
     const wasVerified = p.registration === "verified";
     p.registration = retire || p.registration === "retired" ? "retired" : "revoked";
+    this.accounts.invalidate(session);
     p.latest = undefined;
     p.samplesAcceptedAt = undefined;
     p.quoteUnchangedSince = undefined;
@@ -384,6 +406,7 @@ export class BridgeServer {
         const stale = [...this.peers.values()].find((p) => this.now() - p.lastSeen > STALE_PEER_MS);
         if (!stale) throw Error("Peer limit reached");
         this.peers.delete(stale.session);
+        this.accounts.forget(stale.session);
         if ((stale.feed !== feedKey(m) || stale.broker !== m.broker) && ![...this.peers.values()].some((p) => p.registration === "verified" && p.feed === stale.feed)) {
           this.lastRejectionByFeed.delete(stale.feed);
           this.emit({ type: "removed", feed: stale.feed });
@@ -400,6 +423,13 @@ export class BridgeServer {
       // The hello reply is the subscription state; duplicates may hand ownership over, so refresh every chart of the feed.
       for (const peer of this.peers.values()) if (peer.registration === "verified" && peer.feed === p.feed) await this.control(peer);
       if (!wasOnline) this.notify(this.onlineListeners, p.feed, "online");
+    } else if (m.type === "account-hello" || m.type === "account-page" || m.type === "conditions" || m.type === "trade-result" || m.type === "read-error") {
+      const p = this.peers.get(m.session);
+      // A dispatched result retains its original identity, even after that source has retired.
+      if (m.type !== "trade-result" && (!p || p.registration !== "verified")) return this.send(route, `R|1|${m.session}`);
+      if (p && m.type === "account-hello") Object.assign(p, this.heard(p));
+      await this.accounts.accept(m);
+      if (p && p.registration === "verified") Object.assign(p, this.heard(p));
     } else if (m.type === "bars") {
       const p = this.peers.get(m.session);
       if (!p || p.registration !== "verified") return this.send(route, `R|1|${m.session}`);
@@ -440,6 +470,8 @@ export class BridgeServer {
       const instances = registered.filter((p) => p.feed === feed);
       const online = instances.filter((p) => this.isOnline(p, now));
       const p = this.owner(feed) ?? instances.sort((a, b) => b.lastSeen - a.lastSeen)[0];
+      // Ownership controls streaming, not which retained quote is newest. Keep its own receipt provenance.
+      const quote = instances.filter((i) => i.latest).sort((a, b) => b.latest!.quoteTime - a.latest!.quoteTime || (b.samplesAcceptedAt ?? 0) - (a.samplesAcceptedAt ?? 0) || a.session.localeCompare(b.session))[0];
       const brokerServer = this.terminals.get(p.terminal)?.brokerServer ?? p.broker;
       const market = { brokerServer, symbol: p.symbol };
       const { clockRule, recording } = this.marketInfo(market);
@@ -461,10 +493,11 @@ export class BridgeServer {
         digits: p.digits,
         interval: p.interval,
         quoteStatus: p.quoteStatus,
-        quoteUnchangedSince: p.quoteUnchangedSince,
-        stale: this.isOnline(p, now) && p.quoteUnchangedSince !== undefined && now - p.quoteUnchangedSince >= STALE_QUOTE_MS,
-        latest: p.latest,
-        quoteTimeUtc: p.latest ? brokerToUtc(clockRule ?? UNKNOWN_RULE, p.latest.quoteTime * 1000) : null,
+        quoteUnchangedSince: quote?.quoteUnchangedSince,
+        stale: this.isOnline(p, now) && quote?.quoteUnchangedSince !== undefined && now - quote.quoteUnchangedSince >= STALE_QUOTE_MS,
+        latest: quote?.latest && { ...quote.latest },
+        quoteTimeUtc: quote?.latest ? brokerToUtc(clockRule ?? UNKNOWN_RULE, quote.latest.quoteTime * 1000) : null,
+        quoteReceivedAt: quote?.samplesAcceptedAt ?? null,
         clockRule,
         recording,
         lastSeen: p.lastSeen,
@@ -486,7 +519,7 @@ export class BridgeServer {
       if (known.online) throw Error("Feed is online; detach its EAs before removing it");
       this.owners.delete(feed);
       this.lastRejectionByFeed.delete(feed);
-      for (const [session, p] of this.peers) if (p.feed === feed) this.peers.delete(session);
+      for (const [session, p] of this.peers) if (p.feed === feed) { this.accounts.forget(session); this.peers.delete(session); }
       this.emit({ type: "removed", feed });
       this.changed();
     });
@@ -494,6 +527,7 @@ export class BridgeServer {
 
   async close() {
     this.stopped = true;
+    this.accounts.close();
     this.socket.close();
     await this.running;
     await this.operations;

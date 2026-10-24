@@ -93,7 +93,7 @@ test("a symbol without a valid quote is reported as no-quote", { timeout: 10000 
   assert.equal(bridge.snapshot().feeds[0].quoteStatus, "no-quote");
 });
 
-test("account info and other trading messages are ignored, not counted as invalid", { timeout: 10000 }, async (t) => {
+test("account announcements are accepted but malformed read errors are rejected", { timeout: 10000 }, async (t) => {
   const { bridge, ea } = await startBridge(t);
   const chart = ea();
   await chart.request(chart.helloWire());
@@ -102,7 +102,8 @@ test("account info and other trading messages are ignored, not counted as invali
   await chart.send(`E|1|${chart.session}|read failed`);
 
   assert.equal(await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.1002, quoteTime: 1700000000 }])), `A|1|${chart.session}|1`);
-  assert.equal(bridge.snapshot().invalidMessages, 0);
+  assert.equal(bridge.snapshot().invalidMessages, 1);
+  assert.equal(bridge.accounts.list().length, 1);
 });
 
 test("duplicate charts of one feed: one subscription owner, both counted", { timeout: 10000 }, async (t) => {

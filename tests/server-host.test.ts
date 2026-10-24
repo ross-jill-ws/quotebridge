@@ -125,7 +125,7 @@ test("the server process answers start with ready and its bound ports, and stop 
   assert.equal(ready.httpPort, config.httpPort);
   assert.equal(ready.httpOrigin, `http://127.0.0.1:${config.httpPort}`);
   assert.equal(ready.databaseFile, join(config.dataFolder, "quotebridge.duckdb"));
-  assert.equal(ready.schemaVersion, 6);
+  assert.equal(ready.schemaVersion, 8);
 
   host.send({ type: "stop" });
   const stopped = await host.next("stopped", undefined, 10000);
@@ -146,7 +146,7 @@ test("after stop the database is checkpointed and reopens cleanly with its schem
   second.send({ type: "start", config: { ...config, eaPort: await freePort(), httpPort: await freePort() } });
   const reopened = await second.next("ready");
   assert.equal(reopened.databaseFile, ready.databaseFile);
-  assert.equal(reopened.schemaVersion, 6);
+  assert.equal(reopened.schemaVersion, 8);
 });
 
 test("status reflects feeds and canonical terminal presence as verified EAs say hello", { timeout: 30000 }, async (t) => {
@@ -238,7 +238,7 @@ test("a taken EA port fails start with a structured port-in-use error, and start
 
   host.send({ type: "start", config: { ...config, eaPort: await freePort() } });
   const ready = await host.next("ready");
-  assert.equal(ready.schemaVersion, 6, "the database closed by the failed start opens again");
+  assert.equal(ready.schemaVersion, 8, "the database closed by the failed start opens again");
 });
 
 test("a database held by another process fails start with a database error", { timeout: 30000 }, async (t) => {

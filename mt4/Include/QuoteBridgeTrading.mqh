@@ -2,6 +2,8 @@
 input bool EnableDemoTrading=false; // Enable on EXACTLY ONE chart per account.
 input double MaxDemoOrderLots=1.0;
 input int DemoMagicNumber=27012026;
+// All 1000 supported orders (20 per page) can leave in one timer, even at a 1000 ms interval.
+#define QB_ACCOUNT_FLUSH_PAGES 50
 string accountRows[],accountHeader="";
 int accountOffset=0,accountCount=0,accountLogin=0;
 string TradeText(string s){s=Clean(s);StringReplace(s,",","_");StringReplace(s,";","_");return s;}
@@ -14,7 +16,8 @@ void ObserveTradingClock(){
 bool TradeReady(){return IsConnected() && IsTradeAllowed() && IsExpertEnabled() && clockObserved && GetTickCount()-lastServerClockTick<=30000;}
 void AccountHello(){
  if(AccountNumber()<=0)return;
- Send("I|1|"+session+"|"+IntegerToString(AccountNumber())+"|"+TradeText(AccountCurrency())+"|"+(IsDemo()?"1":"0")+"|"+(EnableDemoTrading?"1":"0")+"|"+(TradeReady()?"1":"0"));
+ // EA 1.12: append the configured new-order cap; preserve the first eight fields.
+ Send("I|1|"+session+"|"+IntegerToString(AccountNumber())+"|"+TradeText(AccountCurrency())+"|"+(IsDemo()?"1":"0")+"|"+(EnableDemoTrading?"1":"0")+"|"+(TradeReady()?"1":"0")+"|"+N(MaxDemoOrderLots));
 }
 void ReadError(string request,string message){Send("E|1|"+session+"|"+request+"|"+IntegerToString(AccountNumber())+"|"+TradeText(message));}
 void AccountSnapshot(string request){
@@ -32,7 +35,7 @@ void AccountSnapshot(string request){
 void FlushAccount(){
  if(accountHeader=="")return;
  if(accountLogin!=AccountNumber()){accountHeader="";return;}
- for(int batch=0;batch<4;batch++){
+ for(int batch=0;batch<QB_ACCOUNT_FLUSH_PAGES;batch++){
   int end=MathMin(accountOffset+20,accountCount);string payload="";
   for(int i=accountOffset;i<end;i++){if(i>accountOffset)payload+=";";payload+=accountRows[i];}
   if(!Send(accountHeader+IntegerToString(accountOffset)+"|"+payload))return;
