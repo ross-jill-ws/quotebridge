@@ -52,7 +52,8 @@ async function start(t: TestContext, folder: string, clock: FakeClock, overrides
   const signIn = await fetch(`${origin}/session?token=${TOKEN}`, { redirect: "manual" });
   const cookie = signIn.headers.get("set-cookie")!.split(";")[0];
   const ea = async (options?: FakeEAOptions) => {
-    const fake = new FakeEA(options).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
+    // History reads share the socket with ACKs; service them so request() waits for its actual sample reply.
+    const fake = new FakeEA({ bars: () => "loading", ...options }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
     t.after(() => fake.close());
     await fake.request(fake.helloWire());
     return fake;
@@ -72,7 +73,7 @@ async function start(t: TestContext, folder: string, clock: FakeClock, overrides
   const feeds = async () => (await getJson<BridgeSnapshot>("/api/state")).feeds;
   const setRule = async (brokerServer: string, winterOffsetMinutes: number, dst: string) =>
     assert.equal((await post("/api/clock-rules", { brokerServer, winterOffsetMinutes, dst })).status, 200);
-  return { ea, post, record, recordings, feeds, setRule, stop, origin, cookie };
+  return { ea, post, record, recordings, feeds, setRule, stop, origin, cookie, bridge: server.bridge };
 }
 
 /** Sends quotes as [broker seconds, bid] from a chart, numbering them on from its last. */
@@ -82,7 +83,7 @@ function sender() {
     let seq = seqs.get(chart) ?? 0;
     const rows = quotes.map(([quoteTime, bid]) => ({ seq: ++seq, bid, ask: bid + 0.0002, quoteTime, sampledTime: quoteTime }));
     seqs.set(chart, seq);
-    await chart.request(chart.tickWire(rows));
+    assert.equal(await chart.request(chart.tickWire(rows)), `A|1|${chart.session}|${seq}`, "wait for sample acceptance, not an unrelated history request");
   };
 }
 
@@ -200,6 +201,16 @@ test("a clock rule change recomputes the stored UTC times from their broker seco
   [eurusd] = await recordings();
   assert.deepEqual([eurusd.first, eurusd.last], [(january - 2 * HOUR) * 1000, (july - 3 * HOUR) * 1000]);
   assert.deepEqual(eurusd.clockRule, { winterOffsetMinutes: 120, dst: "us" });
+});
+
+test("recording waits for the sample ACK while a history request is already queued on the EA socket", { timeout: 15000 }, async (t) => {
+  const { ea, record, recordings, setRule, bridge } = await start(t, await tempFolder(t), new FakeClock(WINTER));
+  await setRule("EasyForex-Demo", 120, "none");
+  const chart = await ea({ broker: "EasyForex-Demo" });
+  await record("EasyForex-Demo", "EURUSD", true);
+  assert.notEqual(await bridge.requestBars(chart.feedKey(), 60, 1), null);
+  await sender()(chart, [[T, 1.1]]);
+  assert.equal((await recordings())[0].first, WINTER);
 });
 
 test("recording requests that cannot work are refused, and without a session nothing is listed", { timeout: 15000 }, async (t) => {
