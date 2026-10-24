@@ -1,6 +1,6 @@
 # QuoteBridge for MetaTrader
 
-A Windows desktop app that bridges MetaTrader 4 quotes to a dashboard. The [user manual](docs/README.md) covers indicator packages and the REST API.
+A Windows desktop app that bridges MetaTrader 4 quotes to a dashboard. The [user manual](docs/README.md) covers terminal setup, indicator packages and the REST API.
 
 ## Development
 

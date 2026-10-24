@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase, startServer, type ServerConfig } from "../src/server/index.js";
-import { FakeClock, FakeEA } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { bars, writeHst } from "./hst-fixtures.js";
 
@@ -41,6 +41,7 @@ async function start(t: TestContext, dbFolder: string, dataFolders: Record<strin
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: clock.now,
     localOffsetMinutes: () => 0,
     terminalDataFolder: (terminalId) => dataFolders[terminalId],

@@ -3,6 +3,13 @@
 import { Dealer } from "zeromq";
 import { BARS_PER_PAGE, feedKey } from "../src/server/bridge/index.js";
 import { freePort } from "./free-port.js";
+import { normaliseFolderPath } from "../src/shared/terminal-catalog/paths.js";
+
+type TerminalPaths = { installationFolder: string; dataFolder: string };
+const fixtureTerminals = new Map<string, string>();
+const pathsKey = (paths: TerminalPaths) => JSON.stringify([normaliseFolderPath(paths.installationFolder), normaliseFolderPath(paths.dataFolder)]);
+/** Synthetic catalog boundary for standalone server tests. Real-catalog tests supply actual temporary folders. */
+export const fakeTerminalIdentity = (paths: TerminalPaths) => fixtureTerminals.get(pathsKey(paths));
 
 export type FakeEAOptions = {
   session?: string;
@@ -13,6 +20,8 @@ export type FakeEAOptions = {
   timeframe?: number;
   /** The EA version sent as the 14th hello field (EA 1.08+). `null` sends a 13-field hello, like EA 1.07. */
   eaVersion?: string | null;
+  /** TerminalInfoString paths for the 1.11 hello; null deliberately sends an unverifiable older hello. */
+  identity?: TerminalPaths | null;
   /**
    * Answers bar requests (EA 1.10+) with these bars of a timeframe, oldest first, or says MetaTrader is still loading
    * them. Without it, bar requests are left unanswered, like an older EA. With it, the chart reads its socket itself and
@@ -38,6 +47,7 @@ export class FakeEA {
   readonly digits: number;
   readonly timeframe: number;
   readonly eaVersion: string | null;
+  readonly identity: TerminalPaths | null;
   dropped = 0;
   quoteStatus: "ok" | "no-quote" = "ok";
   private socket: Dealer;
@@ -55,7 +65,11 @@ export class FakeEA {
     this.symbol = options.symbol ?? "EURUSD";
     this.digits = options.digits ?? 5;
     this.timeframe = options.timeframe ?? 60;
-    this.eaVersion = options.eaVersion === undefined ? "1.08" : options.eaVersion;
+    this.eaVersion = options.eaVersion === undefined ? "1.11" : options.eaVersion;
+    this.identity = options.identity === undefined
+      ? { installationFolder: `C:\\QuoteBridge-fixtures\\${this.terminal}\\installation`, dataFolder: `C:\\QuoteBridge-fixtures\\${this.terminal}\\data` }
+      : options.identity;
+    if (this.identity) fixtureTerminals.set(pathsKey(this.identity), this.terminal);
     this.bars = options.bars;
     this.socket = new Dealer({ routingId: this.session, receiveTimeout: this.bars ? -1 : 2000, linger: 0 });
   }
@@ -93,10 +107,12 @@ export class FakeEA {
     }
   }
 
-  /** The hello as EA 1.08 sends it (14 fields), or as EA 1.07 (13 fields) when eaVersion is null. */
+  /** The hello as EA 1.11 sends it; explicit older versions omit the installation paths. */
   helloWire() {
     const fields = ["H", "1", this.session, this.terminal, this.broker, this.symbol, this.digits, 500, this.dropped, this.quoteStatus, this.timeframe, 2000, 1];
     if (this.eaVersion !== null) fields.push(this.eaVersion);
+    const [major, minor] = (this.eaVersion ?? "").split(".").map(Number);
+    if (this.identity && (major > 1 || (major === 1 && minor >= 11))) fields.push(this.identity.installationFolder, this.identity.dataFolder);
     return fields.join("|");
   }
 

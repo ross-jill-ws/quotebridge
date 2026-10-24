@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { openDatabase, startServer, type ServerConfig } from "../src/server/index.js";
-import { FakeClock, FakeEA, type FakeEAOptions } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, type FakeEAOptions } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 
 const TOKEN = "window-token-0123456789";
@@ -38,7 +38,7 @@ async function tempFolder(t: TestContext) {
 /** A server with its database in `folder`; `stop` takes the app's stop path (close, then CHECKPOINT). */
 async function start(t: TestContext, folder: string, clock: FakeClock, overrides: Partial<ServerConfig> = {}) {
   const database = await openDatabase(folder);
-  const cfg: ServerConfig = { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, now: clock.now, localOffsetMinutes: () => 0, database, ...overrides };
+  const cfg: ServerConfig = { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, resolveTerminal: fakeTerminalIdentity, now: clock.now, localOffsetMinutes: () => 0, database, ...overrides };
   const server = await startServer(cfg);
   let stopped = false;
   const stop = async () => {

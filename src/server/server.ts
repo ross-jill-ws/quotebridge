@@ -1,6 +1,6 @@
 // Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
 import { ApiKeys } from "./auth/index.js";
-import { BridgeServer, marketKey } from "./bridge/index.js";
+import { BridgeServer, marketKey, type BridgeServerOptions } from "./bridge/index.js";
 import { CandleBuilder } from "./candles/index.js";
 import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
@@ -40,6 +40,8 @@ export type ServerConfig = {
   localOffsetMinutes?: (utcMs: number) => number;
   /** A folder of indicator packages (one subfolder each) the app has beside the bundled ones; for tests. */
   extraIndicatorPackages?: string;
+  /** Catalog boundary for standalone/test hosts; the desktop app uses its detected terminal manager. */
+  resolveTerminal?: BridgeServerOptions["resolveTerminal"];
 };
 
 export type RunningServer = {
@@ -65,8 +67,10 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   let saver: HistorySaver | undefined;
   let eaBars: EaBarFetcher | undefined;
   let apiKeys: ApiKeys | undefined;
+  let terminals: TerminalManager | undefined;
   const bridge = new BridgeServer({
     now: config.now,
+    resolveTerminal: config.resolveTerminal ?? ((identity) => terminals?.resolveTerminal(identity)),
     marketInfo: (market) => ({ clockRule: clockRules?.rule(market.brokerServer) ?? null, recording: recorder?.isRecording(market) ?? false }),
   });
   // Before the first sample: the stored rules decide what later samples confirm or contradict.
@@ -176,7 +180,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     throw e;
   }
   // Only after both ports are bound: a failed start must not have begun recovery or detection.
-  const terminals = config.terminals ? new TerminalManager(config.terminals, {
+  terminals = config.terminals ? new TerminalManager(config.terminals, {
         bridge,
         eaPort: config.eaPort,
         now: config.now ?? Date.now,

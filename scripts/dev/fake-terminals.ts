@@ -12,9 +12,18 @@ import { brokerNow, localNow } from "./fake-feeds.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE } from "../../tests/installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor } from "../../tests/metaeditor-fixtures.js";
 import { MachineFixture } from "../../tests/terminal-fixtures.js";
+import { terminalIdFor } from "../../src/shared/terminal-catalog/index.js";
 
 const COMPILE_DELAY_MS = 1500;
 const QUIET = "Quiet Broker MetaTrader 4";
+
+/** The same catalog-backed installation supplies the dev Feeds and Terminals views, even before bridge setup. */
+export async function fakeFeedIdentity(root: string) {
+  const machine = await MachineFixture.at(join(root, "machine"));
+  const installationFolder = await machine.installationFolder("CMC Markets MetaTrader 4", "mt4");
+  const dataFolder = await machine.dataFolder(installationFolder, { mql: "MQL4" });
+  return { terminal: terminalIdFor(dataFolder), installationFolder, dataFolder };
+}
 
 /** The terminal manager's options with fake terminals under `root` in place of this machine's. */
 export async function fakeTerminalOptions(root: string, options: TerminalManagerOptions): Promise<TerminalManagerOptions> {
@@ -62,12 +71,12 @@ export function fakeTerminalEAs(server: RunningServer, endpoint: string): () => 
   const timer = setInterval(async () => {
     const state = await server.terminals?.state().catch(() => undefined);
     for (const t of state?.terminals ?? []) {
-      if (!t.terminalId || t.name === QUIET || t.state !== "installed" || !t.managed) continue;
+      if (!t.terminalId || !t.installationFolder || !t.dataFolder || t.name === QUIET || t.state !== "installed" || !t.managed) continue;
       let ea = eas.get(t.terminalId);
       if (!ea) {
-        const broker = t.name.split(" ")[0];
+        const broker = t.name.startsWith("CMC ") ? "Demo-Broker" : t.name.split(" ")[0];
         if (t.dataFolder) void writeFakeHistory(t.dataFolder, broker).catch((e) => console.error(`[dev] fake history for ${t.name} failed`, e));
-        eas.set(t.terminalId, (ea = new FakeEA({ terminal: t.terminalId, symbol: "EURUSD", broker }).connect(endpoint)));
+        eas.set(t.terminalId, (ea = new FakeEA({ terminal: t.terminalId, identity: { installationFolder: t.installationFolder, dataFolder: t.dataFolder }, symbol: "EURUSD", broker }).connect(endpoint)));
       }
       void ea.hello().catch(() => {});
       void ea.ticks([{ seq: ++seq, bid: 1.0842, ask: 1.0844, quoteTime: brokerNow(), sampledTime: localNow() }]).catch(() => {});

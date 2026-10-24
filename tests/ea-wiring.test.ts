@@ -36,18 +36,22 @@ function helloFields(): string[] {
   return sends[0][1].split("|");
 }
 
-test("QuoteBridge EA version is 1.10", () => {
-  assert.match(source, /^#property version "1\.10"$/m);
+test("QuoteBridge EA version is 1.11", () => {
+  assert.match(source, /^#property version "1\.11"$/m);
 });
 
-test("hello keeps the 1.07 fields and carries the EA version as its last field", () => {
+test("hello keeps its first 14 fields and appends cleaned installation and data-folder paths", () => {
   const fields = helloFields();
-  assert.equal(fields.length, LEGACY_HELLO_FIELDS.length + 1);
-  assert.deepEqual(fields.slice(0, -1), LEGACY_HELLO_FIELDS);
-  const version = fields.at(-1)!.match(/^"\+(\w+)$/)?.[1];
-  assert.ok(version, `last hello field must be a version constant, got ${fields.at(-1)}`);
+  assert.equal(fields.length, 16);
+  assert.deepEqual(fields.slice(0, 13), LEGACY_HELLO_FIELDS);
+  const version = fields[13].match(/^"\+(\w+)\+"$/)?.[1];
+  assert.ok(version, `14th hello field must be a version constant, got ${fields[13]}`);
   const defined = source.match(new RegExp(`^#define ${version} "([^"]*)"$`, "m"))?.[1];
-  assert.equal(defined, "1.10", "the hello reports the same version as #property version");
+  assert.equal(defined, "1.11", "the hello reports the same version as #property version");
+  assert.deepEqual(fields.slice(14), [
+    `"+Clean(TerminalInfoString(TERMINAL_PATH))+"`,
+    `"+Clean(TerminalInfoString(TERMINAL_DATA_PATH))`,
+  ]);
 });
 
 test("EA timer updates trade freshness before receiving commands, independent of recording", () => {
@@ -80,6 +84,12 @@ test("the EA's stop line says whether queued samples are kept for the restart or
   assert.match(deinit, /REASON_CHARTCHANGE/);
   assert.match(deinit, /REASON_PARAMETERS/);
   assert.doesNotMatch(deinit, /unacknowledged samples lost/);
+});
+
+test("an account restart cannot carry an old-market replay buffer into its new hello", () => {
+  const deinit = source.match(/void OnDeinit\(const int reason\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(deinit);
+  assert.match(deinit, /if\(!kept\)\{head=0;count=0;inflight="";inflightLast=0;\}/);
 });
 
 // The bar exchange (G) the server parses in src/server/bridge/protocol.ts; the fake EA in tests/fake-ea.ts speaks it too.

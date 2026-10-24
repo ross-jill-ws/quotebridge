@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { openDatabase, startServer } from "../src/server/index.js";
 import { brokerToUtc, type ClockRule } from "../src/shared/clock.js";
-import { FakeClock, FakeEA } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { bars, writeHst } from "./hst-fixtures.js";
 import { packageZip, scaledPackage, zip } from "./package-zip.js";
@@ -47,6 +47,7 @@ async function start(t: TestContext, folder: string) {
     eaPort,
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: new FakeClock(NOW).now,
     localOffsetMinutes: () => 0,
     terminalDataFolder: (terminalId) => (terminalId === TERMINAL ? folder : undefined),

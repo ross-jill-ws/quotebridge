@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { openDatabase, startServer, type AppDatabase, type ServerConfig } from "../src/server/index.js";
-import { FakeClock, FakeEA, type FakeEAOptions } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, type FakeEAOptions } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 
 const TOKEN = "window-token-0123456789";
@@ -28,6 +28,7 @@ async function start(t: TestContext, clock: FakeClock, overrides: Partial<Server
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: clock.now,
     // The PC's local time is UTC in these tests, so an EA's sampled time (TimeLocal) reads as UTC.
     localOffsetMinutes: () => 0,
@@ -44,7 +45,8 @@ async function start(t: TestContext, clock: FakeClock, overrides: Partial<Server
   const signIn = await fetch(`${origin}/session?token=${TOKEN}`, { redirect: "manual" });
   const cookie = signIn.headers.get("set-cookie")!.split(";")[0];
   const ea = async (options?: FakeEAOptions) => {
-    const fake = new FakeEA(options).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
+    // A modern EA also receives bar requests; keep those from being mistaken for a sample ACK.
+    const fake = new FakeEA({ bars: () => "loading", ...options }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
     t.after(() => fake.close());
     await fake.request(fake.helloWire());
     return fake;

@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, type ServerConfig } from "../src/server/index.js";
-import { FakeClock, FakeEA, type FakeEAOptions, type Quote } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, type FakeEAOptions, type Quote } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 
 const TOKEN = "window-token-0123456789";
@@ -13,7 +13,7 @@ const MINUTE = 60;
 type Candles = { feed: string; period: string; digits: number; since: number; ask: number | null; clockRule: unknown; candles: { time: number; open: number; high: number; low: number; close: number }[] };
 
 async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
-  const cfg: ServerConfig = { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, ...overrides };
+  const cfg: ServerConfig = { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, resolveTerminal: fakeTerminalIdentity, ...overrides };
   const server = await startServer(cfg);
   t.after(() => server.close());
   const origin = server.httpOrigin;

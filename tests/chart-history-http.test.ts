@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer, type ServerConfig } from "../src/server/index.js";
 import { brokerToUtc, type ClockRule } from "../src/shared/clock.js";
-import { FakeClock, FakeEA } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { appendHst, bars, writeHst } from "./hst-fixtures.js";
 
@@ -38,6 +38,7 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: clock.now,
     localOffsetMinutes: () => 0,
     terminalDataFolder: (terminalId) => (terminalId === TERMINAL ? dataFolder : undefined),

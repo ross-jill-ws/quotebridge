@@ -6,11 +6,11 @@ import { describeFeed } from "../src/dashboard/feeds/feed-row.js";
 import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { PortInUseError, startServer, type ServerConfig } from "../src/server/index.js";
 import WebSocket from "ws";
-import { FakeClock, FakeEA, type FakeEAOptions } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, type FakeEAOptions } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 
 async function config(overrides: Partial<ServerConfig> = {}): Promise<ServerConfig> {
-  return { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, ...overrides };
+  return { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, resolveTerminal: fakeTerminalIdentity, ...overrides };
 }
 
 const TOKEN = "window-token-0123456789";
@@ -184,7 +184,7 @@ test("the live WebSocket sends a snapshot on connect and new snapshots as the fa
   const hello = await until((s) => s.feeds.length === 1);
   assert.equal(hello.feeds[0].symbol, "EURUSD");
   assert.equal(hello.feeds[0].online, true);
-  assert.deepEqual(hello.terminals.map((p) => [p.terminalId, p.eaVersion]), [["mt4-aaaaaaaaaaaa", "1.08"]]);
+  assert.deepEqual(hello.terminals.map((p) => [p.terminalId, p.eaVersion]), [["mt4-aaaaaaaaaaaa", "1.11"]]);
 
   await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.1002, quoteTime: 1700000000 }]));
   const tick = await until((s) => s.feeds[0]?.latest?.seq === 1);

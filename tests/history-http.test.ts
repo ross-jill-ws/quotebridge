@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HstFile, type HistoryMarket } from "../src/server/history/index.js";
 import { openDatabase, startServer, type ServerConfig } from "../src/server/index.js";
-import { FakeClock, FakeEA } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { bars, writeHst } from "./hst-fixtures.js";
 
@@ -32,6 +32,7 @@ async function start(t: TestContext, overrides: Partial<ServerConfig> = {}) {
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: new FakeClock(NOW).now,
     localOffsetMinutes: () => 0,
     terminalDataFolder: (terminalId) => (terminalId === TERMINAL ? dataFolder : undefined),

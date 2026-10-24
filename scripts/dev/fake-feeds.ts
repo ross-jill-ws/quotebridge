@@ -1,5 +1,5 @@
 // Synthetic feeds for `npm run dev`, covering every row state of the Feeds view. They run in the dev
-// runner, not the server process, so they reconnect (ZeroMQ does) when the server restarts. As EA 1.10 they answer bar
+// runner, not the server process, so they reconnect (ZeroMQ does) when the server restarts. As EA 1.11 they answer bar
 // requests with synthetic bars ending at their price, so their charts are full.
 import { utcToBroker } from "../../src/shared/clock.js";
 import { FakeEA } from "../../tests/fake-ea.js";
@@ -13,8 +13,8 @@ export const brokerNow = () => Math.floor(utcToBroker(BROKER_CLOCK, Date.now()) 
 export const localNow = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / 1000);
 
 /** Synthetic feeds covering every row state of the Feeds view. Returns a function that stops them. */
-export function fakeFeeds(endpoint: string): () => void {
-  const terminal = "mt4-0123456789ab";
+export function fakeFeeds(endpoint: string, source?: { terminal: string; installationFolder: string; dataFolder: string }): () => void {
+  const terminal = source?.terminal ?? "mt4-0123456789ab";
   const broker = "Demo-Broker";
   type Fake = { ea: FakeEA; price?: number; spread?: number; frozen?: boolean; oldSession?: boolean; until?: number; seq: number };
   const make = (options: ConstructorParameters<typeof FakeEA>[0], extra: Partial<Fake> = {}): Fake => {
@@ -22,7 +22,7 @@ export function fakeFeeds(endpoint: string): () => void {
     // A feed without a price has no bars to show: MetaTrader would still be loading them.
     const bars = (timeframe: number, count: number, shift: number) =>
       fake.price === undefined ? ("loading" as const) : fakeBars(timeframe, count, shift, brokerNow(), fake.price, options?.digits ?? 5);
-    fake.ea = new FakeEA({ terminal, broker, eaVersion: "1.10", bars, ...options }).connect(endpoint);
+    fake.ea = new FakeEA({ terminal, broker, ...(source ? { identity: source } : {}), bars, ...options }).connect(endpoint);
     return fake;
   };
   const fakes: Fake[] = [

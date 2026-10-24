@@ -68,6 +68,8 @@ export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props
   // (but not while disconnected, when the values are no longer current).
   const time = connected ? snapshot.time + Math.max(0, now - live.receivedAt) : snapshot.time;
   const { groups, summary, attention } = groupFeeds(snapshot, terminalNames, time);
+  const identityRefused = snapshot.rejections.some((r) => time - r.time < 7000 &&
+    (r.reason.startsWith("Terminal identity unverified") || r.reason === "Invalid terminal paths"));
 
   return (
     <section class="view" aria-labelledby="feeds-title">
@@ -82,6 +84,14 @@ export function FeedsView({ live, terminalNames, flashPrices, timeShown }: Props
           )}
         </div>
       </div>
+      {identityRefused && (
+        <div class="notice bad" role="alert">
+          <span>
+            An EA connection could not be verified. In <a href="#/terminals">Terminals</a>, rescan and install/update the bridge (EA 1.11 or later).
+            If already installed, reload the EA in MetaTrader yourself when safe. Until verified, that EA supplies no feeds or recordings and cannot execute orders. Saved recordings are unchanged.
+          </span>
+        </div>
+      )}
       {error && (
         <div class="notice bad" role="alert">
           {error}

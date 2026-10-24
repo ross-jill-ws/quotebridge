@@ -1,11 +1,11 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { BridgeServer, MAX_REJECTIONS } from "../src/server/bridge/index.js";
-import { FakeClock, FakeEA, freeEndpoint, type FakeEAOptions } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, freeEndpoint, type FakeEAOptions } from "./fake-ea.js";
 
 async function startBridge(t: TestContext, clock = new FakeClock()) {
   const endpoint = await freeEndpoint();
-  const bridge = new BridgeServer({ now: clock.now });
+  const bridge = new BridgeServer({ now: clock.now, resolveTerminal: fakeTerminalIdentity });
   await bridge.start(endpoint);
   t.after(() => bridge.close());
   const ea = (options?: FakeEAOptions) => {
@@ -75,7 +75,8 @@ test("an invalid quote is rejected without ACK and counted, and the bridge keeps
 
   await chart.ticks([{ seq: 1, bid: 1.2, ask: 1.1, quoteTime: 1700000000 }]); // ask below bid
   await chart.send(chart.tickWire([{ seq: 2, bid: 1.1, ask: 1.1002, quoteTime: 1700000000 }]).replace("1.1,", "NaN,"));
-  await chart.send(`H|1|${chart.session}|mt4-aaaaaaaaaaaa|Demo-Broker|EURUSD|5|500|0|ok|60|2000|1|bad version!`);
+  assert.equal(await chart.request(`H|1|${chart.session}|mt4-aaaaaaaaaaaa|Demo-Broker|EURUSD|5|500|0|ok|60|2000|1|bad version!`), `C|1|${chart.session}|0`);
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
 
   assert.equal(await chart.request(chart.tickWire([{ seq: 3, bid: 1.3, ask: 1.3002, quoteTime: 1700000003 }])), `A|1|${chart.session}|3`);
   assert.equal(bridge.snapshot().invalidMessages, 3);
@@ -189,48 +190,53 @@ test("a quote unchanged for 10 s on an online feed is stale until its quote time
   assert.equal(bridge.snapshot().feeds[0].stale, false);
 });
 
-test("terminal presence records the last hello and the EA version from a 1.08 hello", { timeout: 10000 }, async (t) => {
+test("terminal presence records the last hello and the EA version from a verified 1.11 hello", { timeout: 10000 }, async (t) => {
   const { bridge, clock, ea } = await startBridge(t);
-  const eurusd = ea({ terminal: "mt4-aaaaaaaaaaaa", symbol: "EURUSD", eaVersion: "1.08" });
-  const gbpusd = ea({ terminal: "mt4-aaaaaaaaaaaa", symbol: "GBPUSD", eaVersion: "1.08" });
+  const eurusd = ea({ terminal: "mt4-aaaaaaaaaaaa", symbol: "EURUSD" });
+  const gbpusd = ea({ terminal: "mt4-aaaaaaaaaaaa", symbol: "GBPUSD" });
 
   await eurusd.request(eurusd.helloWire());
   clock.advance(1500);
   await gbpusd.request(gbpusd.helloWire());
 
-  assert.deepEqual(bridge.snapshot().terminals, [{ terminalId: "mt4-aaaaaaaaaaaa", lastHello: clock.time, eaVersion: "1.08", brokerServer: "Demo-Broker" }]);
+  assert.deepEqual(bridge.snapshot().terminals, [{ terminalId: "mt4-aaaaaaaaaaaa", lastHello: clock.time, eaVersion: "1.11", brokerServer: "Demo-Broker" }]);
 });
 
-test("a hello without the version field (EA 1.07 and older) means version unknown", { timeout: 10000 }, async (t) => {
+test("legacy hellos cannot verify a terminal identity, publish nothing and cannot request bars", { timeout: 10000 }, async (t) => {
   const { bridge, ea } = await startBridge(t);
-  const v107 = ea({ terminal: "mt4-bbbbbbbbbbbb", eaVersion: null });
   const oldest = ea({ terminal: "mt4-cccccccccccc" });
+  const peers = [ea({ eaVersion: null }), ea({ eaVersion: "1.08" }), ea({ eaVersion: "1.10" }), oldest];
 
-  assert.equal(await v107.request(v107.helloWire()), `C|1|${v107.session}|1`);
-  // The oldest EAs send 10 fields: no period, candle capacity or EA version.
-  assert.equal(await oldest.request(`H|1|${oldest.session}|mt4-cccccccccccc|Demo-Broker|EURUSD|5|500|0|ok`), `C|1|${oldest.session}|1`);
+  for (const peer of peers) {
+    // The oldest EAs send 10 fields: no period, candle capacity or EA version.
+    const wire = peer === oldest ? `H|1|${peer.session}|${peer.terminal}|Demo-Broker|EURUSD|5|500|0|ok` : peer.helloWire();
+    assert.equal(await peer.request(wire), `C|1|${peer.session}|0`);
+    assert.equal(await bridge.requestBars(peer.feedKey(), 60, 900), null);
+  }
 
-  const terminals = bridge.snapshot().terminals;
-  assert.deepEqual(
-    terminals.map(({ terminalId, eaVersion }) => ({ terminalId, eaVersion })),
-    [
-      { terminalId: "mt4-bbbbbbbbbbbb", eaVersion: null },
-      { terminalId: "mt4-cccccccccccc", eaVersion: null },
-    ],
-  );
-  assert.equal(bridge.snapshot().feeds.find((f) => f.terminal === "mt4-cccccccccccc")?.timeframe, null);
+  const snapshot = bridge.snapshot();
+  assert.deepEqual(snapshot.feeds, []);
+  assert.deepEqual(snapshot.terminals, []);
+  assert.equal(snapshot.invalidMessages, peers.length);
+  assert.equal(snapshot.rejections.length, peers.length);
+  for (const rejection of snapshot.rejections) {
+    assert.match(rejection.reason, /Terminal identity unverified.*upgrade the EA to 1\.11.*rescan\/setup/);
+    assert.equal(rejection.feed, null);
+  }
 });
 
-test("an EA updated to 1.08 replaces the unknown version on its next hello", { timeout: 10000 }, async (t) => {
+test("an EA updated to 1.11 establishes verified presence on its next hello", { timeout: 10000 }, async (t) => {
   const { bridge, ea } = await startBridge(t);
   const before = ea({ terminal: "mt4-dddddddddddd", eaVersion: null });
-  await before.request(before.helloWire());
+  assert.equal(await before.request(before.helloWire()), `C|1|${before.session}|0`);
+  assert.deepEqual(bridge.snapshot().terminals, []);
   before.close();
-  const after = ea({ terminal: "mt4-dddddddddddd", eaVersion: "1.08" });
+  const after = ea({ terminal: "mt4-dddddddddddd" });
 
-  await after.request(after.helloWire());
+  assert.equal(await after.request(after.helloWire()), `C|1|${after.session}|1`);
 
-  assert.equal(bridge.snapshot().terminals[0].eaVersion, "1.08");
+  assert.equal(bridge.snapshot().terminals[0].eaVersion, "1.11");
+  assert.equal(bridge.snapshot().feeds[0].terminal, after.terminal);
 });
 
 test("only an offline feed can be removed; its EA brings it back with the next hello", { timeout: 10000 }, async (t) => {
@@ -394,9 +400,9 @@ test("a replayed batch is ACKed but does not count as samples received", { timeo
   assert.deepEqual([bridge.snapshot().feeds[0].samplesMissing, bridge.snapshot().feeds[0].samplesAcceptedAt], [true, accepted]);
 });
 
-test("a bar request goes to the feed's owner chart (EA 1.10+), and its answer pages come back with the feed and market", { timeout: 10000 }, async (t) => {
+test("a bar request goes to the verified feed's owner chart (EA 1.11+), and its answer pages come back with the feed and market", { timeout: 10000 }, async (t) => {
   const { bridge, ea } = await startBridge(t);
-  const chart = ea({ terminal: "mt4-aaaaaaaaaaaa", broker: "Demo-Broker", symbol: "EURUSD", eaVersion: "1.10" });
+  const chart = ea({ terminal: "mt4-aaaaaaaaaaaa", broker: "Demo-Broker", symbol: "EURUSD", eaVersion: "1.11" });
   await chart.request(chart.helloWire());
   const pages: unknown[] = [];
   bridge.onBars((event) => pages.push(event));
@@ -428,11 +434,11 @@ test("a bar request goes to the feed's owner chart (EA 1.10+), and its answer pa
   assert.equal(bridge.snapshot().invalidMessages, 0);
 });
 
-test("no bar request goes to an EA older than 1.10, or to an offline feed", { timeout: 10000 }, async (t) => {
+test("no bar request goes to an unverified old EA, or to an offline feed", { timeout: 10000 }, async (t) => {
   const { bridge, clock, ea } = await startBridge(t);
   const old = ea({ symbol: "EURUSD", eaVersion: "1.09" });
-  const fresh = ea({ symbol: "GBPUSD", eaVersion: "1.10" });
-  await old.request(old.helloWire());
+  const fresh = ea({ symbol: "GBPUSD", eaVersion: "1.11" });
+  assert.equal(await old.request(old.helloWire()), `C|1|${old.session}|0`);
   await fresh.request(fresh.helloWire());
 
   assert.equal(await bridge.requestBars(old.feedKey(), 60, 900), null);
@@ -443,7 +449,7 @@ test("no bar request goes to an EA older than 1.10, or to an offline feed", { ti
 
 test("malformed bar pages are rejected with their reasons", { timeout: 10000 }, async (t) => {
   const { bridge, ea } = await startBridge(t);
-  const chart = ea({ session: "chart-bars", eaVersion: "1.10" });
+  const chart = ea({ session: "chart-bars", eaVersion: "1.11" });
   await chart.request(chart.helloWire());
   const wires = [
     "G|1|chart-bars|7|60|ok|2|0|1800000000,1.1,1.2,1.05,1.15,1", // one row of two

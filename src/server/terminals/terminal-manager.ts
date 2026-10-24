@@ -222,6 +222,14 @@ export class TerminalManager {
     return this.entries.find((e) => e.terminalId === terminalId)?.name;
   }
 
+  /** Resolve only a detected MT4 installation/data-folder pair; never trust the chart's saved label. */
+  async resolveTerminal(identity: { installationFolder: string; dataFolder: string }): Promise<string | undefined> {
+    await this.scanning;
+    const matches = this.entries.filter((e) => isSupported(e) && !e.needsConfirmation && e.installationFolder &&
+      sameFolder(e.installationFolder, identity.installationFolder) && sameFolder(e.dataFolder!, identity.dataFolder));
+    return matches.length === 1 ? matches[0].terminalId : undefined;
+  }
+
   /** Listeners run after anything the views show changed (scan, operation, settings). */
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);

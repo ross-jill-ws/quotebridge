@@ -22,6 +22,7 @@ import { copyStatic, DASHBOARD_OUT, DASHBOARD_SOURCE, dashboardBuildOptions, STA
 import { copyBundledPackages } from "../indicators-build.js";
 import { planDevRun, type DevPlan } from "./dev-plan.js";
 import { fakeFeeds } from "./fake-feeds.js";
+import { fakeFeedIdentity } from "./fake-terminals.js";
 import { realPortsRefusal } from "./port-check.js";
 import { seedRealRunSettings } from "./real-run.js";
 import { startReloadServer } from "./reload-server.js";
@@ -120,7 +121,7 @@ const serverBuild = await context({
 await serverBuild.watch();
 await Promise.all([dashboardReady, serverReady]);
 
-const stopFeeds = real ? () => {} : fakeFeeds(`tcp://127.0.0.1:${ports.ea}`);
+const stopFeeds = real ? () => {} : fakeFeeds(`tcp://127.0.0.1:${ports.ea}`, await fakeFeedIdentity(join(dataFolder, "fake-terminals")));
 const runner = app ? await runApp() : runBrowser();
 
 async function stop() {

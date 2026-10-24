@@ -10,6 +10,10 @@ import { inProcessTransportPair, ipcTransport, type HostTransport } from "../src
 import type { HostMessage, ServerMessage, ServerStartConfig } from "../src/shared/server-host-protocol.js";
 import { runServerHost, type ServerHostOptions } from "../src/server/host.js";
 import { FakeClock, FakeEA } from "./fake-ea.js";
+import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
+import { MachineFixture } from "./terminal-fixtures.js";
+import { InstallerFixture, SUCCESSFUL_COMPILE } from "./installer-fixtures.js";
+import { FakeMetaEditor } from "./metaeditor-fixtures.js";
 import { freePort } from "./free-port.js";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -62,6 +66,23 @@ async function tempDataFolder(t: TestContext) {
 
 async function startConfig(t: TestContext, overrides: Partial<ServerStartConfig> = {}): Promise<ServerStartConfig> {
   return { eaPort: await freePort(), httpPort: await freePort(), windowToken: TOKEN, dataFolder: await tempDataFolder(t), ...overrides };
+}
+
+/** A catalog backed only by temporary fixture folders, never the user's MetaTrader installations. */
+async function terminalCatalog(t: TestContext) {
+  const machine = await MachineFixture.create();
+  t.after(() => machine.dispose());
+  const app = await InstallerFixture.create();
+  t.after(() => app.cleanup());
+  const installationFolder = await machine.installationFolder("Fixture MT4", "mt4");
+  const dataFolder = await machine.dataFolder(installationFolder, { mql: "MQL4" });
+  const bridgeBundle = await app.bundle();
+  const terminals: ServerHostOptions["terminals"] = (options) => ({
+    ...options,
+    sources: async (userAddedFolders) => ({ dataRoot: machine.dataRoot, installationRoots: [machine.programFiles], userAddedFolders }),
+    metaEditor: new FakeMetaEditor(SUCCESSFUL_COMPILE),
+  });
+  return { bridgeBundle, terminals, identity: { installationFolder, dataFolder }, terminalId: terminalIdFor(dataFolder) };
 }
 
 /** Forks the real server entry point as a child process, the way main runs it as a utility process. */
@@ -128,9 +149,10 @@ test("after stop the database is checkpointed and reopens cleanly with its schem
   assert.equal(reopened.schemaVersion, 6);
 });
 
-test("status reflects feeds and terminal presence as EAs say hello", { timeout: 30000 }, async (t) => {
-  const config = await startConfig(t);
-  const host = hostInProcess(t);
+test("status reflects feeds and canonical terminal presence as verified EAs say hello", { timeout: 30000 }, async (t) => {
+  const catalog = await terminalCatalog(t);
+  const config = await startConfig(t, { bridgeBundle: catalog.bridgeBundle });
+  const host = hostInProcess(t, { terminals: catalog.terminals });
   host.send({ type: "start", config });
   await host.next("ready");
 
@@ -143,15 +165,16 @@ test("status reflects feeds and terminal presence as EAs say hello", { timeout: 
     invalidMessages: 0,
   });
 
-  const ea = new FakeEA({ terminal: "mt4-aaaaaaaaaaaa", symbol: "EURUSD", eaVersion: "1.08" }).connect(`tcp://127.0.0.1:${config.eaPort}`);
+  // The wire's legacy TerminalId is deliberately different: only the catalog's path pair supplies identity.
+  const ea = new FakeEA({ terminal: "mt4-aaaaaaaaaaaa", identity: catalog.identity, symbol: "EURUSD" }).connect(`tcp://127.0.0.1:${config.eaPort}`);
   t.after(() => ea.close());
   assert.equal(await ea.request(ea.helloWire()), `C|1|${ea.session}|1`);
 
   const status = await host.next("status", (m) => m.status.feeds.total === 1);
   assert.deepEqual(status.status.feeds, { total: 1, online: 1, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 });
   assert.equal(status.status.terminals.length, 1);
-  assert.equal(status.status.terminals[0].terminalId, "mt4-aaaaaaaaaaaa");
-  assert.equal(status.status.terminals[0].eaVersion, "1.08");
+  assert.equal(status.status.terminals[0].terminalId, catalog.terminalId);
+  assert.equal(status.status.terminals[0].eaVersion, "1.11");
 });
 
 test("a (re)started server sends its first status right after ready, so main drops what the previous server reported", { timeout: 30000 }, async (t) => {
@@ -168,12 +191,13 @@ test("a (re)started server sends its first status right after ready, so main dro
 
 test("status follows a feed going offline after the heartbeat gap, with no EA message", { timeout: 30000 }, async (t) => {
   const clock = new FakeClock();
-  const config = await startConfig(t);
-  const host = hostInProcess(t, { now: clock.now, statusIntervalMs: 50 });
+  const catalog = await terminalCatalog(t);
+  const config = await startConfig(t, { bridgeBundle: catalog.bridgeBundle });
+  const host = hostInProcess(t, { now: clock.now, statusIntervalMs: 50, terminals: catalog.terminals });
   host.send({ type: "start", config });
   await host.next("ready");
 
-  const ea = new FakeEA().connect(`tcp://127.0.0.1:${config.eaPort}`);
+  const ea = new FakeEA({ terminal: catalog.terminalId, identity: catalog.identity }).connect(`tcp://127.0.0.1:${config.eaPort}`);
   t.after(() => ea.close());
   await ea.request(ea.helloWire());
   await host.next("status", (m) => m.status.feeds.online === 1);
@@ -181,6 +205,20 @@ test("status follows a feed going offline after the heartbeat gap, with no EA me
   clock.advance(8000);
   const offline = await host.next("status", (m) => m.status.feeds.offline === 1);
   assert.equal(offline.status.feeds.online, 0);
+});
+
+test("without a terminal catalog even a modern hello is rejected and publishes no status presence", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t, { statusIntervalMs: 50 });
+  host.send({ type: "start", config });
+  await host.next("ready");
+  const ea = new FakeEA().connect(`tcp://127.0.0.1:${config.eaPort}`);
+  t.after(() => ea.close());
+
+  assert.equal(await ea.request(ea.helloWire()), `C|1|${ea.session}|0`);
+  const rejected = await host.next("status", (m) => m.status.invalidMessages === 1);
+  assert.equal(rejected.status.feeds.total, 0);
+  assert.deepEqual(rejected.status.terminals, []);
 });
 
 test("a taken EA port fails start with a structured port-in-use error, and start can be retried", { timeout: 30000 }, async (t) => {

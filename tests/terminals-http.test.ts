@@ -5,14 +5,16 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { startServer, type ServerConfig } from "../src/server/index.js";
+import { openDatabase, startServer, type ServerConfig } from "../src/server/index.js";
 import { DEFAULT_THRESHOLDS } from "../src/main/supervisor/index.js";
 import type { TerminalsState, TerminalView } from "../src/server/terminals/index.js";
 import { nodeInstallerFileSystem, type InstallerFileSystem } from "../src/server/installer/index.js";
 import type { MetaEditorProcesses } from "../src/shared/metaeditor/index.js";
 import { SettingsStore, type Settings } from "../src/shared/settings-store.js";
 import type { TerminalSources } from "../src/shared/terminal-catalog/index.js";
-import { FakeClock, FakeEA } from "./fake-ea.js";
+import { FakeClock, FakeEA, type FakeEAOptions } from "./fake-ea.js";
+import { groupFeeds } from "../src/dashboard/feeds/feed-row.js";
+import type { BridgeSnapshot } from "../src/server/bridge/index.js";
 import { freePort } from "./free-port.js";
 import { InstallerFixture, SUCCESSFUL_COMPILE, EX4, readIfExists } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
@@ -37,7 +39,7 @@ class SwitchableMetaEditor implements MetaEditorProcesses {
   }
 }
 
-async function start(t: TestContext, options: { now?: () => number; hintAfterMs?: number; compileTimeoutMs?: number; installerFs?: InstallerFileSystem } = {}) {
+async function start(t: TestContext, options: { now?: () => number; hintAfterMs?: number; compileTimeoutMs?: number; installerFs?: InstallerFileSystem; recording?: boolean } = {}) {
   const machine = await MachineFixture.create();
   t.after(() => machine.dispose());
   const spike = await spikeMachine(machine);
@@ -45,6 +47,7 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
   t.after(() => appFixture.cleanup());
   const appData = appFixture.appData;
   const settings = new SettingsStore(appData);
+  const database = options.recording ? await openDatabase(appData) : undefined;
   const metaEditor = new SwitchableMetaEditor(SUCCESSFUL_COMPILE);
   const saved: Settings[] = [];
   const sources = async (userAddedFolders: string[]): Promise<TerminalSources> => ({
@@ -57,6 +60,7 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
     httpPort: await freePort(),
     windowToken: TOKEN,
     now: options.now,
+    database,
     terminals: {
       appDataFolder: appData,
       settings,
@@ -70,7 +74,7 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
     },
   };
   const server = await startServer(cfg);
-  t.after(() => server.close());
+  t.after(async () => { await server.close(); await database?.checkpointAndClose(); });
   const origin = server.httpOrigin;
   const res = await fetch(`${origin}/session?token=${TOKEN}`, { redirect: "manual" });
   const cookie = res.headers.get("set-cookie")!.split(";")[0];
@@ -99,8 +103,10 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
     }
     assert.fail(`${name} never matched; last ${JSON.stringify(await terminal(name))}`);
   };
-  const ea = (terminalId: string) => {
-    const fake = new FakeEA({ terminal: terminalId }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
+  const ea = (terminalId: string, options: FakeEAOptions = {}) => {
+    const dataFolder = server.terminals!.dataFolder(terminalId);
+    const installationFolder = dataFolder === spike.cmcData ? spike.cmc : dataFolder === spike.easyForexData ? spike.easyForex : undefined;
+    const fake = new FakeEA({ terminal: terminalId, ...(installationFolder && dataFolder ? { identity: { installationFolder, dataFolder } } : {}), ...options }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
     t.after(() => fake.close());
     return fake;
   };
@@ -110,6 +116,194 @@ async function start(t: TestContext, options: { now?: () => number; hintAfterMs?
 const CMC = "CMC Markets MetaTrader 4";
 const EASY_FOREX = "MT4 at easy-forex";
 const EASY_MARKETS = "easyMarkets MetaTrader 5";
+
+test("mixed chart labels in one installation share the Terminals identity and Feeds name", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  for (const [label, symbol] of [["mt4-main", "EURUSD"], [terminal.terminalId!, "XAUUSD"], [terminal.terminalId!, "Bitcoin"]]) {
+    const chart = app.ea(label);
+    const wire = `H|1|${chart.session}|${label}|Demo-Broker|${symbol}|5|500|0|ok|60|2000|1|1.11|${app.spike.easyForex}|${app.spike.easyForexData}`;
+    assert.equal(await chart.request(wire), `C|1|${chart.session}|1`);
+  }
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.terminals.map((p) => p.terminalId), [terminal.terminalId]);
+  const state = await app.state();
+  const names = new Map(state.terminals.flatMap((t) => t.terminalId ? [[t.terminalId, t.name] as const] : []));
+  const { groups } = groupFeeds(snapshot, names, snapshot.time);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].name, EASY_FOREX);
+  assert.deepEqual(groups[0].feeds.map((f) => f.symbol).sort(), ["Bitcoin", "EURUSD", "XAUUSD"]);
+  assert.equal((await app.terminal(EASY_FOREX)).checklist.eaConnected, true);
+});
+
+test("a previously verified chart loses its subscription when its identity becomes unverifiable", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const chart = app.ea(terminal.terminalId!);
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  assert.equal(await chart.request(chart.helloWire().split("|").slice(0, 14).join("|")), `C|1|${chart.session}|0`);
+  assert.equal(await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }])), `R|1|${chart.session}`);
+  assert.deepEqual((await app.get<BridgeSnapshot>("/api/state")).body.feeds, []);
+});
+
+test("a broker switch keeps the installation ID but never relabels its old quotes or accepts old-chart samples", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const chart = app.ea(terminal.terminalId!, { terminal: "mt4-main", broker: "Demo-Broker" });
+  const gold = app.ea(terminal.terminalId!, { symbol: "XAUUSD", broker: "Demo-Broker" });
+  await chart.request(chart.helloWire());
+  await gold.request(gold.helloWire());
+  await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }]));
+  const switched = app.ea(terminal.terminalId!, { broker: "Other-Broker" });
+  await switched.request(switched.helloWire());
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]), [[terminal.terminalId, "Other-Broker"]]);
+  assert.deepEqual(snapshot.feeds.map((f) => [f.symbol, f.market.brokerServer, f.latest]), [["EURUSD", "Other-Broker", undefined]]);
+  assert.equal(await gold.request(gold.tickWire([{ seq: 1, bid: 2000, ask: 2001, quoteTime: 1800000001 }])), `R|1|${gold.session}`);
+});
+
+test("separate installations sharing broker, login, symbol and default label stay distinct", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminals = await Promise.all([app.terminal(CMC), app.terminal(EASY_FOREX)]);
+  for (const terminal of terminals) {
+    const chart = app.ea(terminal.terminalId!, { terminal: "mt4-main" });
+    assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+    await chart.send(`I|1|${chart.session}|12345678|USD|1|0|1`); // Synthetic login, shared by both fixtures.
+    await chart.request(chart.helloWire());
+  }
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.terminals.map((p) => p.terminalId).sort(), terminals.map((t) => t.terminalId).sort());
+  assert.equal(snapshot.feeds.length, 2);
+  assert.ok(snapshot.feeds.every((f) => f.instances === 1));
+  assert.ok((await app.state()).terminals.filter((t) => t.kind === "mt4").every((t) => t.checklist.eaConnected));
+});
+
+test("label changes, replay, reconnect and EA restart keep one canonical feed and do not repeat accepted samples", { timeout: 15000 }, async (t) => {
+  const clock = new FakeClock();
+  const app = await start(t, { now: clock.now });
+  const terminal = await app.terminal(EASY_FOREX);
+  const chart = app.ea(terminal.terminalId!, { terminal: "mt4-main", session: "chart-reconnect" });
+  const samples: unknown[] = [];
+  app.server.bridge.onSamples((event) => { if (event.type === "samples") samples.push(...event.samples); });
+  await chart.request(chart.helloWire());
+  const batch = chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }]);
+  await chart.request(batch);
+  await chart.request(chart.helloWire().replace("|mt4-main|", `|${terminal.terminalId}|`));
+  chart.close();
+  const reconnect = app.ea(terminal.terminalId!, { session: chart.session });
+  await reconnect.request(reconnect.helloWire());
+  await reconnect.request(batch);
+  assert.equal(samples.length, 1);
+  reconnect.close();
+  clock.advance(8000);
+  const restart = app.ea(terminal.terminalId!, { terminal: "another-old-label" });
+  await restart.request(restart.helloWire());
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.terminals.map((p) => p.terminalId), [terminal.terminalId]);
+  assert.deepEqual(snapshot.feeds.map((f) => [f.terminal, f.symbol, f.instances]), [[terminal.terminalId, "EURUSD", 1]]);
+});
+
+test("legacy, unknown and mismatched paths stay unsubscribed even when their label claims a detected terminal", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const sources: FakeEAOptions[] = [
+    { eaVersion: "1.10" },
+    { identity: { installationFolder: "C:\\Unknown MT4", dataFolder: "C:\\Unknown data" } },
+    { identity: { installationFolder: app.spike.cmc, dataFolder: app.spike.easyForexData } },
+  ];
+  for (const source of sources) {
+    const chart = app.ea(terminal.terminalId!, source);
+    assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|0`);
+    assert.equal(await chart.request(chart.tickWire([{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }])), `R|1|${chart.session}`);
+  }
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.feeds, []);
+  assert.deepEqual(snapshot.terminals, []);
+  assert.equal(snapshot.rejections.length, 3);
+  assert.ok(snapshot.rejections.every((r) => r.reason.startsWith("Terminal identity unverified")));
+  assert.ok((await app.state()).terminals.every((t) => !t.checklist.eaConnected));
+});
+
+test("identity uses normalized paths, not their case, separator or the saved label", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const typed = (s: string) => s.toLowerCase().replace(/\\/g, "/") + "/";
+  const chart = app.ea(terminal.terminalId!, { terminal: "mt4-main", identity: { installationFolder: typed(app.spike.easyForex), dataFolder: typed(app.spike.easyForexData) } });
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  assert.deepEqual((await app.get<BridgeSnapshot>("/api/state")).body.terminals.map((p) => p.terminalId), [terminal.terminalId]);
+});
+
+test("malformed path extensions are rejected safely and a valid hello recovers without an orphan group", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const terminal = await app.terminal(EASY_FOREX);
+  const chart = app.ea(terminal.terminalId!);
+  const legacy = chart.helloWire().split("|").slice(0, 14).join("|");
+  for (const suffix of ["|C:\\OnlyOnePath", "|relative|C:\\data", "|C:\\MT4\\..\\Other|C:\\data", "|C:\\MT4|C:\\data\u0000", "|C:\\MT4|" + "x".repeat(1001)]) {
+    assert.equal(await chart.request(legacy + suffix), `C|1|${chart.session}|0`);
+  }
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.equal(snapshot.invalidMessages, 5);
+  assert.deepEqual(snapshot.terminals.map((p) => p.terminalId), [terminal.terminalId]);
+  assert.equal(snapshot.feeds.length, 1);
+});
+
+test("mixed labels of the same symbol produce one feed and preserve one market recording across a restart", { timeout: 15000 }, async (t) => {
+  const clock = new FakeClock();
+  const app = await start(t, { recording: true, now: clock.now });
+  const terminal = await app.terminal(EASY_FOREX);
+  assert.equal((await app.post("/api/clock-rules", { brokerServer: "Demo-Broker", winterOffsetMinutes: 0, dst: "none" })).status, 200);
+  const first = app.ea(terminal.terminalId!, { terminal: "mt4-main", bars: () => "loading" });
+  const second = app.ea(terminal.terminalId!, { bars: () => "loading" });
+  await first.request(first.helloWire());
+  assert.equal(await second.request(second.helloWire()), `C|1|${second.session}|0`);
+  await first.receive(); // The owner's refreshed subscription after a duplicate chart joined.
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual(snapshot.feeds.map((f) => [f.terminal, f.instances]), [[terminal.terminalId, 2]]);
+  assert.equal((await app.post("/api/markets/recording", { brokerServer: "Demo-Broker", symbol: "EURUSD", on: true })).status, 200);
+  const sample = [{ seq: 1, bid: 1.1, ask: 1.2, quoteTime: 1800000000 }];
+  await first.request(first.tickWire(sample));
+  await second.request(second.tickWire(sample)); // A replay from the other chart must not duplicate storage.
+  first.close();
+  second.close();
+  clock.advance(8000);
+  const restarted = app.ea(terminal.terminalId!, { terminal: "mt4-main", bars: () => "loading" });
+  await restarted.request(restarted.helloWire());
+  await restarted.request(restarted.tickWire(sample));
+  const { body } = await app.get<{ recordings: { brokerServer: string; symbol: string; samples: number }[] }>("/api/recordings");
+  assert.deepEqual(body.recordings.map((r) => [r.brokerServer, r.symbol, r.samples]), [["Demo-Broker", "EURUSD", 1]]);
+});
+
+test("a session cannot switch installations or reset another terminal's broker state", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const cmc = await app.terminal(CMC);
+  const easy = await app.terminal(EASY_FOREX);
+  const first = app.ea(cmc.terminalId!);
+  const other = app.ea(easy.terminalId!);
+  await first.request(first.helloWire());
+  await other.request(other.helloWire());
+  const fields = other.helloWire().split("|");
+  fields[2] = first.session;
+  fields[4] = "Different-Broker";
+  assert.equal(await first.request(fields.join("|")), `C|1|${first.session}|0`);
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.equal(snapshot.rejections[0].reason, "Session identity changed");
+  assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]), [[easy.terminalId, "Demo-Broker"]]);
+  assert.equal(snapshot.feeds[0].online, true);
+});
+
+test("a portable terminal becomes verifiable after catalog confirmation, with no EA label edits", { timeout: 15000 }, async (t) => {
+  const app = await start(t);
+  const installationFolder = await app.machine.installationFolder("便携 MT4", "mt4");
+  await app.machine.folder(join(installationFolder, "MQL4", "Experts"));
+  const chart = app.ea("mt4-main", { identity: { installationFolder, dataFolder: installationFolder } });
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|0`);
+  const added = await app.post<{ terminal: TerminalView }>("/api/terminals/add-folder", { folder: installationFolder });
+  assert.equal(added.status, 200);
+  assert.equal(added.body.terminal.portable, true);
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  assert.deepEqual((await app.get<BridgeSnapshot>("/api/state")).body.terminals.map((p) => p.terminalId), [added.body.terminal.terminalId]);
+});
 
 test("the terminals endpoint needs the window session", { timeout: 15000 }, async (t) => {
   const { origin } = await start(t);
@@ -124,7 +318,7 @@ test("first run lists every detected terminal: MT4 offered for install, MT5 show
   const s = await state();
   assert.equal(s.setupCompleted, false);
   assert.equal(s.startWithWindows, true);
-  assert.equal(s.bundledEaVersion, "1.10");
+  assert.equal(s.bundledEaVersion, "1.11");
   assert.deepEqual(
     s.terminals.map((x) => [x.name, x.kind, x.supported, x.managed, x.offered]),
     [
@@ -150,7 +344,7 @@ test("setup installs into the ticked terminals, declines the others and saves St
 
   const cmc = await until(CMC, (x) => x.state === "installed");
   assert.equal(cmc.managed, true);
-  assert.equal(cmc.installedEaVersion, "1.10");
+  assert.equal(cmc.installedEaVersion, "1.11");
   assert.deepEqual(await readFile(join(spike.cmcData, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
   const easyForex = (await state()).terminals.find((x) => x.name === EASY_FOREX)!;
   assert.equal(easyForex.managed, false);
@@ -182,7 +376,7 @@ test("the checklist ticks itself when a fake EA says hello with that terminal's 
 
   const connected = await until(CMC, (x) => x.checklist.eaConnected);
   assert.deepEqual(connected.checklist, { refreshNavigator: true, applyTemplate: true, allowDllImports: true, eaConnected: true });
-  assert.equal(connected.presence?.eaVersion, "1.08");
+  assert.equal(connected.presence?.eaVersion, "1.11");
   assert.equal(connected.presence?.online, true);
   assert.equal(typeof connected.presence?.lastHello, "number");
   const easyForex = (await state()).terminals.find((x) => x.name === EASY_FOREX)!;

@@ -1,12 +1,13 @@
 #property strict
-#property version "1.10"
+#property version "1.11"
 #property description "Quote Bridge: live quotes and holdings; opt-in DEMO trading only."
 // Installed and compiled by QuoteBridge for MetaTrader with the terminal's own MetaEditor; do not edit here.
-// Sent as the last hello field; keep equal to #property version.
-#define QB_EA_VERSION "1.10"
+// Sent in hello; keep equal to #property version.
+#define QB_EA_VERSION "1.11"
 #include "..\Include\QuoteBridgeZmq.mqh"
 input string ServerEndpoint="tcp://127.0.0.1:5555";
 input string TerminalId="mt4-main";
+// Kept for saved chart/template compatibility only. The app verifies the terminal paths, not this label.
 input int SamplingMilliseconds=500;
 input int BufferCapacity=1200;
 // These globals survive a chart or parameter change (OnDeinit then OnInit, without unloading): their initialisers run
@@ -105,7 +106,7 @@ void FlushBars() {
 }
 
 void Hello() {
- Send("H|1|"+session+"|"+Clean(TerminalId)+"|"+Clean(AccountServer())+"|"+Clean(Symbol())+"|"+IntegerToString(Digits)+"|"+IntegerToString(SamplingMilliseconds)+"|"+IntegerToString(dropped)+"|"+quoteStatus+"|"+IntegerToString(Period())+"|2000|1|"+QB_EA_VERSION);
+ Send("H|1|"+session+"|"+Clean(TerminalId)+"|"+Clean(AccountServer())+"|"+Clean(Symbol())+"|"+IntegerToString(Digits)+"|"+IntegerToString(SamplingMilliseconds)+"|"+IntegerToString(dropped)+"|"+quoteStatus+"|"+IntegerToString(Period())+"|2000|1|"+QB_EA_VERSION+"|"+Clean(TerminalInfoString(TERMINAL_PATH))+"|"+Clean(TerminalInfoString(TERMINAL_DATA_PATH)));
  AccountHello();
  lastHello=GetTickCount();
 }
@@ -205,8 +206,9 @@ void OnTimer() {
  Comment("QuoteBridge | ",Symbol()," | ",serverConfirmed?"server connected":"SERVER NOT CONFIRMED"," | errno ",sendError," | ",subscribed?"subscribed":"idle"," | queued ",count," | dropped ",dropped," | ",quoteStatus);
 }
 void OnDeinit(const int reason) {
- // A chart or parameter change keeps the EA loaded, queue and all; any other reason unloads it.
+ // Preserve the queue only for chart/parameter changes, never across an account/server restart.
  bool kept=reason==REASON_CHARTCHANGE||reason==REASON_PARAMETERS;
  Print("QuoteBridge stopped; queued samples ",kept?"kept for the restart: ":"lost: ",count,"; dropped: ",dropped);
+ if(!kept){head=0;count=0;inflight="";inflightLast=0;}
  Cleanup();
 }

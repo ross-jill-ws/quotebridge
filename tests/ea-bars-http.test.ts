@@ -1,7 +1,7 @@
 // Chart history from the EA's bars over HTTP: when a period has no HST file or a stale one, the server asks the feed's
-// EA (1.10+) for its last 900 closed bars, keeps them in saved history and joins them between the HST bars and the live
-// candles. A loading answer is asked again; an older EA leaves the chart as it was. Real server and database in temp
-// folders, fake EAs answering bar requests, HST fixtures, a fake clock.
+// verified EA (1.11+) for its last 900 closed bars, keeps them in saved history and joins them between HST and live
+// candles. A loading answer is asked again; an older EA without verifiable identity publishes no feed. Real server
+// and database in temp folders, fake EAs answering bar requests, HST fixtures, a fake clock.
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +11,7 @@ import type { HistoryMarket } from "../src/server/history/index.js";
 import { openDatabase, startServer, type ServerConfig } from "../src/server/index.js";
 import { brokerToUtc, UNKNOWN_RULE, utcToBroker, type ClockRule } from "../src/shared/clock.js";
 import { bucketStart, PERIODS, type Period } from "../src/shared/periods.js";
-import { FakeClock, FakeEA, type BarAnswer, type FakeBar } from "./fake-ea.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity, type BarAnswer, type FakeBar } from "./fake-ea.js";
 import { freePort } from "./free-port.js";
 import { bars, writeHst } from "./hst-fixtures.js";
 import { fakeFeeds } from "../scripts/dev/fake-feeds.js";
@@ -54,6 +54,7 @@ async function start(t: TestContext, dbFolder: string, dataFolder: string, overr
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    resolveTerminal: fakeTerminalIdentity,
     now: new FakeClock(NOW).now,
     localOffsetMinutes: () => 0,
     terminalDataFolder: (terminalId) => (terminalId === TERMINAL ? dataFolder : undefined),
@@ -80,7 +81,7 @@ async function start(t: TestContext, dbFolder: string, dataFolder: string, overr
   assert.equal(rule.status, 200);
   let seq = 0;
   /** A chart of EURUSD on the H1 chart period, which sends a live quote at 10:00:30 broker time. */
-  const connect = async (answer: BarAnswer | undefined, eaVersion = "1.10") => {
+  const connect = async (answer: BarAnswer | undefined, eaVersion = "1.11") => {
     const ea = new FakeEA({ terminal: TERMINAL, broker: BROKER, symbol: "EURUSD", timeframe: 60, eaVersion, bars: answer }).connect(`tcp://127.0.0.1:${cfg.eaPort}`);
     t.after(() => ea.close());
     await ea.request(ea.helloWire());
@@ -120,7 +121,7 @@ async function start(t: TestContext, dbFolder: string, dataFolder: string, overr
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   };
-  return { connect, page, settled, markets, csv, save, stop, endpoint: `tcp://127.0.0.1:${cfg.eaPort}` };
+  return { connect, page, settled, markets, csv, save, stop, origin, cookie, endpoint: `tcp://127.0.0.1:${cfg.eaPort}` };
 }
 
 /** A fake bar as the page hands it out. */
@@ -233,12 +234,13 @@ test("an EA still loading the period's history is asked again until its bars are
   ]);
 });
 
-test("an EA older than 1.10 is not asked, and the chart stays as it is, with no error", { timeout: 20000 }, async (t) => {
-  const { connect, page } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"));
+test("an EA older than 1.10 cannot verify its identity, publishes no feed and is not asked for bars", { timeout: 20000 }, async (t) => {
+  const { connect, origin, cookie } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"));
   const ea = await connect(ready, "1.09");
 
-  const h1 = await page("H1");
-  assert.deepEqual(h1, { ...h1, candles: [LIVE], source: "live", filling: false });
+  const h1 = await fetch(`${origin}/api/candles?${new URLSearchParams({ feed: FEED, period: "H1" })}`, { headers: { cookie } });
+  assert.equal(h1.status, 404);
+  assert.deepEqual(await h1.json(), { error: "Unknown feed" });
   assert.deepEqual(ea.barRequests, []);
 });
 
@@ -258,8 +260,12 @@ test("the dev run's fake feeds answer bar requests: every period shows 900 bars,
   const { settled, endpoint, page } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"), { now: Date.now });
   t.after(fakeFeeds(endpoint));
   const feed = JSON.stringify(["mt4-0123456789ab", "GBPUSD"]);
-  // Until its first quote is in, with a live candle.
-  while ((await page("M1", 1, undefined, feed).catch(() => undefined))?.ask == null) await new Promise((resolve) => setTimeout(resolve, 100));
+  // Until its first quote is in, with a live candle. Bound the wait so rejected fixture hellos fail cleanly.
+  for (let attempt = 0; ; attempt++) {
+    if ((await page("M1", 1, undefined, feed).catch(() => undefined))?.ask != null) break;
+    assert.ok(attempt < 50, "dev fake feed never published a quote; verify its EA version and terminal identity");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 
   for (const period of ["M1", "M15", "H1", "D1", "MN1"] as const) {
     const { candles, clockRule } = await settled(period, 2000, feed);

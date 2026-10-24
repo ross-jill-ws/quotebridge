@@ -1,6 +1,5 @@
 // QuoteBridge EA wire protocol (EA → app), ported from the legacy server.
-// Unchanged except for the optional 14th hello field carrying the EA version (EA 1.08+) and the chart bars a 1.10+ EA
-// sends on request (G).
+// The 14th hello field carries the EA version (1.08+); 1.11 adds installation and data-folder paths.
 
 export const MAX_MESSAGE_BYTES = 16384;
 
@@ -19,6 +18,9 @@ export type Hello = {
   higherTimeframes?: boolean;
   /** Absent for EAs older than 1.08: version unknown. */
   eaVersion?: string;
+  /** EA 1.11+: terminal-reported paths, matched against the detected catalog before subscribing. */
+  installationFolder?: string;
+  dataFolder?: string;
 };
 
 export type Sample = { seq: number; bid: number; ask: number; quoteTime: number; sampledTime: number };
@@ -64,7 +66,7 @@ export function parseMessage(buffer: Buffer): EAMessage {
   if (buffer.length > MAX_MESSAGE_BYTES) throw Error("Message too large");
   const p = buffer.toString("utf8").split("|");
   if (p[1] !== "1" || !/^[\w.-]{1,120}$/.test(p[2] ?? "")) throw Error("Invalid protocol/session");
-  if (p[0] === "H" && p.length >= 10 && p.length <= 14) return parseHello(p);
+  if (p[0] === "H" && ((p.length >= 10 && p.length <= 14) || p.length === 16)) return parseHello(p);
   if (p[0] === "T" && p.length === 4) return parseTicks(p);
   if (p[0] === "G" && p.length === 9) return parseBars(p);
   if (IGNORED_TYPES.has(p[0])) return { type: "ignored", session: p[2] };
@@ -74,7 +76,10 @@ export function parseMessage(buffer: Buffer): EAMessage {
 function parseHello(p: string[]): Hello {
   if (p.slice(3, 6).some((s) => !s.length || s.length > 120 || /[\x00-\x1f]/.test(s))) throw Error("Invalid identity");
   if (p[9] !== "ok" && p[9] !== "no-quote") throw Error("Invalid status");
-  if (p.length === 14 && !/^[0-9A-Za-z.-]{1,32}$/.test(p[13])) throw Error("Invalid EA version");
+  if (p.length >= 14 && !/^[0-9A-Za-z.-]{1,32}$/.test(p[13])) throw Error("Invalid EA version");
+  if (p.length === 16 && p.slice(14).some((s) => !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+[\\/])/.test(s) || s.length > 1000 || /[\x00-\x1f]/.test(s) || /(?:^|[\\/])\.{1,2}(?:[\\/]|$)/.test(s))) {
+    throw Error("Invalid terminal paths");
+  }
   return {
     type: "hello",
     session: p[2],
@@ -88,7 +93,9 @@ function parseHello(p: string[]): Hello {
     timeframe: p.length >= 11 ? integer(p[10], 1, 43200) : undefined,
     candleCapacity: p.length >= 12 ? integer(p[11], 2000, 2000) : undefined,
     higherTimeframes: p.length >= 13 ? integer(p[12], 1, 1) === 1 : undefined,
-    eaVersion: p.length === 14 ? p[13] : undefined,
+    eaVersion: p.length >= 14 ? p[13] : undefined,
+    installationFolder: p.length === 16 ? p[14] : undefined,
+    dataFolder: p.length === 16 ? p[15] : undefined,
   };
 }
 

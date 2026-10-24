@@ -68,6 +68,8 @@ export type BridgeServerOptions = {
   now?: () => number;
   /** Adds each feed's market info to snapshots; without it, rules are unknown and nothing is recorded. */
   marketInfo?: (market: Market) => MarketInfo;
+  /** Catalog boundary: only a verified installation/data-folder pair may supply a canonical Terminal ID. */
+  resolveTerminal?: (identity: { installationFolder: string; dataFolder: string }) => string | undefined | Promise<string | undefined>;
 };
 
 type Peer = Hello & {
@@ -147,6 +149,7 @@ export type BridgeSnapshot = {
 export class BridgeServer {
   private readonly now: () => number;
   private readonly marketInfo: (market: Market) => MarketInfo;
+  private readonly resolveTerminal: BridgeServerOptions["resolveTerminal"];
   private readonly socket = new Router({
     linger: 0,
     sendTimeout: 0,
@@ -176,6 +179,7 @@ export class BridgeServer {
   constructor(options: BridgeServerOptions = {}) {
     this.now = options.now ?? Date.now;
     this.marketInfo = options.marketInfo ?? (() => ({ clockRule: null, recording: false }));
+    this.resolveTerminal = options.resolveTerminal;
   }
 
   async start(endpoint: string) {
@@ -313,8 +317,26 @@ export class BridgeServer {
     try {
       await this.accept(frames[0], frames[1]);
     } catch (e) {
+      // A rejected hello cannot leave an earlier subscription usable on the same route.
+      const head = frames[1].toString().split("|", 3);
+      if (head[0] === "H" && head[1] === "1" && head[2] === frames[0].toString()) {
+        this.forgetPeer(head[2]);
+        await this.send(frames[0], `C|1|${head[2]}|0`);
+      }
       this.reject(frames, e instanceof Error ? e.message : String(e));
     }
+  }
+
+  private forgetPeer(session: string) {
+    const p = this.peers.get(session);
+    if (!p) return;
+    this.peers.delete(session);
+    if (this.owners.get(p.feed) === session) this.owners.delete(p.feed);
+    if (![...this.peers.values()].some((peer) => peer.feed === p.feed)) {
+      this.lastRejectionByFeed.delete(p.feed);
+      this.emit({ type: "removed", feed: p.feed });
+    }
+    if (![...this.peers.values()].some((peer) => peer.terminal === p.terminal)) this.terminals.delete(p.terminal);
   }
 
   private reject(frames: Buffer[], reason: string) {
@@ -337,8 +359,22 @@ export class BridgeServer {
     const m = parseMessage(body);
     if (route.toString() !== m.session) throw Error("Routing identity mismatch");
     if (m.type === "hello") {
+      const terminal = m.installationFolder && m.dataFolder
+        ? await this.resolveTerminal?.({ installationFolder: m.installationFolder, dataFolder: m.dataFolder })
+        : undefined;
+      if (!terminal) {
+        throw Error("Terminal identity unverified: upgrade the EA to 1.11 or later, then rescan/setup the terminal in Terminals.");
+      }
+      m.terminal = terminal;
+      const known = this.peers.get(m.session);
+      if (known && known.feed !== feedKey(m)) throw Error("Session identity changed");
+      // A new login/server spell cannot inherit quotes, buffers or bar requests from the old market.
+      // Other charts must say hello again before supplying samples under that terminal's new broker server.
+      const previous = this.terminals.get(terminal);
+      if (previous && previous.brokerServer !== m.broker) {
+        for (const peer of this.peers.values()) if (peer.terminal === terminal) this.forgetPeer(peer.session);
+      }
       const old = this.peers.get(m.session);
-      if (old && old.feed !== feedKey(m)) throw Error("Session identity changed");
       if (!old && this.peers.size >= MAX_PEERS) {
         const stale = [...this.peers.values()].find((p) => this.now() - p.lastSeen > STALE_PEER_MS);
         if (!stale) throw Error("Peer limit reached");
