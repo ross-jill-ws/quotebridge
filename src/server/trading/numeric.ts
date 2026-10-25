@@ -109,6 +109,7 @@ function expiry(value: string, context: ValidationContext): { expiry: string; br
   if (!context.clockRule) fail("clock-rule-required", 409);
   const brokerExpiry = utcToBroker(context.clockRule, utc) / 1000;
   if (!Number.isSafeInteger(brokerExpiry) || brokerExpiry <= 0 || brokerExpiry > 9999999999) fail("invalid-expiry");
+  if (brokerToUtc(context.clockRule, brokerExpiry * 1000) !== utc) fail("ambiguous-expiry");
   return { expiry: iso, brokerExpiry, expiryExplicit: true };
 }
 function riskStops(intent: ApprovedIntent, plan: NonNullable<Extract<TradeInput, { action: "new" }>["risk"]>, context: ValidationContext) {
@@ -273,7 +274,7 @@ export function revalidateTrade(preview: TradingPreview, context: ValidationCont
     const target = fingerprint(findTarget(intent.ticket, context));
     if (!preview.target || !sameTarget(preview.target, target) || intent.symbol !== target.symbol || intent.kind !== target.kind || intent.lots !== target.lots) fail("target-changed", 409);
   } else if (preview.target !== null) fail("target-changed", 409);
-  if (intent.expiryExplicit && intent.expiry !== null && utcToBroker(context.clockRule!, Date.parse(intent.expiry)) / 1000 !== intent.brokerExpiry) fail("expiry-conversion-changed", 409);
+  if (intent.expiryExplicit && intent.expiry !== null && expiry(intent.expiry, context).brokerExpiry !== intent.brokerExpiry) fail("expiry-conversion-changed", 409);
   const cap = limits(context);
   if (intent.action === "new" && normalized(preview.limits.maxLots, true) !== cap.maxLots) fail("limits-changed", 409);
   if ((intent.action === "new" && intent.kind < 2) || intent.action === "close") {

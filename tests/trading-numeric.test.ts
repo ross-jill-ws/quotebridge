@@ -430,3 +430,12 @@ test("a corrected broker clock cannot change an explicitly approved UTC expiry",
     rejectsRevalidation(approved, ctx, "expiry-conversion-changed");
   }
 });
+
+test("explicit UTC expiry rejects an ambiguous repeated broker-clock hour instead of shifting the instant", () => {
+  const ctx = context();
+  // US fallback at 06:00Z repeats the broker's 08:00 hour for a GMT+2/+3 rule.
+  // 06:30Z would serialize to the same broker timestamp as 05:30Z, which MT4 cannot disambiguate.
+  const pending = buy({ type: "limit", price: "1.09", expiry: "2026-11-01T06:30:00Z" });
+  rejects(pending, ctx, "ambiguous-expiry");
+  assert.equal(validateTrade({ ...pending, expiry: "2026-11-01T05:30:00Z" }, ctx).intent.expiry, "2026-11-01T05:30:00.000Z");
+});
