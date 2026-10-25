@@ -374,20 +374,22 @@ test("trading off refuses close, modify and cancel and discards their previews w
 });
 
 test("a revoked key cannot preview, even mid-read, or review an unknown request", async (t) => {
-  const f = await setup(t), p = await approve(f);
-  await dispatch(f, p.id); f.clock.advance(20_000); await heartbeat(f.bridge, f.ea);
+  const f = await setup(t);
+  const late = await f.keys.create({ name: "Late", scope: "trader" });
+  const reading = assert.rejects(f.engine.preview(late.key, f.input), { code: "not-authorized" });
+  await f.keys.revoke({ id: late.apiKey.id }); await f.answer(f.ea); await reading;
+  const gone = await f.keys.create({ name: "Gone", scope: "trader" });
+  await f.keys.revoke({ id: gone.apiKey.id });
+  await assert.rejects(f.engine.preview(gone.key, f.input), { code: "not-authorized" });
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+  const p = await approve(f);
+  await dispatch(f, p.id); f.clock.advance(20_000);
   const before = await f.engine.get(f.readonly.key, p.id);
   assert.equal(before.outcome, "unknown");
   const reviewer = await f.keys.create({ name: "Reviewer", scope: "trader" });
   await f.keys.revoke({ id: reviewer.apiKey.id });
   await assert.rejects(f.engine.review(reviewer.key, p.id, "Inspected MT4 orders/history", true), { code: "not-authorized" });
   assert.deepEqual(await f.engine.get(f.readonly.key, p.id), before);
-  const late = await f.keys.create({ name: "Late", scope: "trader" });
-  const reading = assert.rejects(f.engine.preview(late.key, f.input), { code: "not-authorized" });
-  await f.keys.revoke({ id: late.apiKey.id }); await f.answer(f.ea); await reading;
-  await f.keys.revoke({ id: f.trader.apiKey.id });
-  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "not-authorized" });
-  await assert.rejects(f.ea.receive(), NOTHING_SENT);
 });
 
 test("an engine restart, a new EA session or a login switch discards an unused preview, which never sends", async (t) => {
@@ -438,6 +440,31 @@ test("a terminal being updated refuses preview and execute, and an execute readi
   assert.equal(f.engine.hasUnresolvedTerminal(f.ea.terminal), false);
   assert.deepEqual(await f.engine.list(f.trader.key), []);
   await assert.rejects(f.ea.receive(), NOTHING_SENT);
+});
+
+test("an unresolved request refuses its account's previews without reading, while other accounts preview", async (t) => {
+  const f = await setup(t), p = await approve(f);
+  const eaB = await f.connect(); const b = await f.announce(eaB, { login: OTHER_LOGIN, enabled: true });
+  const executing = f.engine.execute(f.trader.key, p.id, true);
+  const reads = [await f.ea.receive(), await f.ea.receive()];
+  assert.ok(reads.every((wire) => /^[VP]\|/.test(wire)));
+  // Even before admission: the account is already executing.
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "account-unresolved" });
+  for (const wire of reads) {
+    const fields = wire.split("|");
+    await deliver(f.bridge, f.ea, fields[0] === "V" ? pageWire(f.ea, fields[3], { capturedAt: Math.floor(f.clock.now() / 1000) })
+      : conditionsWire(f.ea, fields[3], fields[6]).replace("|0|1700000002|", `|1|${Math.floor(f.clock.now() / 1000)}|`));
+  }
+  assert.match(await f.ea.receive(), /^X\|/); await executing;
+  f.clock.advance(20_000); await heartbeat(f.bridge, f.ea); await heartbeat(f.bridge, eaB);
+  assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "unknown");
+  for (const input of [f.input, { action: "close", accountId: f.account.id, ticket: "42" }] satisfies TradeInput[]) {
+    await assert.rejects(f.engine.preview(f.trader.key, input), { code: "account-unresolved" });
+  }
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+  await approve(f, { ...f.input, accountId: b.id }, eaB, { login: OTHER_LOGIN });
+  await f.engine.review(f.trader.key, p.id, "Inspected MT4 orders/history", true);
+  await approve(f);
 });
 
 test("an outcome stays dispatching until 20 seconds, and after review the account can trade again", async (t) => {

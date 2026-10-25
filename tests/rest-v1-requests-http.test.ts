@@ -195,6 +195,7 @@ test("an unknown outcome blocks only its account until reviewed with a note and 
   const unknown = (await app.read(`/api/v1/requests/${preview.requestId}`)).data;
   assert.deepEqual([unknown.status, unknown.reviewed, unknown.events.map((e: Json) => [e.type, e.reason])], ["unknown", false, [["unknown", "result-timeout"]]]);
   assert.equal((await app.send(`/api/v1/requests/${second.requestId}/execute`, { confirm: true }, 409)).error.code, "account-unresolved");
+  assert.equal((await app.send("/api/v1/requests/preview", PLACE, 409)).error.code, "account-unresolved", "nor may a new preview be made");
 
   const review = (body: unknown, status: number, key = app.traderKey) => app.send(`/api/v1/requests/${preview.requestId}/review`, body, status, key);
   assert.equal((await review({ note: "short", acknowledged: true }, 422)).error.code, "invalid-review");
@@ -381,9 +382,9 @@ test("the CLI's key and the dashboard's window session see one journal: an unkno
   assert.deepEqual([before.block(ACCOUNT)?.kind, before.block(ACCOUNT)?.requestId], ["unresolved", p.requestId]);
   assert.equal(before.block(B), undefined, "another account is not blocked");
 
-  // The window's own preview on A is refused at execute; on B it runs.
-  const onA = (await windowWithReads(ACCOUNT, "/api/v1/requests/preview", PLACE, 201)).data;
-  assert.equal((await browserSend(app, `/api/v1/requests/${onA.requestId}/execute`, { confirm: true }, 409)).error.code, "account-unresolved");
+  // The window cannot even preview on A, as the dashboard shows it; on B it runs.
+  assert.equal((await browserSend(app, "/api/v1/requests/preview", PLACE, 409)).error.code, "account-unresolved");
+  await noCommand(ea);
   const onB = (await windowWithReads(B, "/api/v1/requests/preview", placeOn(B), 201)).data;
   const runningB = browserSend(app, `/api/v1/requests/${onB.requestId}/execute`, { confirm: true }, 202);
   await app.answer(other, 2, page(B));

@@ -84,7 +84,7 @@ interrupted, or when the app restarts while it was being sent. It may or may not
 
 - **Never send it again,** and never preview the same trade again to find out. Read the request instead (Trading
   page, or `mt4-quote-bridge requests show <id>`). A late result still settles it.
-- An unknown request blocks only its own account. To unblock it, check MetaTrader's open orders and account history,
+- An unknown request blocks only its own account, previews included. To unblock it, check MetaTrader's open orders and account history,
   then **review** the request with a note of what you found (8–500 characters) and the acknowledgement that you
   checked. Review does not invent an outcome (the status stays unknown, marked reviewed) and never resends anything.
   It works with Demo trading off.

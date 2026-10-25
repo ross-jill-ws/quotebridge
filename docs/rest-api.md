@@ -727,11 +727,58 @@ HTTP/1.1 200 OK
 }
 ```
 
+### Existing trades
+
+```http
+POST /api/v1/requests/preview
+Authorization: Bearer <trader key>
+Content-Type: application/json
+
+{ "accountId": "{account}", "action": "close", "ticket": "12345" }
+```
+
+```http
+HTTP/1.1 201 Created
+
+{
+  "data": {
+    "requestId": "<any>",
+    "status": "preview",
+    "createdAt": "2027-01-15T08:00:00.000Z",
+    "expiresAt": "2027-01-15T08:00:30.000Z",
+    "accountId": "{account}",
+    "marketId": "{market}",
+    "terminalId": "mt4-aaaaaaaaaaaa",
+    "normalizedIntent": "<any>",
+    "target": {
+      "ticket": "12345",
+      "symbol": "EURUSD",
+      "side": "buy",
+      "type": "market",
+      "lots": "0.1",
+      "openPrice": "1.1",
+      "openTime": "2023-11-14T20:13:20.000Z",
+      "stopLoss": null,
+      "takeProfit": null,
+      "expiry": null
+    },
+    "limits": "<any>",
+    "estimates": "<any>",
+    "warnings": "<any>"
+  },
+  "meta": {}
+}
+```
+
+`target` is the trade as the preview saw it; if it changes before execute, execute refuses (`409 target-changed`)
+and a new preview is needed.
+
 ### Execute
 
 Execute re-reads the account and contract and checks again that the approved intent still holds, then records the
 request durably **before** sending it. It answers `202` with status `dispatching` once sent; the result follows.
-At most one request per account is unresolved at a time (`409 account-unresolved`); other accounts are independent.
+At most one request per account is unresolved at a time (`409 account-unresolved`, also for a preview on that account
+while one is); other accounts are independent.
 
 - Never retry an execute to find out what happened, and never preview the same order again for that: **GET the
   same request ID**. A repeated execute answers the existing record (`200`) and sends nothing.
@@ -844,55 +891,9 @@ HTTP/1.1 200 OK
 }
 ```
 
-### Existing trades
-
-```http
-POST /api/v1/requests/preview
-Authorization: Bearer <trader key>
-Content-Type: application/json
-
-{ "accountId": "{account}", "action": "close", "ticket": "12345" }
-```
-
-```http
-HTTP/1.1 201 Created
-
-{
-  "data": {
-    "requestId": "<any>",
-    "status": "preview",
-    "createdAt": "2027-01-15T08:00:00.000Z",
-    "expiresAt": "2027-01-15T08:00:30.000Z",
-    "accountId": "{account}",
-    "marketId": "{market}",
-    "terminalId": "mt4-aaaaaaaaaaaa",
-    "normalizedIntent": "<any>",
-    "target": {
-      "ticket": "12345",
-      "symbol": "EURUSD",
-      "side": "buy",
-      "type": "market",
-      "lots": "0.1",
-      "openPrice": "1.1",
-      "openTime": "2023-11-14T20:13:20.000Z",
-      "stopLoss": null,
-      "takeProfit": null,
-      "expiry": null
-    },
-    "limits": "<any>",
-    "estimates": "<any>",
-    "warnings": "<any>"
-  },
-  "meta": {}
-}
-```
-
-`target` is the trade as the preview saw it; if it changes before execute, execute refuses (`409 target-changed`)
-and a new preview is needed.
-
 ### Review
 
-An `unknown` outcome blocks its account until a definitive result arrives or someone reviews it. First check
+An `unknown` outcome blocks its account, previews included, until a definitive result arrives or someone reviews it. First check
 MetaTrader's open orders and account history; then review with a note of 8–500 characters and
 `acknowledged: true`. Review works with Demo trading off. It does not invent an outcome (the status stays `unknown`,
 `reviewed` becomes true) and never resends; a late result can still settle the record.

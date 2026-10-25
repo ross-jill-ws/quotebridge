@@ -121,7 +121,8 @@ Terminals are diagnostics only; they never route trading.
 3. Execute posts once and never retries. It then only reads the request until a definitive result or `--wait`
    seconds (25 by default, 0–60). A lost answer, a timeout or an unknown outcome is answered with
    `requests show ID`, never with another execute or preview.
-4. An unknown outcome blocks its account until a result arrives or you review it after checking MetaTrader.
+4. An unknown outcome blocks its account, previews included, until a result arrives or you review it after checking
+   MetaTrader.
 
 The CLI's agent skill requires the user's explicit approval of each preview; agents never execute on their own
 initiative.

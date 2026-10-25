@@ -88,6 +88,8 @@ export class RequestEngine<Credential> {
     const copied = structuredClone(input);
     if (!copied || typeof copied.accountId !== "string") throw new TradingError("invalid-input", 400);
     if (!(await this.options.settings()).enabled) throw new TradingError("trading-disabled", 403);
+    // No preview the account could not execute: the dashboard, REST and CLI all wait for its result or review.
+    this.assertSettled(copied.accountId);
     const epoch = this.settingsEpoch;
     const context = await this.context(copied.accountId, copied.action === "new" ? copied.symbol : undefined, copied.action === "new" ? undefined : copied.ticket);
     const symbol = context.contract.market.symbol;
@@ -125,7 +127,7 @@ export class RequestEngine<Credential> {
     const preview = this.previews.get(id);
     if (!preview) throw new TradingError("preview-unavailable");
     const accountId = preview.intent.accountId;
-    if (this.accountsExecuting.has(accountId) || [...this.records.values()].some((r) => r.accountId === accountId && isUnresolved(r))) throw new TradingError("account-unresolved");
+    this.assertSettled(accountId);
     this.accountsExecuting.set(accountId, id);
     this.reservedTerminals.set(id, preview.source.terminalId);
     const epoch = this.settingsEpoch;
@@ -155,6 +157,10 @@ export class RequestEngine<Credential> {
       this.reservedTerminals.delete(id);
       this.emit();
     }
+  }
+  /** One unresolved execution per account: refuse while one is executing or awaits a result or review. */
+  private assertSettled(accountId: string) {
+    if (this.accountsExecuting.has(accountId) || [...this.records.values()].some((r) => r.accountId === accountId && isUnresolved(r))) throw new TradingError("account-unresolved");
   }
   private checkApproval(preview: TradingPreview, context: ValidationContext, epoch: number) {
     this.assertOpen();
