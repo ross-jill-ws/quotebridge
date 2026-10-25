@@ -153,6 +153,8 @@ export class RequestEngine<Credential> {
   }
   private checkApproval(preview: TradingPreview, context: ValidationContext, epoch: number) {
     this.assertOpen();
+    context.now = this.now();
+    context.clockRule = this.options.clockRule(preview.source.brokerServer);
     const executor = this.options.bridge.accounts.executor(preview.intent.accountId);
     if (epoch !== this.settingsEpoch || !this.previews.has(preview.id)) throw new TradingError("preview-invalidated");
     if (executor.state !== "ready" || executor.source?.session !== preview.source.session || executor.source.maxLots !== context.eaMaxLots) throw new TradingError("executor-changed");
@@ -190,9 +192,13 @@ export class RequestEngine<Credential> {
   }
   private assertOpen() { if (this.closed) throw new TradingError("trading-stopped", 503); }
   settingsChanged() { this.settingsEpoch++; this.previews.clear(); }
-  async close() {
+  /** Freeze new work, but keep accepting evidence until the transport has drained. */
+  async stopAdmissions() {
     this.closed = true; clearInterval(this.sweep); this.previews.clear();
     await Promise.allSettled([...this.executions.values()]);
+  }
+  async close() {
+    await this.stopAdmissions();
     this.stopResults(); this.stopChanges(); this.listeners.clear();
   }
 }

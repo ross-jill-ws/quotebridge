@@ -140,6 +140,46 @@ test("a journal write failure cannot dispatch anything or leave a phantom record
   await assert.rejects(f.ea.receive(), /temporarily unavailable|timed out|EAGAIN/i);
 });
 
+test("stopping admissions preserves late result evidence until the transport is drained", async (t) => {
+  const f = await setup(t), p = await approve(f);
+  await dispatch(f, p.id);
+  await f.engine.stopAdmissions();
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "trading-stopped" });
+  await assert.rejects(f.engine.execute(f.trader.key, p.id, true), { code: "trading-stopped" });
+  await deliver(f.bridge, f.ea, resultWire(f.ea, p.id));
+  await f.bridge.close();
+  await f.engine.close();
+  assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "succeeded");
+  await f.restartEngine();
+  assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "succeeded");
+});
+
+test("stopping admissions waits for fresh-read executions without dispatching or detaching late results", async (t) => {
+  const f = await setup(t), first = await approve(f);
+  await dispatch(f, first.id);
+  const eaB = await f.connect();
+  const accountB = await f.announce(eaB, { login: OTHER_LOGIN, enabled: true });
+  const second = await approve(f, { ...f.input, accountId: accountB.id }, eaB, { login: OTHER_LOGIN });
+  const executing = assert.rejects(f.engine.execute(f.trader.key, second.id, true), { code: "trading-stopped" });
+  // Wait until validation is actually receiving fresh data, not just queued at duplicate lookup.
+  const reads = [await eaB.receive(), await eaB.receive()];
+  let stopped = false;
+  const stopping = f.engine.stopAdmissions().then(() => { stopped = true; });
+  await deliver(f.bridge, f.ea, resultWire(f.ea, first.id));
+  assert.equal(stopped, false, "accepted execute work must finish before admissions are drained");
+  for (const wire of reads) {
+    const fields = wire.split("|");
+    await deliver(f.bridge, eaB, fields[0] === "V"
+      ? pageWire(eaB, fields[3], { login: OTHER_LOGIN, capturedAt: Math.floor(f.clock.now() / 1000) })
+      : conditionsWire(eaB, fields[3], fields[6], OTHER_LOGIN).replace("|0|1700000002|", `|1|${Math.floor(f.clock.now() / 1000)}|`));
+  }
+  await executing;
+  await stopping;
+  assert.equal((await f.engine.get(f.trader.key, first.id)).outcome, "succeeded");
+  assert.equal((await f.engine.list(f.trader.key)).length, 1, "stopped fresh validation must never admit a second request");
+  await assert.rejects(eaB.receive(), /temporarily unavailable|timed out|EAGAIN/i);
+});
+
 test("shutdown after durable admission is unknown and remains recoverable without a send", async (t) => {
   const f = await setup(t), p = await approve(f);
   let closing: Promise<void> | undefined;

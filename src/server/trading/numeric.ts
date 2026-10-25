@@ -1,5 +1,5 @@
 import { brokerToUtc, isClockRule, utcToBroker } from "../../shared/clock.js";
-import type { AccountBinding } from "../bridge/accounts.js";
+import { sameAccountBinding } from "../bridge/accounts.js";
 import type { AccountOrder } from "../bridge/account-protocol.js";
 import { marketId } from "../identity/index.js";
 import { TradingError, type ApprovedIntent, type EffectiveLimits, type TradeEstimates, type TargetFingerprint, type TradeInput, type TradingPreview, type ValidatedTrade, type ValidationContext } from "./types.js";
@@ -74,9 +74,6 @@ function volumeAndGrid(intent: ApprovedIntent, context: ValidationContext, cap: 
     if (decimal(price) % tick || decimal(price) % precision) fail("invalid-tick");
   }
 }
-function sameBinding(a: AccountBinding, b: AccountBinding): boolean {
-  return a.accountId === b.accountId && a.session === b.session && a.terminalId === b.terminalId && a.brokerServer === b.brokerServer && a.login === b.login;
-}
 function current(context: ValidationContext, accountId: string, symbol: string) {
   const { account: a, contract: contract, now, settings } = context, c = contract.conditions;
   if (settings.enabled !== true) fail("trading-disabled", 403);
@@ -88,7 +85,7 @@ function current(context: ValidationContext, accountId: string, symbol: string) 
   const source = a.source;
   if (accountId !== a.id || source.accountId !== a.id || source.brokerServer !== a.brokerServer || source.login !== a.login ||
       contract.accountId !== a.id || contract.market.brokerServer !== a.brokerServer || contract.market.symbol !== symbol || c.symbol !== symbol ||
-      !sameBinding(source, contract.source) || !sameBinding(source, enabled[0]) || c.session !== source.session || c.login !== source.login) fail("identity-changed", 409);
+      !sameAccountBinding(source, contract.source) || !sameAccountBinding(source, enabled[0]) || c.session !== source.session || c.login !== source.login) fail("identity-changed", 409);
   for (const received of [source.receivedAt, contract.source.receivedAt]) {
     if (!Number.isSafeInteger(now) || !Number.isSafeInteger(received) || received > now || now - received > 5000) fail("stale-snapshot", 409);
   }
@@ -104,7 +101,7 @@ function limits(context: ValidationContext): EffectiveLimits {
   const broker = decimal(context.contract.conditions.maxLots), ea = decimal(context.eaMaxLots, true), app = decimal(context.settings.maxLots, true);
   return { broker: fixed(broker), ea: fixed(ea), app: fixed(app), maxLots: fixed(minimum(broker, ea, app)) };
 }
-function expiry(value: string, context: ValidationContext): { expiry: string; brokerExpiry: number } {
+function expiry(value: string, context: ValidationContext): { expiry: string; brokerExpiry: number; expiryExplicit: true } {
   // Broker datetime has whole-second precision; never silently truncate an approved instant.
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.0{1,3})?(?:Z|\+00:00)$/.test(value)) fail("invalid-expiry");
   const utc = Date.parse(value), iso = Number.isFinite(utc) ? new Date(utc).toISOString() : "";
@@ -112,7 +109,7 @@ function expiry(value: string, context: ValidationContext): { expiry: string; br
   if (!context.clockRule) fail("clock-rule-required", 409);
   const brokerExpiry = utcToBroker(context.clockRule, utc) / 1000;
   if (!Number.isSafeInteger(brokerExpiry) || brokerExpiry <= 0 || brokerExpiry > 9999999999) fail("invalid-expiry");
-  return { expiry: iso, brokerExpiry };
+  return { expiry: iso, brokerExpiry, expiryExplicit: true };
 }
 function riskStops(intent: ApprovedIntent, plan: NonNullable<Extract<TradeInput, { action: "new" }>["risk"]>, context: ValidationContext) {
   const c = context.contract.conditions, tick = decimal(c.tickSize, true), value = decimal(c.tickValue, true), lots = decimal(intent.lots, true);
@@ -269,13 +266,14 @@ export function revalidateTrade(preview: TradingPreview, context: ValidationCont
   const { intent } = preview;
   current(context, intent.accountId, intent.symbol);
   if (!Number.isSafeInteger(preview.createdAt) || !Number.isSafeInteger(preview.expiresAt) || context.now < preview.createdAt || context.now >= preview.expiresAt) fail("preview-expired", 409);
-  if (!sameBinding(preview.source, context.account.source!) || preview.marketId !== marketId(context.account.brokerServer, intent.symbol)) fail("identity-changed", 409);
+  if (!sameAccountBinding(preview.source, context.account.source!) || preview.marketId !== marketId(context.account.brokerServer, intent.symbol)) fail("identity-changed", 409);
   if (preview.settings.enabled !== context.settings.enabled || normalized(preview.settings.maxLots, true) !== normalized(context.settings.maxLots, true) ||
       preview.settings.slippage !== context.settings.slippage || intent.slippage !== context.settings.slippage) fail("settings-changed", 409);
   if (intent.action !== "new") {
     const target = fingerprint(findTarget(intent.ticket, context));
     if (!preview.target || !sameTarget(preview.target, target) || intent.symbol !== target.symbol || intent.kind !== target.kind || intent.lots !== target.lots) fail("target-changed", 409);
   } else if (preview.target !== null) fail("target-changed", 409);
+  if (intent.expiryExplicit && intent.expiry !== null && utcToBroker(context.clockRule!, Date.parse(intent.expiry)) / 1000 !== intent.brokerExpiry) fail("expiry-conversion-changed", 409);
   const cap = limits(context);
   if (intent.action === "new" && normalized(preview.limits.maxLots, true) !== cap.maxLots) fail("limits-changed", 409);
   if ((intent.action === "new" && intent.kind < 2) || intent.action === "close") {

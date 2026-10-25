@@ -104,10 +104,6 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       rules.onRuleChange((brokerServer, rule) => saved.recomputeUtc(brokerServer, rule));
     }
     if (config.database) apiKeys = await ApiKeys.open(config.database.apiKeys, config.now);
-    // Once accepting messages, close the bridge before flushing recording/rule writes on failure.
-    startupCleanup.shift();
-    startupCleanup.push(() => bridge.close());
-    await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
     const candles = new CandleBuilder(bridge, { now: config.now });
     startupCleanup.push(() => candles.close());
     const dataFolder = config.terminalDataFolder ?? ((terminalId: string) => terminals?.dataFolder(terminalId));
@@ -206,6 +202,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       },
     });
     startupCleanup.push(() => trading?.close());
+    // Recover original result bindings and register every listener before receiving even the first message.
+    // On failure, drain transport before detaching listeners or flushing their stores.
+    startupCleanup.shift();
+    startupCleanup.push(() => bridge.close());
+    await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
     const http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues } });
     startupCleanup.push(() => http.close());
     // Only after both ports are bound and journal recovery completed: no install/detection on a failed bind.
@@ -227,6 +228,9 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       addRemoteToken: (token) => sessions.addToken(token, "remote"),
       async close() {
         stopTradingUpdates?.();
+        await trading?.stopAdmissions();
+        // Keep the result listener alive until every accepted receive operation has finished.
+        await bridge.close();
         await trading?.close();
         await terminals?.close();
         await http.close();
@@ -237,7 +241,6 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         eaBars?.close();
         // Before the host's CHECKPOINT: a save stops after the page it is writing.
         await saver?.close();
-        await bridge.close();
         // No more samples arrive: the buffered ones are written before the host's CHECKPOINT (ADR 10).
         await recorder?.close();
         await rules.close();

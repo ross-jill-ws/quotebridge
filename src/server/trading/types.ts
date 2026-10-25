@@ -15,6 +15,8 @@ export type ApprovedIntent = {
   action: "new" | "modify" | "close" | "cancel"; accountId: string; symbol: string; kind: number;
   ticket: string; lots: string; price: string; stopLoss: string; takeProfit: string;
   expiry: string | null; brokerExpiry: number; slippage: number;
+  /** Explicit UTC expiry must retain its conversion; omitted existing expiry stays in broker time. */
+  expiryExplicit?: true;
 };
 export type TargetFingerprint = Pick<AccountOrder, "ticket" | "kind" | "symbol" | "lots" | "openPrice" | "openTime" | "stopLoss" | "takeProfit" | "expiration">;
 export type EffectiveLimits = { broker: string; ea: string; app: string; maxLots: string };

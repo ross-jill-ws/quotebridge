@@ -93,6 +93,9 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       running = undefined;
       stopStatus();
       stopHook();
+      // Freeze admissions before the final summary: ordinary pushes may still be throttled.
+      await server.trading?.stopAdmissions();
+      send({ type: "status", status: summarise(server.bridge.snapshot(), server.terminals?.attention() ?? [], server.trading?.unresolvedCount() ?? 0) });
       await server.close().catch((e) => send({ type: "error", during: "stop", error: toServerError(e) }));
       // Closing the server writes the buffered recorded samples and waits for its clock-rule writes.
       try {

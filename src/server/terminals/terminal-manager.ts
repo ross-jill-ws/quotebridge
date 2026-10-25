@@ -435,9 +435,18 @@ export class TerminalManager {
 
   private enqueueInstalls(entries: Entry[], options: { onlyIfManaged?: boolean } = {}) {
     if (entries.length === 0) return;
-    for (const entry of entries) this.setOperation(entry.terminalId!, "queued");
-    this.emit();
+    const claimed: Entry[] = [];
     for (const entry of entries) {
+      const id = entry.terminalId!;
+      // Automatic candidates can go stale while a later terminal's update check awaits I/O.
+      // Recheck and claim without yielding; explicit installs already own their queued slots.
+      if (options.onlyIfManaged && (this.closed || this.operations.has(id) || this.runtime.hasInFlightOrderRequests?.(id))) continue;
+      this.setOperation(id, "queued");
+      claimed.push(entry);
+    }
+    if (claimed.length === 0) return;
+    this.emit();
+    for (const entry of claimed) {
       this.queue = this.queue.then(() => this.runInstall(entry, options));
     }
   }

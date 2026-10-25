@@ -416,3 +416,17 @@ test("changed monetary conditions require new approval instead of silently chang
   ctx.contract.conditions.tickValue = "2";
   rejectsRevalidation(approved, ctx, "estimates-changed");
 });
+
+test("a corrected broker clock cannot change an explicitly approved UTC expiry", () => {
+  for (const modifying of [false, true]) {
+    const ctx = context();
+    if (modifying) existing(ctx, true);
+    const input: TradeInput = modifying ? { ...manage("modify"), expiry: "2026-01-15T13:00:00Z" }
+      : buy({ type: "limit", price: "1.09", expiry: "2026-01-15T13:00:00Z" });
+    const approved = preview(input, ctx);
+    assert.equal(approved.intent.expiry, "2026-01-15T13:00:00.000Z");
+    assert.equal(approved.intent.brokerExpiry, 1768489200);
+    ctx.clockRule = { winterOffsetMinutes: 150, dst: "none" }; ctx.contract.conditions.quoteTime += 1800;
+    rejectsRevalidation(approved, ctx, "expiry-conversion-changed");
+  }
+});

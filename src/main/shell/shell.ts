@@ -75,6 +75,7 @@ export class Shell {
   private quitting: Promise<void> | null = null;
   /** Retained across crashes until a fresh server status supplies a recovered count. */
   private unresolvedRequests = 0;
+  private quitWarningShown = false;
   /** The tray warning has two sources: the supervisor (server failing) and managed terminals needing attention. */
   private serverWarning: string | null = null;
   private terminalWarning: string | null = null;
@@ -130,11 +131,15 @@ export class Shell {
         () => this.ports.exit(0),
         () => this.ports.exit(1),
       );
-      if (this.unresolvedRequests > 0) {
-        this.ports.notify(APP_NAME, `${this.unresolvedRequests} unresolved trading request(s). Quitting cannot recall orders already sent. Check open orders and account history in MetaTrader before taking further action; results will be recovered on restart.`);
-      }
+      this.warnUnresolvedOnQuit();
     }
     return this.quitting;
+  }
+
+  private warnUnresolvedOnQuit() {
+    if (!this.quitting || this.quitWarningShown || this.unresolvedRequests <= 0) return;
+    this.quitWarningShown = true;
+    this.ports.notify(APP_NAME, `${this.unresolvedRequests} unresolved trading request(s). Quitting cannot recall orders already sent. Check open orders and account history in MetaTrader before taking further action; results will be recovered on restart.`);
   }
 
   /** The tray's Start with Windows checkbox. Saved by the server; the login item follows the saved value. */
@@ -196,6 +201,7 @@ export class Shell {
       case "server-status": {
         // State events may contain stale pre-crash summaries; only fresh status updates this count.
         if (event.status.unresolvedRequests !== undefined) this.unresolvedRequests = event.status.unresolvedRequests;
+        this.warnUnresolvedOnQuit();
         const attention = event.status.terminalsNeedingAttention ?? [];
         this.terminalWarning =
           attention.length === 0

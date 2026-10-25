@@ -10,6 +10,9 @@ import { inProcessTransportPair, ipcTransport, type HostTransport } from "../src
 import type { HostMessage, ServerMessage, ServerStartConfig } from "../src/shared/server-host-protocol.js";
 import { runServerHost, type ServerHostOptions } from "../src/server/host.js";
 import { openDatabase } from "../src/server/database.js";
+import { ApiKeys } from "../src/server/auth/index.js";
+import { SettingsStore } from "../src/shared/settings-store.js";
+import { conditionsWire, deliver, LOGIN, pageWire } from "./account-fixtures.js";
 import type { TradingPreview } from "../src/server/trading/types.js";
 import { FakeClock, FakeEA } from "./fake-ea.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
@@ -212,6 +215,63 @@ test("initial and requested host status include recovered unresolved trading req
   assert.equal((await host.next("status")).status.unresolvedRequests, 1);
   host.send({ type: "get-status" });
   assert.equal((await host.next("status")).status.unresolvedRequests, 1);
+});
+
+test("stop publishes authoritative unresolved count before stopped despite throttled admission", { timeout: 30000 }, async (t) => {
+  const clock = new FakeClock();
+  const catalog = await terminalCatalog(t);
+  const config = await startConfig(t, { bridgeBundle: catalog.bridgeBundle });
+  await new SettingsStore(config.dataFolder).update((settings) => ({ ...settings, trading: { enabled: true, maxLots: "1", slippage: 20 } }));
+  const db = await openDatabase(config.dataFolder);
+  const keys = await ApiKeys.open(db.apiKeys, clock.now);
+  const trader = await keys.create({ name: "Fixture trader", scope: "trader" });
+  await db.checkpointAndClose();
+  let server!: Parameters<NonNullable<ServerHostOptions["onRunning"]>>[0];
+  const host = hostInProcess(t, {
+    now: clock.now, terminals: catalog.terminals, statusIntervalMs: 60_000,
+    onRunning: (running) => { server = running; },
+  });
+  const messages: ServerMessage[] = [];
+  host.transport.onMessage((message) => messages.push(message));
+  host.send({ type: "start", config });
+  await host.next("ready");
+  assert.equal((await host.next("status")).status.unresolvedRequests, 0);
+  const ea = new FakeEA({ terminal: catalog.terminalId, identity: catalog.identity, symbol: "EURUSD" }).connect(`tcp://127.0.0.1:${config.eaPort}`);
+  t.after(() => ea.close());
+  await ea.request(ea.helloWire());
+  await deliver(server.bridge, ea, `I|1|${ea.session}|${LOGIN}|USD|1|1|1|1`);
+  const opened = await openWindow(server.httpOrigin, TOKEN);
+  const rule = await fetch(`${server.httpOrigin}/api/clock-rules`, {
+    method: "POST", headers: { cookie: opened.cookie!.split(";")[0], origin: server.httpOrigin, "content-type": "application/json" },
+    body: JSON.stringify({ brokerServer: ea.broker, winterOffsetMinutes: 0, dst: "none" }),
+  });
+  assert.equal(rule.status, 200);
+  const account = server.bridge.accounts.list()[0];
+  assert.ok(account);
+  const credential = { apiKey: trader.key };
+  async function answer() {
+    for (let n = 0; n < 2; n++) {
+      const fields = (await ea.receive()).split("|");
+      // Startup history/clock reads may share this EA socket with trading reads.
+      if (fields[0] !== "V" && fields[0] !== "P") { n--; continue; }
+      await deliver(server.bridge, ea, fields[0] === "V"
+        ? pageWire(ea, fields[3], { capturedAt: Math.floor(clock.now() / 1000) })
+        : conditionsWire(ea, fields[3], fields[6]).replace("|0|1700000002|", `|1|${Math.floor(clock.now() / 1000)}|`));
+    }
+  }
+  const previewing = server.trading!.preview(credential, { action: "new", accountId: account.id, symbol: "EURUSD", side: "buy", type: "market", lots: "0.1" });
+  await answer();
+  const preview = await previewing;
+  const executing = server.trading!.execute(credential, preview.id, true);
+  await answer();
+  assert.match(await ea.receive(), /^X\|/);
+  await executing;
+  assert.equal(messages.filter((m) => m.type === "status").length, 1, "admission status is still throttled");
+  assert.equal((await stopHost(host)).checkpoint, true);
+  const stoppedIndex = messages.findIndex((m) => m.type === "stopped");
+  const final = messages[stoppedIndex - 1];
+  assert.equal(final.type, "status", "final status precedes stopped");
+  if (final.type === "status") assert.equal(final.status.unresolvedRequests, 1);
 });
 
 test("status follows a feed going offline after the heartbeat gap, with no EA message", { timeout: 30000 }, async (t) => {
