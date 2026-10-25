@@ -212,8 +212,9 @@ test("trading-off/settings changes invalidate previews; expiry, stale quotes and
   assert.deepEqual(await f.engine.list(f.readonly.key), []);
   f.changeSettings({ enabled: true, maxLots: "1", slippage: 20 });
   const expired = await approve(f); f.clock.advance(30_000); await heartbeat(f.bridge, f.ea);
-  const executing = assert.rejects(f.engine.execute(f.trader.key, expired.id, true), { code: "preview-expired" });
-  await f.answer(f.ea); await executing;
+  // Exercise cleanup through a public read, rather than racing the 250-ms maintenance timer.
+  assert.deepEqual(await f.engine.list(f.readonly.key), []);
+  await assert.rejects(f.engine.execute(f.trader.key, expired.id, true), { code: "preview-unavailable" });
   const stale = assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "stale-quote" });
   await f.answer(f.ea, {}, (wire) => wire.replace(`|${Math.floor(f.clock.now() / 1000)}|`, `|${Math.floor(f.clock.now() / 1000) - 31}|`));
   await stale; assert.deepEqual(await f.engine.list(f.trader.key), []);
