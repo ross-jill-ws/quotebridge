@@ -1,5 +1,6 @@
 // Demo-only order adapter. Included AFTER Send() and the quote bridge globals.
-input bool EnableDemoTrading=false; // Enable on EXACTLY ONE chart per account.
+// Enable on EXACTLY ONE chart per account. No trailing comment: MT4 would show it in Inputs instead of the name the docs use.
+input bool EnableDemoTrading=false;
 input double MaxDemoOrderLots=1.0;
 input int DemoMagicNumber=27012026;
 // All 1000 supported orders (20 per page) can leave in one timer, even at a 1000 ms interval.
