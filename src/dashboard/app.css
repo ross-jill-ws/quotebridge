@@ -2886,6 +2886,42 @@ a.path {
   font-weight: 600;
 }
 
+/* A new order's live Bid and Ask: the side's price stands out, the other recedes. */
+.order-quote {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+}
+
+.order-quote-side {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  /* A price's height, so a dash does not move the fields below. */
+  min-height: 45px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--sunk);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.order-quote-side:not(.emphasis) > span:first-child {
+  color: var(--ink-3);
+}
+
+.order-quote-side.emphasis {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.order-quote small {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
 .input.number {
   text-align: right;
 }

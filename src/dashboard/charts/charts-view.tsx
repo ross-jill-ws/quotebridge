@@ -262,7 +262,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
         {tradeLines.length > 0 && <span>Trade lines are read-only: change trades from Trading</span>}
         {fetched && showsCandlesSince(fetched.candles, fetched.since) && <span class="since">{candlesSince(fetched.since, Date.now())}</span>}
       </div>
-      {order && <OrderDialog target={order} trading={trading} timeShown={timeShown} onClose={() => setOrder(undefined)} />}
+      {order && <OrderDialog target={order} trading={trading} live={live} timeShown={timeShown} onClose={() => setOrder(undefined)} />}
     </section>
   );
 }

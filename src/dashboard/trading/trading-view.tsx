@@ -4,6 +4,7 @@
 // Money is never added up across accounts: each account shows its own currency.
 import { useMemo, useState } from "preact/hooks";
 import type { TimeShown } from "../../shared/settings-store.js";
+import type { Live } from "../use-live.js";
 import { OrderDialog, type OrderTarget } from "./order-dialog.js";
 import { ReviewDialog } from "./review-dialog.js";
 import {
@@ -40,7 +41,7 @@ const EXECUTOR_TEXT: Record<AccountView["executor"]["state"], string> = {
 };
 
 /** The Trading view; times follow `timeShown`. */
-export function TradingView({ timeShown }: { timeShown: TimeShown }) {
+export function TradingView({ live, timeShown }: { live: Live; timeShown: TimeShown }) {
   const trading = useTrading(true);
   const [filter, setFilter] = useState<AccountFilter>({ brokerServer: "all", accountId: "all" });
   const [dialog, setDialog] = useState<OrderTarget>();
@@ -214,7 +215,7 @@ export function TradingView({ timeShown }: { timeShown: TimeShown }) {
         </section>
       )}
 
-      {dialog && <OrderDialog target={dialog} trading={trading} timeShown={timeShown} onClose={() => setDialog(undefined)} />}
+      {dialog && <OrderDialog target={dialog} trading={trading} live={live} timeShown={timeShown} onClose={() => setDialog(undefined)} />}
       {reviewing && <ReviewDialog record={reviewing} account={accountOf(reviewing.accountId)} timeShown={timeShown} onClose={() => setReviewing(undefined)} onReviewed={trading.refresh} />}
     </section>
   );

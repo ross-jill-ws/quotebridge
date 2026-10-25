@@ -2,15 +2,19 @@
 // change, close or cancel of an existing trade (bound to its account and ticket). Preview first: the dialog shows what
 // the app approved, its limits, warnings and expiry, and only the Send button executes that exact preview. Enter
 // previews (again) and never sends. A change of the inputs, the account, its trading chart, the trading settings or the
-// existing trade itself (in MetaTrader) discards the preview.
+// existing trade itself (in MetaTrader) discards the preview; a new quote does not. A new order shows its market's live Ask
+// and Bid, as Feeds does.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { ApiError, get, getAll, post, type Envelope } from "../api.js";
+import { Price } from "../price.js";
+import type { Live } from "../use-live.js";
 import {
   actionBlock,
   currentTrade,
   describeIntent,
   enterKeyAction,
+  marketQuote,
   newOrderForm,
   orderAccounts,
   previewKey,
@@ -26,6 +30,7 @@ import {
   type DialogStage,
   type LossBy,
   type Market,
+  type MarketQuote,
   type ModifyForm,
   type OrderForm,
   type PendingView,
@@ -66,9 +71,10 @@ function initialForm(target: OrderTarget): OrderForm {
 
 /**
  * The order dialog for `target`, over the trading state the page or chart already reads (accounts, settings and the
- * journal, so the dialog sees blocks and invalidations as they happen). Times follow `timeShown`.
+ * journal, so the dialog sees blocks and invalidations as they happen), and the live quotes. Times follow `timeShown`.
  */
-export function OrderDialog({ target, trading, timeShown, onClose }: { target: OrderTarget; trading: TradingState; timeShown: TimeShown; onClose: () => void }) {
+export function OrderDialog(props: { target: OrderTarget; trading: TradingState; live: Live; timeShown: TimeShown; onClose: () => void }) {
+  const { target, trading, live, timeShown, onClose } = props;
   const dialog = useRef<HTMLDialogElement>(null);
   const summary = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<OrderForm>(() => initialForm(target));
@@ -92,6 +98,10 @@ export function OrderDialog({ target, trading, timeShown, onClose }: { target: O
   const place = form.kind === "place" ? form : undefined;
   const fixedMarket = target.kind === "place" ? target.market : undefined;
   const brokerServer = fixedMarket?.brokerServer ?? account?.brokerServer;
+  const market: Market | undefined = fixedMarket ?? markets?.find((m) => place && m.id === place.marketId);
+  // The server sends a snapshot only when something changes; the time keeps counting in between, as on Feeds.
+  const snapshotTime = live.snapshot ? live.snapshot.time + Math.max(0, performance.now() - live.receivedAt) : 0;
+  const quote = place && market ? marketQuote(live.snapshot?.feeds ?? [], market, place.side, live.status === "live" && !!live.snapshot, snapshotTime) : undefined;
 
   // The markets a new order may use: the account's own broker server's, exactly. Changing account resets the market.
   useEffect(() => {
@@ -182,7 +192,7 @@ export function OrderDialog({ target, trading, timeShown, onClose }: { target: O
   };
 
   const trade = target.kind === "place" ? undefined : target.trade;
-  const title = target.kind === "place" ? `New ${target.side === "buy" ? "buy" : "sell"} order${fixedMarket ? ` · ${fixedMarket.symbol} · ${fixedMarket.brokerServer}` : ""}`
+  const title = target.kind === "place" ? `New ${(place?.side ?? target.side) === "buy" ? "buy" : "sell"} order${fixedMarket ? ` · ${fixedMarket.symbol} · ${fixedMarket.brokerServer}` : ""}`
     : `${ACTION_TITLES[target.kind]} #${trade!.ticket} · ${trade!.symbol}`;
   const locked = stage === "executing" || stage === "sent";
 
@@ -251,6 +261,7 @@ export function OrderDialog({ target, trading, timeShown, onClose }: { target: O
                   ))}
                 </div>
               </div>
+              {quote && <QuoteView quote={quote} pendingOrder={place.type !== "market"} />}
               <label class="order-field">
                 <span>Lots</span>
                 <input class="input number" inputMode="decimal" value={place.lots} onInput={(e) => update({ lots: e.currentTarget.value })} />
@@ -385,6 +396,25 @@ export function OrderDialog({ target, trading, timeShown, onClose }: { target: O
         </div>
       </form>
     </dialog>
+  );
+}
+
+/** The market's live Bid and Ask, the side's price emphasised: a buy fills at Ask, a sell at Bid. Only a reference for limit and stop orders. */
+function QuoteView({ quote, pendingOrder }: { quote: MarketQuote; pendingOrder: boolean }) {
+  const cell = (side: "bid" | "ask") => (
+    <div class={`order-quote-side${quote.emphasis === side ? " emphasis" : ""}`}>
+      <span>{side === "bid" ? "Bid" : "Ask"}</span>
+      <Price value={quote.quote?.[side]} digits={quote.quote?.digits ?? 0} />
+    </div>
+  );
+  return (
+    <div class="order-quote wide" role="group" aria-label={pendingOrder ? "Current price, for reference" : "Current price"} aria-live="off">
+      {cell("bid")}
+      {cell("ask")}
+      <small class={quote.reason || quote.silence ? "caution-text" : "muted"}>
+        {quote.reason ?? quote.silence ?? (pendingOrder ? "Current price, for reference." : `A ${quote.emphasis === "ask" ? "buy fills at Ask" : "sell fills at Bid"}, near this price.`)}
+      </small>
+    </div>
   );
 }
 

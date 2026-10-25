@@ -2,7 +2,9 @@
 // accounts an action may use, preview invalidation, keyboard safety, executor guidance and chart trade lines.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accountGroups, actionBlock, currentTrade, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
+import type { FeedSnapshot } from "../src/server/bridge/index.js";
+import { LiveClient, type LiveSocket } from "../src/dashboard/live-client.js";
+import { accountGroups, actionBlock, currentTrade, marketQuote, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
 
 const account = (id: string, brokerServer: string, extra: Partial<AccountView> = {}): AccountView => ({
   id, brokerServer, login: id.replace(/\D/g, "") || "1", label: `${brokerServer} · ${id}`, demo: true, connected: true, state: "fresh", currency: "USD",
@@ -254,4 +256,75 @@ test("an intent reads the same in the preview, the journal and the review", () =
 test("unresolved banners also name a journal account that is not listed", () => {
   const banners = unresolvedBanners([A], unresolvedByAccount([request("r1", "acct-gone", "unknown")]));
   assert.deepEqual(banners.map((b) => [b.accountId, b.label]), [["acct-gone", "Account acct-gon…"]]);
+});
+
+const QUOTE_NOW = 1_800_000_000_000;
+const quoteFeed = (overrides: Partial<FeedSnapshot> = {}): FeedSnapshot => ({
+  feed: "mt4-aaaaaaaaaaaa|Demo-Broker|EURUSD", terminal: "mt4-aaaaaaaaaaaa", broker: "Demo-Broker", symbol: "EURUSD", market: { brokerServer: "Demo-Broker", symbol: "EURUSD" },
+  timeframe: 60, chartTimeframes: [60], online: true, instances: 1, digits: 5, interval: 500, quoteStatus: "ok", quoteUnchangedSince: QUOTE_NOW - 1000, stale: false,
+  latest: { seq: 7, bid: 1.08421, ask: 1.08433, quoteTime: 1_800_000_000, sampledTime: 1_800_000_001 }, quoteTimeUtc: QUOTE_NOW - 1000, quoteReceivedAt: QUOTE_NOW - 500,
+  clockRule: null, recording: false, lastSeen: QUOTE_NOW - 500, dropped: 0, samplesAcceptedAt: QUOTE_NOW - 500, samplesMissing: false, ...overrides,
+});
+const EURUSD = { brokerServer: "Demo-Broker", symbol: "EURUSD" };
+
+test("a market order shows the exact market's Ask and Bid at its digits, the side's price emphasised", () => {
+  const other = quoteFeed({ feed: "x", broker: "Other-Broker", market: { brokerServer: "Other-Broker", symbol: "EURUSD" }, latest: { seq: 1, bid: 2, ask: 3, quoteTime: 0, sampledTime: 0 } });
+  const buy = marketQuote([other, quoteFeed()], EURUSD, "buy", true, QUOTE_NOW);
+  assert.deepEqual(buy, { quote: { bid: 1.08421, ask: 1.08433, digits: 5 }, emphasis: "ask" });
+  assert.equal(marketQuote([quoteFeed()], EURUSD, "sell", true, QUOTE_NOW).emphasis, "bid");
+});
+
+test("without a live quote the dialog gives the reason, never zero or a stale number shown as live", () => {
+  const reason = (feeds: FeedSnapshot[], connected = true) => {
+    const q = marketQuote(feeds, EURUSD, "buy", connected, QUOTE_NOW);
+    assert.equal(q.quote, undefined);
+    return q.reason;
+  };
+  assert.equal(reason([]), "No feed for this market");
+  assert.equal(reason([quoteFeed({ latest: undefined, quoteStatus: "no-quote" })]), "No valid quote");
+  assert.equal(reason([quoteFeed({ stale: true, quoteUnchangedSince: QUOTE_NOW - 42_000 })]), "Quote unchanged for 42 s");
+  assert.equal(reason([quoteFeed({ samplesMissing: true })]), "No quotes received");
+  assert.equal(reason([quoteFeed({ online: false, lastSeen: QUOTE_NOW - 120_000 })]), "Offline, last heard 2 min ago");
+  assert.equal(reason([quoteFeed()], false), "Not connected to the app");
+});
+
+test("of a market's several feeds, a live one gives the quote", () => {
+  const stale = quoteFeed({ feed: "a", stale: true, latest: { seq: 1, bid: 1.07, ask: 1.071, quoteTime: 0, sampledTime: 0 } });
+  const offline = quoteFeed({ feed: "b", online: false, latest: { seq: 1, bid: 1.06, ask: 1.061, quoteTime: 0, sampledTime: 0 } });
+  assert.equal(marketQuote([stale, offline, quoteFeed()], EURUSD, "sell", true, QUOTE_NOW).quote?.bid, 1.08421);
+  assert.equal(marketQuote([offline, stale], EURUSD, "sell", true, QUOTE_NOW).reason, "Quote unchanged for 1 s");
+});
+
+test("each snapshot of the quote stream updates the dialog's Ask and Bid", () => {
+  const socket: LiveSocket = { onopen: null, onmessage: null, onclose: null, onerror: null, send: () => {}, close: () => {} };
+  const shown: (number | undefined)[] = [];
+  const client = new LiveClient<{ time: number; feeds: FeedSnapshot[] }>({
+    open: () => socket,
+    onSnapshot: (s) => {
+      shown.push(marketQuote(s.feeds, EURUSD, "buy", true, s.time).quote?.ask);
+    },
+    onStatus: () => {},
+    sessionValid: async () => true,
+  });
+  client.start();
+  socket.onopen?.();
+  for (const ask of [1.08433, 1.08441]) {
+    socket.onmessage?.({ data: JSON.stringify({ time: QUOTE_NOW, feeds: [quoteFeed({ latest: { seq: 8, bid: ask - 0.00012, ask, quoteTime: 0, sampledTime: 0 } })] }) });
+  }
+  client.stop();
+  assert.deepEqual(shown, [1.08433, 1.08441]);
+});
+
+test("of two live feeds of the market, the newest broker quote gives the price, whatever their order", () => {
+  const older = quoteFeed({ feed: "a", terminal: "mt4-aaaaaaaaaaaa", latest: { seq: 1, bid: 1.07, ask: 1.071, quoteTime: 1_799_999_990, sampledTime: 0 } });
+  const newer = quoteFeed({ feed: "b", terminal: "mt4-bbbbbbbbbbbb", latest: { seq: 1, bid: 1.09, ask: 1.091, quoteTime: 1_800_000_000, sampledTime: 0 } });
+  assert.equal(marketQuote([older, newer], EURUSD, "buy", true, QUOTE_NOW).quote?.ask, 1.091);
+  assert.equal(marketQuote([newer, older], EURUSD, "buy", true, QUOTE_NOW).quote?.ask, 1.091);
+});
+
+test("a source silent for 5 s or more says so beside its price, apart from the quote's age", () => {
+  assert.equal(marketQuote([quoteFeed({ quoteReceivedAt: QUOTE_NOW - 4000 })], EURUSD, "buy", true, QUOTE_NOW).silence, undefined);
+  const silent = marketQuote([quoteFeed({ quoteReceivedAt: QUOTE_NOW - 7000 })], EURUSD, "buy", true, QUOTE_NOW);
+  assert.equal(silent.quote?.ask, 1.08433);
+  assert.equal(silent.silence, "No new quote for 7 s");
 });

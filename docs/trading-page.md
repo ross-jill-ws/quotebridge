@@ -19,6 +19,13 @@ The **Broker server** and **Trading account** filters only change which panels s
 **New order…** opens the order dialog with no account chosen: pick the account, then a symbol of that account's own
 broker server. Changing the account clears the symbol, so an order can never land on another broker's market.
 
+Once the market is known, the dialog shows its live **Bid** and **Ask**, the same numbers as Feeds. A buy fills at Ask
+and a sell at Bid, so the side's price is highlighted. For a limit or stop order they are a reference only. When a
+market has several feeds, the one with the newest broker quote gives the price. A feed that has sent no new quote for
+5 seconds keeps its price, with a note saying how long. Without a live quote (no feed for the market, no valid quote, a
+quote unchanged for a while, an offline feed or a lost connection to the app) the dialog shows dashes and the reason,
+never an old price.
+
 Real accounts show their Funds and trades but no actions: QuoteBridge trades demo accounts only. An account whose terminal has not yet said whether it is a demo account cannot trade until it does. An offline account
 shows its last snapshot as stale, or dashes when the app has none since it started.
 
@@ -34,6 +41,7 @@ expiry (30 seconds).
 - An expiry is entered in this computer's time. Other times on the page follow Settings › Appearance › Time shown.
 - Any change discards the preview: an input, the account, the account going offline or getting an unresolved request,
   its trading chart or EA cap, Settings › Trading, or the trade itself changing or closing in MetaTrader. Preview again.
+- A new quote does not discard a preview: the preview keeps the price and expiry it was approved with.
 - After sending, the dialog follows the request until MetaTrader answers: **Succeeded**, **Failed** with the broker's
   code and message, or **Unknown**.
 

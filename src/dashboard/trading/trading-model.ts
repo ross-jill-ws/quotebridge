@@ -1,10 +1,13 @@
 // The trading model for the Trading page, the order dialogs and the charts' trade lines. Pure: the views fetch REST v1
 // (`/api/v1`, with the window session) and render what these functions answer. There is no active account: every
 // action carries its own account, and filters only change what is shown.
+import type { FeedSnapshot } from "../../server/bridge/index.js";
+import { selectMarketSource } from "../../server/bridge/market-source.js";
 import type { SettingsView } from "../../server/settings/index.js";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { browserOffsetMinutes } from "../display-clock.js";
-import { minuteStamp } from "../format.js";
+import { notLiveReason } from "../feeds/feed-row.js";
+import { duration, minuteStamp } from "../format.js";
 
 export type ExecutorState = "ready" | "zero" | "multiple" | "not-ready" | "real-account";
 /** An account as `GET /api/v1/accounts` lists it. */
@@ -58,6 +61,26 @@ export const TRADING_UNKNOWN: TradingSettings = { enabled: false, maxLots: "", s
 export const QUOTEBRIDGE_MAGIC = 27012026;
 
 export type Market = { brokerServer: string; symbol: string };
+/**
+ * What a new order's dialog shows of its market's price: the live Ask and Bid, the same as Feeds, or why there is none.
+ * A buy fills at Ask and a sell at Bid, so that side's price is `emphasis`. `silence` says how long the source has sent
+ * no new quote, from 5 s on; the quote's own age makes it stale.
+ */
+export type MarketQuote = { quote?: { bid: number; ask: number; digits: number }; reason?: string; silence?: string; emphasis: "ask" | "bid" };
+
+export function marketQuote(feeds: FeedSnapshot[], market: Market, side: "buy" | "sell", connected: boolean, snapshotTime: number): MarketQuote {
+  const emphasis = side === "buy" ? "ask" : "bid";
+  if (!connected) return { reason: "Not connected to the app", emphasis };
+  // The market's source as every market read picks it: connected first, then the newest broker quote.
+  const source = selectMarketSource({ time: snapshotTime, feeds }, market);
+  if (!source) return { reason: "No feed for this market", emphasis };
+  const { feed } = source;
+  const reason = notLiveReason(feed, snapshotTime);
+  if (reason) return { reason, emphasis };
+  const silence = source.sourceSilent && source.sourceSilenceMs !== null ? `No new quote for ${duration(source.sourceSilenceMs)}` : undefined;
+  return { quote: { bid: feed.latest!.bid, ask: feed.latest!.ask, digits: feed.digits }, ...(silence ? { silence } : {}), emphasis };
+}
+
 export type LineKind = "entry" | "pending" | "stop-loss" | "take-profit";
 export type ChartLine = { accountId: string; ticket: string; kind: LineKind; price: number; label: string };
 

@@ -26,6 +26,7 @@ export type FeedRow = {
 };
 
 const NONE = "—";
+const NO_QUOTE = "No valid quote";
 
 const PERIOD_NAMES: Record<number, string> = {
   1: "M1",
@@ -63,11 +64,18 @@ export function describeFeed(feed: FeedSnapshot, snapshotTime: number, shown: Ti
   };
 }
 
+/** Why a feed's quote is not live, in the words its row uses (offline, no valid quote, none received, unchanged); undefined when it is. */
+export function notLiveReason(feed: FeedSnapshot, snapshotTime: number): string | undefined {
+  if (!feed.online) return describeFeed(feed, snapshotTime).status;
+  const warning = warnings(feed, snapshotTime).find((w) => w.kind === "no-quote" || w.kind === "no-samples" || w.kind === "stale");
+  return warning?.text ?? (feed.latest ? undefined : NO_QUOTE);
+}
+
 function warnings(feed: FeedSnapshot, snapshotTime: number): FeedWarning[] {
   const list: FeedWarning[] = [];
   // An EA without a valid quote sends no samples: its warning says so already.
   const noSamples = feed.samplesMissing && feed.quoteStatus !== "no-quote";
-  if (feed.quoteStatus === "no-quote") list.push({ kind: "no-quote", text: "No valid quote" });
+  if (feed.quoteStatus === "no-quote") list.push({ kind: "no-quote", text: NO_QUOTE });
   if (noSamples) list.push({ kind: "no-samples", text: noSamplesText(feed, snapshotTime) });
   if (feed.instances > 1) list.push({ kind: "duplicate", text: `Duplicate EAs on ${feed.instances} charts` });
   // Without samples the quote cannot change: the missing samples are the warning.

@@ -141,7 +141,7 @@ export function App() {
         ) : view === "charts" ? (
           <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "trading" ? (
-          <TradingView timeShown={settings?.timeShown ?? "broker"} />
+          <TradingView live={live} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "history" ? (
           <HistoryView timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "indicators" ? (
