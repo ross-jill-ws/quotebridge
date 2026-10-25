@@ -2,7 +2,7 @@ import { brokerToUtc, isClockRule, utcToBroker } from "../../shared/clock.js";
 import { sameAccountBinding } from "../bridge/accounts.js";
 import type { AccountOrder } from "../bridge/account-protocol.js";
 import { marketId } from "../identity/index.js";
-import { TradingError, type ApprovedIntent, type EffectiveLimits, type TradeEstimates, type TargetFingerprint, type TradeInput, type TradingPreview, type ValidatedTrade, type ValidationContext } from "./types.js";
+import { TradingError, type ApprovedIntent, type EffectiveLimits, type TradeEstimates, type TargetFingerprint, type StopDistances, type TradeInput, type TradingPreview, type ValidatedTrade, type ValidationContext } from "./types.js";
 
 // Every price, volume and monetary calculation uses ten-place fixed integers, never binary floats.
 const SCALE = 10_000_000_000n;
@@ -45,7 +45,7 @@ function schema(value: unknown): asserts value is TradeInput {
     if ("expiry" in input && input.expiry !== null && typeof input.expiry !== "string") fail("invalid-expiry");
     return;
   }
-  keys(input, ["action", "accountId", "symbol", "side", "type", "lots", "price", "stopLoss", "takeProfit", "expiry", "risk"]);
+  keys(input, ["action", "accountId", "symbol", "side", "type", "lots", "price", "stopLoss", "takeProfit", "expiry", "risk", "distance"]);
   text(input.symbol);
   if (input.side !== "buy" && input.side !== "sell") fail("invalid-side");
   if (input.type !== "market" && input.type !== "limit" && input.type !== "stop") fail("invalid-type");
@@ -62,6 +62,12 @@ function schema(value: unknown): asserts value is TradeInput {
     const key = Object.keys(loss)[0];
     const target = decimal(loss[key], true);
     if (key === "balancePercent" && target > 100n * SCALE) fail("invalid-risk");
+  }
+  if ("distance" in input) {
+    if ("stopLoss" in input || "takeProfit" in input || "risk" in input) fail("conflicting-stops");
+    const distance = object(input.distance); keys(distance, ["stopLoss", "takeProfit"]);
+    if (!Object.keys(distance).length) fail("invalid-distance");
+    for (const key of Object.keys(distance)) decimal(distance[key], true);
   }
 }
 export function validateTradeInput(value: unknown): asserts value is TradeInput { schema(value); }
@@ -125,17 +131,28 @@ function riskStops(intent: ApprovedIntent, plan: NonNullable<Extract<TradeInput,
   } else {
     numerator = decimal(plan.loss.points, true) * decimal(c.point, true); denominator = SCALE;
   }
-  const entry = decimal(intent.price, true), buy = intent.kind % 2 === 0;
-  const level = (n: bigint, d: bigint, below: boolean) => {
-    const target = entry * d + (below ? -n : n);
-    if (target <= 0n) fail("unsatisfiable-risk");
-    const divisor = d * tick;
-    const rounded = (below ? (target + divisor - 1n) / divisor : target / divisor) * tick;
-    if (below ? rounded >= entry : rounded <= entry) fail("unsatisfiable-risk");
-    return fixed(rounded);
-  };
-  intent.stopLoss = level(numerator, denominator, buy);
-  intent.takeProfit = level(numerator * decimal(plan.rewardRatio, true), denominator * SCALE, !buy);
+  const buy = intent.kind % 2 === 0;
+  intent.stopLoss = towardEntry(intent, tick, numerator, denominator, buy, "unsatisfiable-risk");
+  intent.takeProfit = towardEntry(intent, tick, numerator * decimal(plan.rewardRatio, true), denominator * SCALE, !buy, "unsatisfiable-risk");
+}
+/**
+ * The stop n/d away from the entry (below or above it), rounded to a tradable tick toward the entry: never wider than
+ * asked. A stop that would reach or pass the entry, or zero, cannot be met (`unmet`).
+ */
+function towardEntry(intent: ApprovedIntent, tick: bigint, n: bigint, d: bigint, below: boolean, unmet: string): string {
+  const entry = decimal(intent.price, true);
+  const target = entry * d + (below ? -n : n);
+  if (target <= 0n) fail(unmet);
+  const divisor = d * tick;
+  const rounded = (below ? (target + divisor - 1n) / divisor : target / divisor) * tick;
+  if (below ? rounded >= entry : rounded <= entry) fail(unmet);
+  return fixed(rounded);
+}
+/** Stop distances in points from the previewed entry: a buy's stop loss below it and take profit above, a sell's the reverse. */
+function distanceStops(intent: ApprovedIntent, distance: StopDistances, context: ValidationContext) {
+  const c = context.contract.conditions, tick = decimal(c.tickSize, true), point = decimal(c.point, true), buy = intent.kind % 2 === 0;
+  if (distance.stopLoss) intent.stopLoss = towardEntry(intent, tick, decimal(distance.stopLoss, true) * point, SCALE, buy, "unsatisfiable-distance");
+  if (distance.takeProfit) intent.takeProfit = towardEntry(intent, tick, decimal(distance.takeProfit, true) * point, SCALE, !buy, "unsatisfiable-distance");
 }
 function stops(intent: ApprovedIntent, context: ValidationContext) {
   const c = context.contract.conditions, buy = intent.kind % 2 === 0, pending = intent.kind >= 2;
@@ -237,6 +254,7 @@ export function validateTrade(input: TradeInput, context: ValidationContext): Va
     };
     if ("expiry" in input) Object.assign(intent, expiry(input.expiry!, context));
     if (input.risk) riskStops(intent, input.risk, context);
+    if (input.distance) distanceStops(intent, input.distance, context);
   } else {
     const target = fingerprint(order!);
     const pending = target.kind >= 2;

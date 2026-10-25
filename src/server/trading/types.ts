@@ -5,8 +5,10 @@ import type { AccountOrder } from "../bridge/account-protocol.js";
 
 export type { TradingSettings } from "../../shared/settings-store.js";
 export type RiskPlan = { loss: { amount: string } | { balancePercent: string } | { points: string }; rewardRatio: string };
+/** Stop distances in points from the entry, turned into prices at preview (a stop distance in the glossary). */
+export type StopDistances = { stopLoss?: string; takeProfit?: string };
 export type TradeInput =
-  | { action: "new"; accountId: string; symbol: string; side: "buy" | "sell"; type: "market" | "limit" | "stop"; lots: string; price?: string; stopLoss?: string; takeProfit?: string; expiry?: string; risk?: RiskPlan }
+  | { action: "new"; accountId: string; symbol: string; side: "buy" | "sell"; type: "market" | "limit" | "stop"; lots: string; price?: string; stopLoss?: string; takeProfit?: string; expiry?: string; risk?: RiskPlan; distance?: StopDistances }
   | { action: "modify"; accountId: string; ticket: string; price?: string; stopLoss?: string | null; takeProfit?: string | null; expiry?: string | null }
   | { action: "close" | "cancel"; accountId: string; ticket: string };
 

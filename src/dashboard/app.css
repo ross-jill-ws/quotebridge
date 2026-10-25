@@ -1673,6 +1673,38 @@ label.setting-row {
   gap: 8px;
 }
 
+/* Order defaults: a market's starting lots and stop distances, edited in place. */
+.order-defaults {
+  border-top: 1px solid var(--line-soft);
+}
+
+.order-defaults-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin-top: 6px;
+}
+
+.order-defaults-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.order-defaults-form .input.number {
+  width: 9em;
+}
+
+.order-defaults-form .confirm-actions {
+  margin: 0;
+}
+
+.order-defaults-form .bad-text {
+  flex-basis: 100%;
+}
+
 /* API keys */
 .key-secret {
   margin: 4px 0 2px;

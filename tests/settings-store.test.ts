@@ -217,3 +217,29 @@ test("times are shown in broker time by default; local and UTC are kept; a hand-
   await writeFile(join(store.folder, "settings.json"), JSON.stringify({ format: 1, timeShown: "Europe/London" }));
   assert.equal((await new SettingsStore(store.folder).read()).timeShown, "broker");
 });
+
+test("order defaults: none at first; each market's optional lots and stop distances are saved and read back", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  assert.deepEqual((await store.read()).orderDefaults, []);
+  const defaults = [
+    { brokerServer: "EasyForex-Demo", symbol: "BTCUSD", lots: "0.05", stopLossPoints: "50000", takeProfitPoints: null },
+    { brokerServer: "EasyForex-Demo", symbol: "EURUSD", lots: null, stopLossPoints: "200", takeProfitPoints: "400" },
+  ];
+  await store.update((s) => void (s.orderDefaults = defaults));
+  assert.deepEqual((await new SettingsStore(store.folder).read()).orderDefaults, defaults);
+});
+
+test("invalid order defaults are refused on update, and a hand-edited bad entry is dropped without losing the rest", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  const good = { brokerServer: "Demo-Broker", symbol: "EURUSD", lots: "0.1", stopLossPoints: null, takeProfitPoints: null };
+  const bad: unknown[] = [
+    { ...good, lots: "0" }, { ...good, lots: 0.1 }, { ...good, stopLossPoints: "-5" }, { ...good, takeProfitPoints: "1e3" },
+    { ...good, symbol: "" }, { ...good, brokerServer: 5 }, { ...good, extra: true }, { ...good, lots: null },
+  ];
+  for (const entry of bad) await assert.rejects(store.update((s) => void Object.assign(s, { orderDefaults: [entry] })), /order defaults/i, JSON.stringify(entry));
+  await assert.rejects(store.update((s) => void (s.orderDefaults = [good, { ...good, lots: "0.2" }])), /order defaults/i, "one entry per market");
+  await writeFile(store.file, JSON.stringify({ format: 1, theme: "dark", orderDefaults: [good, ...bad] }));
+  const loaded = await store.read();
+  assert.deepEqual(loaded.orderDefaults, [good]);
+  assert.equal(loaded.theme, "dark");
+});

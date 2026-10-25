@@ -17,6 +17,8 @@ export type TradingState = {
   readErrors: ReadonlyMap<string, string>;
   requests: RequestView[];
   settings: TradingSettings | undefined;
+  /** Each market's order defaults (Settings › Trading), for a new order's dialog. */
+  orderDefaults: SettingsView["orderDefaults"];
   /** This session may change the trading settings: the app window's, not a remote browser's. */
   manage: boolean;
   /** The accounts or the journal could not be read. */
@@ -32,7 +34,7 @@ export type TradingState = {
  */
 export function useTrading(active: boolean, options: { brokerServer?: string; journal?: boolean } = {}): TradingState {
   const [state, setState] = useState<Omit<TradingState, "refresh">>({
-    accounts: [], funds: new Map(), positions: new Map(), orders: new Map(), readErrors: new Map(), requests: [], settings: undefined, manage: false, error: "", loaded: false,
+    accounts: [], funds: new Map(), positions: new Map(), orders: new Map(), readErrors: new Map(), requests: [], settings: undefined, orderDefaults: [], manage: false, error: "", loaded: false,
   });
   const latest = useRef(state);
   latest.current = state;
@@ -73,7 +75,7 @@ export function useTrading(active: boolean, options: { brokerServer?: string; jo
             }
           }),
         );
-        if (!stopped) setState({ accounts, funds, positions, orders, readErrors, requests, settings: settings.trading, manage: settings.manage === true, error: "", loaded: true });
+        if (!stopped) setState({ accounts, funds, positions, orders, readErrors, requests, settings: settings.trading, orderDefaults: settings.orderDefaults, manage: settings.manage === true, error: "", loaded: true });
       } catch (e) {
         if (!stopped) setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), loaded: true }));
       }

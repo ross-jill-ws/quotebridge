@@ -38,8 +38,22 @@ export interface TradingSettings {
   slippage: number;
 }
 
+/**
+ * A market's order defaults: the lots and stop distances (in points from the entry) a new order's dialog starts from.
+ * Each is optional (null), but an entry sets at least one.
+ */
+export interface OrderDefaults {
+  brokerServer: string;
+  symbol: string;
+  lots: string | null;
+  stopLossPoints: string | null;
+  takeProfitPoints: string | null;
+}
+
 export interface Settings {
   trading: TradingSettings;
+  /** At most one entry per market; never per trading account. */
+  orderDefaults: OrderDefaults[];
   format: typeof SETTINGS_FORMAT;
   managedTerminals: ManagedTerminal[];
   declinedTerminals: DeclinedTerminal[];
@@ -67,9 +81,12 @@ export interface Settings {
   disabledIndicators: string[];
 }
 
+export const ORDER_DEFAULTS_ERROR = "Invalid order defaults: expected one entry per market (broker server and symbol), each setting positive decimal lots, stop loss points or take profit points.";
+
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   format: SETTINGS_FORMAT,
   trading: { enabled: false, maxLots: "1.0", slippage: 20 },
+  orderDefaults: [],
   managedTerminals: [],
   declinedTerminals: [],
   // 5555 is the legacy default, so existing templates keep working.
@@ -150,6 +167,7 @@ function withDefaults(stored: unknown): Settings {
   return {
     format: SETTINGS_FORMAT,
     trading: isTradingSettings(partial.trading) ? { ...partial.trading } : defaults.trading,
+    orderDefaults: readOrderDefaults(partial.orderDefaults),
     managedTerminals: Array.isArray(partial.managedTerminals) ? partial.managedTerminals : defaults.managedTerminals,
     declinedTerminals: Array.isArray(partial.declinedTerminals) ? partial.declinedTerminals : defaults.declinedTerminals,
     ports: readPorts(partial.ports, defaults.ports),
@@ -193,8 +211,38 @@ export function isTradingSettings(value: unknown): value is TradingSettings {
     && typeof given.slippage === "number" && Number.isInteger(given.slippage) && given.slippage >= 0 && given.slippage <= 10000;
 }
 
+const POSITIVE_DECIMAL = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,10})?$/;
+const isOptionalAmount = (value: unknown) => value === null || (typeof value === "string" && POSITIVE_DECIMAL.test(value) && /[1-9]/.test(value));
+
+/** One market's complete, strict order defaults; shared by persisted updates and the app-window boundary. */
+export function isOrderDefaults(value: unknown): value is OrderDefaults {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const given = value as Record<string, unknown>;
+  const fields = ["brokerServer", "symbol", "lots", "stopLossPoints", "takeProfitPoints"];
+  return Object.keys(given).length === fields.length && Object.keys(given).every((key) => fields.includes(key))
+    && typeof given.brokerServer === "string" && given.brokerServer.length > 0
+    && typeof given.symbol === "string" && given.symbol.length > 0
+    && isOptionalAmount(given.lots) && isOptionalAmount(given.stopLossPoints) && isOptionalAmount(given.takeProfitPoints)
+    && (given.lots !== null || given.stopLossPoints !== null || given.takeProfitPoints !== null);
+}
+
+/** Every entry valid, and at most one per market. */
+export function isOrderDefaultsList(value: unknown): value is OrderDefaults[] {
+  if (!Array.isArray(value) || !value.every(isOrderDefaults)) return false;
+  return new Set(value.map((d) => JSON.stringify([d.brokerServer, d.symbol]))).size === value.length;
+}
+
+/** Stored order defaults as the app can use them: a hand-edited entry that cannot work, or a market's repeat, is left out. */
+function readOrderDefaults(stored: unknown): OrderDefaults[] {
+  if (!Array.isArray(stored)) return [];
+  const kept: OrderDefaults[] = [];
+  for (const entry of stored) if (isOrderDefaults(entry) && isOrderDefaultsList([...kept, entry])) kept.push({ ...entry });
+  return kept;
+}
+
 function validate(settings: Settings): void {
   if (!isTradingSettings(settings.trading)) throw new Error("Invalid trading settings: expected enabled, positive decimal maxLots and nonnegative whole slippage.");
+  if (!isOrderDefaultsList(settings.orderDefaults)) throw new Error(ORDER_DEFAULTS_ERROR);
   for (const [name, port] of Object.entries(settings.ports)) {
     if (!isPort(port)) throw new Error(`The ${name} port must be a whole number from 1 to 65535, not ${port}`);
   }

@@ -160,3 +160,38 @@ export function tradingChange(trading: TradingSettings, field: "maxLots" | "slip
   if (!/^\d{1,5}$/.test(value) || Number(value) > 10000) return { error: "Slippage is a whole number of points from 0 to 10000." };
   return { trading: { ...trading, slippage: Number(value) } };
 }
+
+type OrderDefaults = SettingsView["orderDefaults"][number];
+type Market = Pick<OrderDefaults, "brokerServer" | "symbol">;
+/** A market's order defaults as typed in Settings › Trading; empty means not set. */
+export type OrderDefaultsText = { lots: string; stopLossPoints: string; takeProfitPoints: string };
+
+/** As the settings store checks it; a copy here, so the dashboard bundle takes nothing of the store's file code. */
+const POSITIVE_DECIMAL = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,10})?$/;
+/** One market's key, for a row or an option. */
+export const marketKey = (m: Market) => JSON.stringify([m.brokerServer, m.symbol]);
+
+/** A market's saved order defaults as their inputs show them. */
+export function orderDefaultsText(d: OrderDefaults): OrderDefaultsText {
+  return { lots: d.lots ?? "", stopLossPoints: d.stopLossPoints ?? "", takeProfitPoints: d.takeProfitPoints ?? "" };
+}
+
+/**
+ * Settings › Trading › Order defaults: the list with `market`'s row set to what was typed (in place, or added at the
+ * end), or why it cannot be. The server checks the same.
+ */
+export function orderDefaultsChange(list: readonly OrderDefaults[], market: Market, text: OrderDefaultsText): { orderDefaults: OrderDefaults[] } | { error: string } {
+  const read = (value: string) => value.trim() || null;
+  const entry: OrderDefaults = { brokerServer: market.brokerServer, symbol: market.symbol, lots: read(text.lots), stopLossPoints: read(text.stopLossPoints), takeProfitPoints: read(text.takeProfitPoints) };
+  if (entry.lots === null && entry.stopLossPoints === null && entry.takeProfitPoints === null) return { error: "Set at least one of lots, stop loss or take profit, or remove the market." };
+  const bad = (value: string | null) => value !== null && (!POSITIVE_DECIMAL.test(value) || !/[1-9]/.test(value));
+  if (bad(entry.lots)) return { error: "Lots is a positive number, such as 0.1." };
+  if (bad(entry.stopLossPoints) || bad(entry.takeProfitPoints)) return { error: "A stop distance is a positive number of points, such as 200." };
+  const at = list.findIndex((d) => marketKey(d) === marketKey(market));
+  return { orderDefaults: at < 0 ? [...list, entry] : list.map((d, i) => (i === at ? entry : d)) };
+}
+
+/** The list without `market`'s row. */
+export function removeOrderDefaults(list: readonly OrderDefaults[], market: Market): OrderDefaults[] {
+  return list.filter((d) => marketKey(d) !== marketKey(market));
+}

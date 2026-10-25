@@ -164,6 +164,27 @@ test("risk never widens an unsatisfiable budget and rejects malformed or unavail
   assert.ok(validateTrade(buy(), context()).warnings.includes("No take profit is set."));
 });
 
+test("stop distances in points become prices from the previewed entry, rounded toward it, for either side", () => {
+  // Buy enters at Ask 100.25, sell at Bid 100: 66 points is 0.66, 130 points 1.30, on a 0.25 tick.
+  for (const side of ["buy", "sell"] as const) {
+    const result = validateTrade(buy({ side, lots: "0.15", distance: { stopLoss: "66", takeProfit: "130" } }), fractionalContract());
+    assert.deepEqual({ sl: result.intent.stopLoss, tp: result.intent.takeProfit }, side === "buy" ? { sl: "99.75", tp: "101.5" } : { sl: "100.5", tp: "98.75" });
+  }
+  const stopOnly = validateTrade(buy({ distance: { stopLoss: "200" } }), context());
+  assert.deepEqual([stopOnly.intent.stopLoss, stopOnly.intent.takeProfit], ["1.0982", "0"]);
+  const pending = validateTrade(buy({ type: "limit", price: "1.09", distance: { takeProfit: "100" } }), context());
+  assert.equal(pending.intent.takeProfit, "1.091");
+});
+
+test("stop distances never mix with absolute stops or a risk plan, and need a positive number of points", () => {
+  for (const bad of [{}, { stopLoss: "0" }, { stopLoss: 10 }, { stopLoss: "10", extra: "1" }, { takeProfit: "1e2" }, null]) rejects({ ...buy(), distance: bad });
+  rejects({ ...buy(), distance: { stopLoss: "10" }, stopLoss: "1.09" });
+  rejects({ ...buy(), distance: { stopLoss: "10" }, takeProfit: "1.2" });
+  rejects({ ...buy(), distance: { stopLoss: "10" }, risk: { loss: { points: "10" }, rewardRatio: "2" } });
+  rejects(buy({ distance: { stopLoss: "200000" } }), context(), "unsatisfiable-distance");
+  rejects(buy({ distance: { takeProfit: "0.1" } }), context(), "unsatisfiable-distance");
+});
+
 test("risk arithmetic retains the final decimal at the 15-integer/10-fraction boundary", () => {
   const ctx = context();
   Object.assign(ctx.contract.conditions, { bid: "999999999999999.9999999997", ask: "999999999999999.9999999998", point: "0.0000000001", tickSize: "0.0000000001", digits: 10, stopLevel: 0, tickValue: "1" });

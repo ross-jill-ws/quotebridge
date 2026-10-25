@@ -640,7 +640,11 @@ server (`409 cross-broker-market` otherwise), `side` (`buy`, `sell`), `type` (`m
 `lots`. A limit or stop needs `price` and may have a UTC `expiry` (whole seconds). Stops are either absolute
 `stopLoss`/`takeProfit`, or a `risk` plan — never both: `{ "loss": { "amount" | "balancePercent" | "points": "…" },
 "rewardRatio": "…" }`, from which the stops are worked out for the given lots, rounded toward entry; a plan that
-cannot be met is refused rather than widened. Estimates exclude fees, swaps and slippage and are not loss caps.
+cannot be met is refused rather than widened. A third form is stop distances: `distance: { "stopLoss"?: "…",
+"takeProfit"?: "…" }` in points from the previewed entry (below it for a buy's stop loss, above for a sell's, and the
+reverse for a take profit), at least one of them, rounded toward entry the same way (`unsatisfiable-distance` when a
+distance reaches past zero or rounds to the entry). Only one form per order. Estimates exclude fees, swaps and slippage
+and are not loss caps.
 
 Existing trades are named by account and ticket: `modify` (`price` and `expiry` of a pending order, `stopLoss`,
 `takeProfit`; left out stays, `null` clears, zero is not a clear), `close` (a whole position) and `cancel` (a
@@ -929,7 +933,7 @@ HTTP/1.1 409 Conflict
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
 | `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart. |
 | `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |
-| `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
+| `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `invalid-distance`, `unsatisfiable-distance`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |
 | `body-too-large`, `unsupported-media-type` | 413, 415 | Send JSON bodies of at most 16 KiB. |
 | `quote-unavailable`, `feed-required`, `unavailable-source`, `read-failed`, `account-unavailable`, `journal-unavailable`, `trading-unavailable`, `trading-stopped` | 503 | The source, journal or engine is unavailable now. |

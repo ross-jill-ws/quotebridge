@@ -1,7 +1,7 @@
 // The Settings view's model (server process): the settings it shows and the changes it may make.
 // The server stays the single writer of settings.json; each save is handed on so main applies it.
 import { createServer } from "node:net";
-import { isTradingSettings, CHART_COLOURS, THEMES, TIMES_SHOWN, type Settings, type SettingsStore } from "../../shared/settings-store.js";
+import { isOrderDefaultsList, isTradingSettings, ORDER_DEFAULTS_ERROR, CHART_COLOURS, THEMES, TIMES_SHOWN, type Settings, type SettingsStore } from "../../shared/settings-store.js";
 import type { PortRole } from "../port-in-use.js";
 
 export type AppSettingsOptions = {
@@ -11,7 +11,7 @@ export type AppSettingsOptions = {
 };
 
 /** What GET and POST /api/settings answer. */
-export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "chartColours" | "timeShown" | "ports" | "trading"> & {
+export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "chartColours" | "timeShown" | "ports" | "trading" | "orderDefaults"> & {
   /** The ports this server is bound to. They differ from `ports` after a change until main restarts the server, or in a dev run with port overrides. */
   portsInUse: Settings["ports"];
   /** Set by the HTTP server: whether this session (the app window) may change settings; a remote browser may not. */
@@ -63,6 +63,10 @@ export class AppSettings {
       } else if (key === "trading") {
         if (!isTradingSettings(value)) throw new SettingsRequestError(400, "Invalid trading settings: expected enabled, positive decimal maxLots and nonnegative whole slippage.");
         change.trading = { ...value };
+      } else if (key === "orderDefaults") {
+        // The whole list: the view adds, edits and removes a market's entry by saving the list it shows.
+        if (!isOrderDefaultsList(value)) throw new SettingsRequestError(400, ORDER_DEFAULTS_ERROR);
+        change.orderDefaults = value.map((d) => ({ ...d }));
       } else if (key !== "ports") {
         throw new SettingsRequestError(400, `"${key}" cannot be changed here.`);
       }
@@ -98,8 +102,8 @@ export class AppSettings {
   }
 
   private toView(settings: Settings): SettingsView {
-    const { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, ports, trading } = settings;
-    return { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, trading: { ...trading }, ports: { ...ports }, portsInUse: { ...this.portsInUse } };
+    const { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, ports, trading, orderDefaults } = settings;
+    return { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, trading: { ...trading }, orderDefaults: orderDefaults.map((d) => ({ ...d })), ports: { ...ports }, portsInUse: { ...this.portsInUse } };
   }
 }
 

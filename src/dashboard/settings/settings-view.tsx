@@ -8,10 +8,26 @@ import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
 import { BUNDLED_WORKS } from "../../shared/licences.js";
 import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store.js";
-import { get, post } from "../api.js";
+import { get, getAll, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
-import { apiKeyRows, deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, revokeApiKey, tradingChange, type PortRole } from "./settings-model.js";
+import {
+  apiKeyRows,
+  deleteRecording,
+  marketKey,
+  orderDefaultsChange,
+  orderDefaultsText,
+  parsePort,
+  PORT_LABELS,
+  portChange,
+  portsNote,
+  recordingRows,
+  removeOrderDefaults,
+  revokeApiKey,
+  tradingChange,
+  type OrderDefaultsText,
+  type PortRole,
+} from "./settings-model.js";
 
 /** As the server checks it; a constant here, so the dashboard bundle takes nothing of the server's code. */
 const MAX_KEY_NAME = 60;
@@ -159,7 +175,7 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
         />
       </SettingsGroup>
 
-      <TradingGroup settings={settings} onChange={(trading) => change({ trading })} />
+      <TradingGroup settings={settings} onChange={(trading) => change({ trading })} onOrderDefaults={(orderDefaults) => change({ orderDefaults })} />
 
       <RecordingGroup timeShown={settings.timeShown} />
 
@@ -203,9 +219,11 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
 
 /**
  * Settings › Trading: Demo trading on or off, the app's lot cap for new orders and the slippage. Only the app window
- * may change them (a remote browser sees them read-only); any change discards open previews.
+ * may change them (a remote browser sees them read-only); any change discards open previews. Then each market's order
+ * defaults, which change no preview.
  */
-function TradingGroup({ settings, onChange }: { settings: Settings; onChange: (trading: Settings["trading"]) => Promise<void> }) {
+function TradingGroup(props: { settings: Settings; onChange: (trading: Settings["trading"]) => Promise<void>; onOrderDefaults: (list: Settings["orderDefaults"]) => Promise<void> }) {
+  const { settings, onChange, onOrderDefaults } = props;
   const trading = settings.trading;
   const manage = settings.manage === true;
   return (
@@ -246,7 +264,134 @@ function TradingGroup({ settings, onChange }: { settings: Settings; onChange: (t
         disabled={!manage}
         onChange={onChange}
       />
+      <OrderDefaultsRows list={settings.orderDefaults} manage={manage} onChange={onOrderDefaults} />
     </SettingsGroup>
+  );
+}
+
+type MarketChoice = { brokerServer: string; symbol: string };
+const ADDING = "add";
+const EMPTY_DEFAULTS: OrderDefaultsText = { lots: "", stopLossPoints: "", takeProfitPoints: "" };
+
+/** One market's order defaults in words: "0.1 lots · stop loss 200 points". */
+function describeDefaults(d: Settings["orderDefaults"][number]): string {
+  return [d.lots && `${d.lots} lots`, d.stopLossPoints && `stop loss ${d.stopLossPoints} points`, d.takeProfitPoints && `take profit ${d.takeProfitPoints} points`].filter(Boolean).join(" · ");
+}
+
+/**
+ * Settings › Trading › Order defaults: each market's starting lots and stop distances for a new order, with Edit and
+ * Remove, and Add market… for a known market without any.
+ */
+function OrderDefaultsRows({ list, manage, onChange }: { list: Settings["orderDefaults"]; manage: boolean; onChange: (list: Settings["orderDefaults"]) => Promise<void> }) {
+  // The row being edited (a market's key, or ADDING for Add market…), its market and what is typed.
+  const [editing, setEditing] = useState<string>();
+  const [market, setMarket] = useState<MarketChoice>();
+  const [text, setText] = useState<OrderDefaultsText>(EMPTY_DEFAULTS);
+  const [problem, setProblem] = useState("");
+  const [markets, setMarkets] = useState<MarketChoice[]>();
+  const [busy, setBusy] = useState(false);
+
+  const open = (key: string, chosen?: MarketChoice, current = EMPTY_DEFAULTS) => {
+    setEditing(key);
+    setMarket(chosen);
+    setText(current);
+    setProblem("");
+    if (key === ADDING) getAll<MarketChoice>("/api/v1/markets").then(setMarkets, (e: Error) => setProblem(e.message));
+  };
+  const save = async (next: Settings["orderDefaults"]) => {
+    setBusy(true);
+    try {
+      await onChange(next);
+      setEditing(undefined);
+    } catch {
+      // The view shows the server's reason.
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = (e: Event) => {
+    e.preventDefault();
+    if (!market) return setProblem("Choose the market.");
+    const change = orderDefaultsChange(list, market, text);
+    if ("error" in change) return setProblem(change.error);
+    void save(change.orderDefaults);
+  };
+
+  const form = (
+    <form class="order-defaults-form" onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && setEditing(undefined)}>
+      {editing === ADDING && (
+        <label>
+          <span>Market</span>
+          <select class="input" value={market ? marketKey(market) : ""} onChange={(e) => setMarket((markets ?? []).find((m) => marketKey(m) === e.currentTarget.value))}>
+            <option value="">{markets ? "Choose a market…" : "Loading…"}</option>
+            {(markets ?? []).filter((m) => !list.some((d) => marketKey(d) === marketKey(m))).map((m) => (
+              <option key={marketKey(m)} value={marketKey(m)}>
+                {m.symbol} · {m.brokerServer}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {([["lots", "Lots"], ["stopLossPoints", "Stop loss, points"], ["takeProfitPoints", "Take profit, points"]] as const).map(([field, label]) => (
+        <label key={field}>
+          <span>{label}</span>
+          <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => setText({ ...text, [field]: e.currentTarget.value })} />
+        </label>
+      ))}
+      <div class="confirm-actions">
+        <button type="submit" class="button primary" disabled={busy}>
+          Save
+        </button>
+        <button type="button" class="button quiet" disabled={busy} onClick={() => setEditing(undefined)}>
+          Cancel
+        </button>
+      </div>
+      {problem && (
+        <span class="bad-text" role="alert">
+          {problem}
+        </span>
+      )}
+    </form>
+  );
+
+  return (
+    <div class="order-defaults">
+      <div class="setting-row">
+        <div class="setting-text">
+          <span class="setting-label">Order defaults</span>
+          <span class="setting-hint">
+            A new order on the market starts with these lots and stops, in points from the entry: below it for a buy's stop loss, above for a sell's. You can change them before Preview, and the
+            lot cap still applies.
+          </span>
+        </div>
+        {manage && editing !== ADDING && (
+          <button class="button" onClick={() => open(ADDING)}>
+            Add market…
+          </button>
+        )}
+      </div>
+      {editing === ADDING && <div class="setting-row">{form}</div>}
+      {list.map((d) => (
+        <div key={marketKey(d)} class="setting-row recording-row">
+          <div class="setting-text">
+            <span class="setting-label">
+              {d.symbol} <span class="recording-server">{d.brokerServer}</span>
+            </span>
+            {editing === marketKey(d) ? form : <span class="setting-hint">{describeDefaults(d)}</span>}
+          </div>
+          {manage && editing !== marketKey(d) && (
+            <div class="recording-actions">
+              <button class="button" disabled={busy} onClick={() => open(marketKey(d), d, orderDefaultsText(d))}>
+                Edit
+              </button>
+              <button class="button quiet" disabled={busy} onClick={() => void save(removeOrderDefaults(list, d))}>
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

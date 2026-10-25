@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FeedSnapshot } from "../src/server/bridge/index.js";
 import { LiveClient, type LiveSocket } from "../src/dashboard/live-client.js";
-import { accountGroups, actionBlock, currentTrade, marketQuote, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
+import type { OrderDefaults } from "../src/shared/settings-store.js";
+import { accountGroups, withOrderDefaults, actionBlock, currentTrade, marketQuote, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
 
 const account = (id: string, brokerServer: string, extra: Partial<AccountView> = {}): AccountView => ({
   id, brokerServer, login: id.replace(/\D/g, "") || "1", label: `${brokerServer} · ${id}`, demo: true, connected: true, state: "fresh", currency: "USD",
@@ -113,7 +114,7 @@ test("times follow Time shown: the broker's clock where MetaTrader stamps one, e
   assert.equal(shownTime(null, null, "utc"), "—");
 });
 
-const PLACE: OrderForm = { kind: "place", accountId: "acct-1", marketId: "m-EURUSD", side: "buy", type: "market", lots: "0.10", price: "", expiry: "", stops: "prices", stopLoss: "", takeProfit: "", lossBy: "amount", loss: "", rewardRatio: "" };
+const PLACE: OrderForm = { kind: "place", accountId: "acct-1", marketId: "m-EURUSD", side: "buy", type: "market", lots: "0.10", price: "", expiry: "", stops: "prices", stopLoss: "", takeProfit: "", stopLossPoints: "", takeProfitPoints: "", lossBy: "amount", loss: "", rewardRatio: "" };
 
 test("a new order needs an explicit account and lots; its body names the account and exact market", () => {
   assert.deepEqual(requestBody({ ...PLACE, accountId: null }), { error: "Choose the account to trade on." });
@@ -327,4 +328,43 @@ test("a source silent for 5 s or more says so beside its price, apart from the q
   const silent = marketQuote([quoteFeed({ quoteReceivedAt: QUOTE_NOW - 7000 })], EURUSD, "buy", true, QUOTE_NOW);
   assert.equal(silent.quote?.ask, 1.08433);
   assert.equal(silent.silence, "No new quote for 7 s");
+});
+
+test("stop distances go to the preview as points from the entry; empty ones are left out", () => {
+  const distance = { ...PLACE, stops: "distance" as const, stopLoss: "1.09", stopLossPoints: " 200 ", takeProfitPoints: "" };
+  assert.deepEqual(requestBody(distance), { body: { accountId: "acct-1", action: "place", marketId: "m-EURUSD", side: "buy", type: "market", lots: "0.10", distance: { stopLoss: "200" } } });
+  assert.equal("distance" in (requestBody({ ...distance, stopLossPoints: "" }) as { body: object }).body, false);
+});
+
+const EURUSD_DEFAULTS: OrderDefaults = { brokerServer: "Demo-Broker", symbol: "EURUSD", lots: "0.2", stopLossPoints: "200", takeProfitPoints: "400" };
+const BTC_DEFAULTS: OrderDefaults = { brokerServer: "Demo-Broker", symbol: "BTCUSD", lots: "0.01", stopLossPoints: null, takeProfitPoints: null };
+
+test("a market's order defaults fill lots and stop distances as the dialog opens on it; the account is still never chosen", () => {
+  const form = withOrderDefaults(newOrderForm("sell", "m-EURUSD"), undefined, EURUSD_DEFAULTS);
+  assert.deepEqual([form.accountId, form.lots, form.stops, form.stopLossPoints, form.takeProfitPoints], [null, "0.2", "distance", "200", "400"]);
+  assert.deepEqual(withOrderDefaults(newOrderForm("buy"), undefined, undefined), newOrderForm("buy"), "no defaults: empty as before");
+  const lotsOnly = withOrderDefaults(newOrderForm("buy"), undefined, BTC_DEFAULTS);
+  assert.deepEqual([lotsOnly.lots, lotsOnly.stops, lotsOnly.stopLossPoints], ["0.01", "prices", ""]);
+});
+
+test("choosing another market replaces the previous market's defaults but keeps what the trader typed", () => {
+  const opened = withOrderDefaults(newOrderForm("buy"), undefined, EURUSD_DEFAULTS);
+  const switched = withOrderDefaults(opened, EURUSD_DEFAULTS, BTC_DEFAULTS);
+  assert.deepEqual([switched.lots, switched.stopLossPoints, switched.takeProfitPoints], ["0.01", "", ""]);
+  const typed = withOrderDefaults({ ...opened, lots: "0.3", stopLossPoints: "150" }, EURUSD_DEFAULTS, undefined);
+  assert.deepEqual([typed.lots, typed.stopLossPoints, typed.takeProfitPoints], ["0.3", "150", ""]);
+});
+
+test("a market's defaults never overwrite what the trader typed, nor the stops they chose", () => {
+  const typed = withOrderDefaults({ ...newOrderForm("buy"), lots: "0.5" }, undefined, EURUSD_DEFAULTS);
+  assert.deepEqual([typed.lots, typed.stopLossPoints, typed.stops], ["0.5", "200", "distance"]);
+  const risk = withOrderDefaults({ ...newOrderForm("buy"), stops: "risk", loss: "10", rewardRatio: "2" }, undefined, EURUSD_DEFAULTS);
+  assert.equal(risk.stops, "risk", "a chosen risk plan stays");
+  const prices = withOrderDefaults({ ...newOrderForm("buy"), stopLoss: "1.09" }, undefined, EURUSD_DEFAULTS);
+  assert.equal(prices.stops, "prices", "a typed stop price stays");
+});
+
+test("a default above the lot cap is sent as it is, so Preview refuses it like a typed value", () => {
+  const form = withOrderDefaults({ ...PLACE, lots: "" }, undefined, { ...EURUSD_DEFAULTS, lots: "5" });
+  assert.equal((requestBody(form) as { body: { lots: string } }).body.lots, "5");
 });

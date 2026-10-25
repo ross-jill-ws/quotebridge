@@ -412,6 +412,7 @@ test("the dashboard's request bodies are REST v1 previews: every order form the 
     ["market", place({})],
     ["stop with expiry", place({ type: "stop", price: "1.10100", expiry })],
     ...(["amount", "balancePercent", "points"] as const).map((lossBy): [string, OrderForm] => [`risk by ${lossBy}`, place({ stops: "risk", lossBy, loss: { amount: "5", balancePercent: "1", points: "200" }[lossBy], rewardRatio: "2" })]),
+    ["stop distances", place({ stops: "distance", stopLossPoints: "200", takeProfitPoints: "400" })],
     ["modify clearing the stop loss", { kind: "modify", accountId: ACCOUNT, ticket: "21", pending: false, original: { price: "1.1", stopLoss: "1.09", takeProfit: "", expiry: "" }, price: "1.1", stopLoss: "", takeProfit: "", expiry: "" }],
     ["pending modify with expiry", { kind: "modify", accountId: ACCOUNT, ticket: "22", pending: true, original: { price: "1.095", stopLoss: "", takeProfit: "", expiry: "" }, price: "1.095", stopLoss: "", takeProfit: "", expiry }],
     ["close", { kind: "close", accountId: ACCOUNT, ticket: "21" }],
@@ -426,6 +427,7 @@ test("the dashboard's request bodies are REST v1 previews: every order form the 
     const preview = (await pending).data;
     assert.equal(preview.status, "preview", name);
     if ("lossBy" in form && form.stops === "risk") assert.ok(preview.normalizedIntent.stopLoss && preview.normalizedIntent.takeProfit, `${name}: the plan sets both stops`);
+    if (name === "stop distances") assert.ok(preview.normalizedIntent.stopLoss && preview.normalizedIntent.takeProfit, "the distances become both stops");
   }
   await noCommand(ea);
   assert.deepEqual((await app.read("/api/v1/requests")).data, [], "previews only: nothing executed");

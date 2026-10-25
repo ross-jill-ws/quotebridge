@@ -68,10 +68,11 @@ Every change goes through a **request**, with its own ID (distinct from MetaTrad
 
 At most one request per account is unresolved at a time; other accounts carry on independently.
 
-Stops are absolute (stop loss and take profit prices, which may be left out, with a warning) or a risk plan: a loss
-as an amount of the account's currency, a percentage of the balance or a distance in points, plus a reward ratio. The
-plan's stops are worked out for the lots you give, rounded toward the entry; a plan that cannot be met is refused,
-never widened. Estimates exclude fees, swaps and slippage and are not a guaranteed loss limit.
+Stops are absolute (stop loss and take profit prices, which may be left out, with a warning), stop distances, or a
+risk plan. Stop distances are points from the entry the preview approves, each optional: a buy's stop loss below the
+entry and its take profit above, a sell's the reverse. A risk plan is a loss as an amount of the account's currency, a
+percentage of the balance or a distance in points, plus a reward ratio. Both are worked out into prices rounded toward
+the entry; stops that cannot be met are refused, never widened. Estimates exclude fees, swaps and slippage and are not a guaranteed loss limit.
 
 Existing trades, including ones placed outside QuoteBridge (they carry a warning), can be modified (stop loss, take
 profit; a pending order's entry and expiry), closed in full or, if pending, cancelled. There are no partial closes or

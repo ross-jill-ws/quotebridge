@@ -26,13 +26,19 @@ market has several feeds, the one with the newest broker quote gives the price. 
 quote unchanged for a while, an offline feed or a lost connection to the app) the dialog shows dashes and the reason,
 never an old price.
 
+Once the market is known, the dialog also fills in that market's **order defaults** (see Settings › Trading): Lots
+and, as **Distance** stops, the stop loss and take profit in points from the entry. Change any of them before Preview.
+Choosing another market replaces the defaults it filled in, but keeps what you typed. Without defaults the fields
+start empty. The trading account is never chosen for you.
+
 Real accounts show their Funds and trades but no actions: QuoteBridge trades demo accounts only. An account whose terminal has not yet said whether it is a demo account cannot trade until it does. An offline account
 shows its last snapshot as stale, or dashes when the app has none since it started.
 
 ## Preview, then send
 
 Every action previews first. The preview shows exactly what the app approved: the account and terminal, the order
-(side, type, lots, price), stop loss and take profit (worked out from a risk plan, if you chose one), expiry, slippage,
+(side, type, lots, price), stop loss and take profit (worked out from stop distances or a risk plan, if you chose
+one), expiry, slippage,
 the lot limits (broker, EA and app caps and the resulting maximum), estimates and warnings, with a countdown to its
 expiry (30 seconds).
 
@@ -89,3 +95,7 @@ Only the app window changes these; a remote browser sees them read-only.
   cannot recall a request already sent: for an emergency, act in MetaTrader. Sent requests are still followed and can
   be reviewed while it is off.
 - **Lot cap for new orders** (1.0 by default) and **Slippage** (20 points by default). A change discards open previews.
+- **Order defaults**: per market (symbol and broker server), the lots, stop loss and take profit a new order starts
+  with; each is optional. Stop loss and take profit are points from the entry, so they follow the price and the side.
+  **Add market…** lists the markets the app knows. A default above the lot cap is refused at Preview, like a typed
+  value. Changing defaults never discards a preview.

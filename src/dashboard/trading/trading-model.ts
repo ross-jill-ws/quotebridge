@@ -4,7 +4,7 @@
 import type { FeedSnapshot } from "../../server/bridge/index.js";
 import { selectMarketSource } from "../../server/bridge/market-source.js";
 import type { SettingsView } from "../../server/settings/index.js";
-import type { TimeShown } from "../../shared/settings-store.js";
+import type { OrderDefaults, TimeShown } from "../../shared/settings-store.js";
 import { browserOffsetMinutes } from "../display-clock.js";
 import { notLiveReason } from "../feeds/feed-row.js";
 import { duration, minuteStamp } from "../format.js";
@@ -168,7 +168,8 @@ export type PlaceForm = {
   kind: "place"; accountId: string | null; marketId: string; side: "buy" | "sell"; type: "market" | "limit" | "stop"; lots: string;
   /** Entry of a limit or stop; `expiry` is the local date and time the input gives (YYYY-MM-DDTHH:MM), or empty. */
   price: string; expiry: string;
-  stops: "prices" | "risk"; stopLoss: string; takeProfit: string; lossBy: LossBy; loss: string; rewardRatio: string;
+  /** Stops as prices, a risk plan, or distances in points from the entry (`stopLossPoints`, `takeProfitPoints`). */
+  stops: "prices" | "risk" | "distance"; stopLoss: string; takeProfit: string; stopLossPoints: string; takeProfitPoints: string; lossBy: LossBy; loss: string; rewardRatio: string;
 };
 type ModifyFields = { price: string; stopLoss: string; takeProfit: string; expiry: string };
 /** A change to an existing trade, bound to its account and ticket; `original` is the trade as the dialog opened it. */
@@ -177,7 +178,25 @@ export type OrderForm = PlaceForm | ModifyForm | { kind: "close" | "cancel"; acc
 
 /** A new order's form as the dialog opens: no account chosen, even when only one could be; the trader picks it. */
 export function newOrderForm(side: "buy" | "sell", marketId = ""): PlaceForm {
-  return { kind: "place", accountId: null, marketId, side, type: "market", lots: "", price: "", expiry: "", stops: "prices", stopLoss: "", takeProfit: "", lossBy: "amount", loss: "", rewardRatio: "" };
+  return { kind: "place", accountId: null, marketId, side, type: "market", lots: "", price: "", expiry: "", stops: "prices", stopLoss: "", takeProfit: "", stopLossPoints: "", takeProfitPoints: "", lossBy: "amount", loss: "", rewardRatio: "" };
+}
+
+const ORDER_DEFAULT_FIELDS = ["lots", "stopLossPoints", "takeProfitPoints"] as const;
+
+/**
+ * The form once its market is `next`, from `previous`: a field that is empty, or still as `previous`'s order defaults
+ * left it, takes `next`'s default (or is cleared); anything the trader typed stays. Stop distances choose Distance stops
+ * unless the trader has entered other stops. The account is never touched: it is never preselected.
+ */
+export function withOrderDefaults(form: PlaceForm, previous: OrderDefaults | undefined, next: OrderDefaults | undefined): PlaceForm {
+  const filled = { ...form };
+  for (const field of ORDER_DEFAULT_FIELDS) {
+    const untouched = !form[field] || form[field] === previous?.[field];
+    if (untouched) filled[field] = next?.[field] ?? "";
+  }
+  const otherStops = form.stops === "risk" || (form.stops === "prices" && (form.stopLoss.trim() || form.takeProfit.trim()));
+  if ((next?.stopLossPoints || next?.takeProfitPoints) && !otherStops) filled.stops = "distance";
+  return filled;
 }
 
 /** A local date and time from a datetime-local input, as the API's UTC time in whole seconds. */
@@ -210,6 +229,9 @@ export function requestBody(form: OrderForm): { body: Record<string, unknown> } 
   if (form.stops === "risk") {
     if (!form.loss.trim() || !form.rewardRatio.trim()) return { error: "Enter the loss and the reward ratio of the risk plan." };
     body.risk = { loss: { [form.lossBy]: form.loss.trim() }, rewardRatio: form.rewardRatio.trim() };
+  } else if (form.stops === "distance") {
+    const distance = { ...(form.stopLossPoints.trim() ? { stopLoss: form.stopLossPoints.trim() } : {}), ...(form.takeProfitPoints.trim() ? { takeProfit: form.takeProfitPoints.trim() } : {}) };
+    if (Object.keys(distance).length) body.distance = distance;
   } else {
     if (form.stopLoss.trim()) body.stopLoss = form.stopLoss.trim();
     if (form.takeProfit.trim()) body.takeProfit = form.takeProfit.trim();

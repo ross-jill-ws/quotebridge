@@ -2,11 +2,11 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apiKeyRows, deleteRecording, parsePort, portChange, portsNote, recordingRows, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
+import { apiKeyRows, deleteRecording, orderDefaultsChange, parsePort, portChange, portsNote, recordingRows, removeOrderDefaults, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
-const VIEW: SettingsView = { trading: { enabled: false, maxLots: "1.0", slippage: 20 }, startWithWindows: true, openWindowAtStartup: false, theme: "system", flashPrices: true, chartColours: "default", timeShown: "broker", ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
+const VIEW: SettingsView = { trading: { enabled: false, maxLots: "1.0", slippage: 20 }, startWithWindows: true, openWindowAtStartup: false, theme: "system", flashPrices: true, chartColours: "default", timeShown: "broker", orderDefaults: [], ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
 
 test("a typed port is a whole number from 1024 to 65535, different from the other port and from the current one", () => {
   assert.deepEqual(parsePort(" 5556 ", "ea", VIEW), { port: 5556 });
@@ -123,4 +123,25 @@ test("the app's lot cap is a positive decimal and slippage whole points; either 
   for (const text of ["0", "-1", "1e2", "abc", ""]) assert.match((tradingChange(trading, "maxLots", text) as { error: string }).error, /positive/, text);
   assert.deepEqual(tradingChange(trading, "slippage", "0"), { trading: { enabled: true, maxLots: "1.0", slippage: 0 } });
   for (const text of ["1.5", "-2", "x", "1000001"]) assert.match((tradingChange(trading, "slippage", text) as { error: string }).error, /whole/, text);
+});
+
+const BTC = { brokerServer: "EasyForex-Demo", symbol: "BTCUSD" };
+
+test("a market's order defaults are saved as typed: each optional, at least one set, positive numbers only", () => {
+  assert.deepEqual(orderDefaultsChange([], BTC, { lots: " 0.05 ", stopLossPoints: "50000", takeProfitPoints: "" }), {
+    orderDefaults: [{ ...BTC, lots: "0.05", stopLossPoints: "50000", takeProfitPoints: null }],
+  });
+  assert.deepEqual(orderDefaultsChange([], BTC, { lots: "", stopLossPoints: "", takeProfitPoints: "" }), { error: "Set at least one of lots, stop loss or take profit, or remove the market." });
+  for (const bad of ["0", "-1", "1e3", "abc"]) {
+    assert.ok("error" in orderDefaultsChange([], BTC, { lots: bad, stopLossPoints: "", takeProfitPoints: "" }), bad);
+    assert.ok("error" in orderDefaultsChange([], BTC, { lots: "", stopLossPoints: bad, takeProfitPoints: "" }), bad);
+  }
+});
+
+test("saving a market again replaces its row in place; removing it keeps the others", () => {
+  const eurusd = { brokerServer: "EasyForex-Demo", symbol: "EURUSD", lots: "0.1", stopLossPoints: null, takeProfitPoints: null };
+  const both = [eurusd, { ...BTC, lots: "0.05", stopLossPoints: null, takeProfitPoints: null }];
+  const changed = orderDefaultsChange(both, eurusd, { lots: "0.2", stopLossPoints: "", takeProfitPoints: "300" });
+  assert.deepEqual("orderDefaults" in changed && changed.orderDefaults.map((d) => [d.symbol, d.lots, d.takeProfitPoints]), [["EURUSD", "0.2", "300"], ["BTCUSD", "0.05", null]]);
+  assert.deepEqual(removeOrderDefaults(both, BTC), [eurusd]);
 });

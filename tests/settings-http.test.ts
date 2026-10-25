@@ -62,6 +62,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     chartColours: "default",
     timeShown: "broker",
     trading: { enabled: false, maxLots: "1.0", slippage: 20 },
+    orderDefaults: [],
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
     manage: true,
@@ -138,11 +139,43 @@ test("trading setting changes discard unused previews, but unrelated settings pr
   }
   await f.post({ trading: { enabled: true, maxLots: "0.5", slippage: 10 } });
   const approved = await preview();
-  await f.post({ theme: "dark", trading: { enabled: true, maxLots: "0.5", slippage: 10 } });
+  await f.post({ theme: "dark", trading: { enabled: true, maxLots: "0.5", slippage: 10 }, orderDefaults: [{ brokerServer: ea.broker, symbol: "EURUSD", lots: "0.2", stopLossPoints: "100", takeProfitPoints: null }] });
   const execution = engine.execute(credential, approved.id, true);
   await answer();
   assert.equal((await ea.receive()).split("|")[0], "X", "unrelated settings did not discard approval");
   assert.equal((await execution).origin, "app-window");
+});
+
+test("the app window saves each market's order defaults; a remote browser reads them but cannot change them", async (t) => {
+  const f = await start(t);
+  const orderDefaults = [{ brokerServer: "EasyForex-Demo", symbol: "BTCUSD", lots: "0.05", stopLossPoints: "50000", takeProfitPoints: "100000" }];
+  const response = await f.post({ orderDefaults });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.orderDefaults, orderDefaults);
+  assert.deepEqual((await f.store.read()).orderDefaults, orderDefaults);
+  assert.deepEqual(f.saved.at(-1)?.orderDefaults, orderDefaults);
+
+  const origin = f.server.httpOrigin;
+  f.server.addRemoteToken("remote-token-0123456789");
+  const exchange = await fetch(`${origin}/session?token=remote-token-0123456789`, { redirect: "manual" });
+  const remote = exchange.headers.get("set-cookie")!.split(";")[0];
+  const refused = await fetch(`${origin}/api/settings`, { method: "POST", headers: { cookie: remote, origin, "content-type": "application/json" }, body: JSON.stringify({ orderDefaults: [] }) });
+  assert.equal(refused.status, 403);
+  await refused.text();
+  const remoteView = (await (await fetch(`${origin}/api/settings`, { headers: { cookie: remote } })).json()) as SettingsView;
+  assert.deepEqual(remoteView.orderDefaults, orderDefaults);
+});
+
+test("invalid order defaults cannot save any settings", async (t) => {
+  const { post, store, saved } = await start(t);
+  const good = { brokerServer: "Demo-Broker", symbol: "EURUSD", lots: "0.1", stopLossPoints: null, takeProfitPoints: null };
+  for (const orderDefaults of [null, {}, [null], [{ ...good, lots: "0" }], [{ ...good, lots: null }], [good, good]]) {
+    const response = await post({ theme: "dark", orderDefaults });
+    assert.equal(response.status, 400, JSON.stringify(orderDefaults));
+    assert.match(response.body.error!, /order defaults/i);
+  }
+  assert.equal((await store.read()).theme, "system");
+  assert.equal(saved.length, 0);
 });
 
 test("invalid trading changes cannot save any settings or notify the host", async (t) => {

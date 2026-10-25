@@ -25,6 +25,7 @@ import {
   shownTime,
   TRADING_UNKNOWN,
   unresolvedByAccount,
+  withOrderDefaults,
   type AccountView,
   type ActionBlock,
   type DialogStage,
@@ -101,6 +102,15 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
   const market: Market | undefined = fixedMarket ?? markets?.find((m) => place && m.id === place.marketId);
   // The server sends a snapshot only when something changes; the time keeps counting in between, as on Feeds.
   const snapshotTime = live.snapshot ? live.snapshot.time + Math.max(0, performance.now() - live.receivedAt) : 0;
+  // A new order starts from its market's order defaults; another market's replace them, keeping what was typed. Only
+  // while editing: an edit of the defaults elsewhere (read every two seconds) never touches a preview.
+  const defaults = market ? trading.orderDefaults.find((d) => d.brokerServer === market.brokerServer && d.symbol === market.symbol) : undefined;
+  const applied = useRef<typeof defaults>();
+  useEffect(() => {
+    if (!place || stage !== "editing") return;
+    setForm((f) => (f.kind === "place" ? withOrderDefaults(f, applied.current, defaults) : f));
+    applied.current = defaults;
+  }, [JSON.stringify(defaults ?? null), stage]);
   const quote = place && market ? marketQuote(live.snapshot?.feeds ?? [], market, place.side, live.status === "live" && !!live.snapshot, snapshotTime) : undefined;
 
   // The markets a new order may use: the account's own broker server's, exactly. Changing account resets the market.
@@ -284,6 +294,9 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
                   <button type="button" role="radio" class="segment" aria-checked={place.stops === "prices"} onClick={() => update({ stops: "prices" })}>
                     Prices
                   </button>
+                  <button type="button" role="radio" class="segment" aria-checked={place.stops === "distance"} onClick={() => update({ stops: "distance" })}>
+                    Distance
+                  </button>
                   <button type="button" role="radio" class="segment" aria-checked={place.stops === "risk"} onClick={() => update({ stops: "risk" })}>
                     Risk plan
                   </button>
@@ -299,6 +312,18 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
                     <span>Take profit (optional)</span>
                     <input class="input number" inputMode="decimal" value={place.takeProfit} onInput={(e) => update({ takeProfit: e.currentTarget.value })} />
                   </label>
+                </>
+              ) : place.stops === "distance" ? (
+                <>
+                  <label class="order-field">
+                    <span>Stop loss, points (optional)</span>
+                    <input class="input number" inputMode="decimal" value={place.stopLossPoints} onInput={(e) => update({ stopLossPoints: e.currentTarget.value })} />
+                  </label>
+                  <label class="order-field">
+                    <span>Take profit, points (optional)</span>
+                    <input class="input number" inputMode="decimal" value={place.takeProfitPoints} onInput={(e) => update({ takeProfitPoints: e.currentTarget.value })} />
+                  </label>
+                  <p class="order-hint wide">Points from the entry the preview approves: a buy's stop loss below it, a sell's above. Rounded toward the entry, never widened.</p>
                 </>
               ) : (
                 <>
