@@ -7,11 +7,15 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer } from "../src/server/index.js";
-import { BridgeInstaller } from "../src/server/installer/index.js";
+import { openDatabase, type AppDatabase } from "../src/server/database.js";
+import type { TradingPreview } from "../src/server/trading/types.js";
+import { BridgeInstaller, nodeInstallerFileSystem } from "../src/server/installer/index.js";
 import type { TerminalsState } from "../src/server/terminals/index.js";
 import { SettingsStore } from "../src/shared/settings-store.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { freePort } from "./free-port.js";
+import { deliver, heartbeat } from "./account-fixtures.js";
+import { FakeEA } from "./fake-ea.js";
 import { DLL_4_3_5, InstallerFixture, SUCCESSFUL_COMPILE, readIfExists } from "./installer-fixtures.js";
 import { FAILED_LOG, FakeMetaEditor, type FakeCompile } from "./metaeditor-fixtures.js";
 import { MachineFixture, spikeMachine } from "./terminal-fixtures.js";
@@ -50,12 +54,15 @@ async function previousAppVersion(t: TestContext) {
     });
 
   /** Starts the server of the newer app version and waits until the start-up work is done. */
-  const startNewer = async (options: { bundle: { sourceFolder: string; dllFolder: string }; eaPort: number; compile?: FakeCompile }) => {
+  const startNewer = async (options: { bundle: { sourceFolder: string; dllFolder: string }; eaPort: number; compile?: FakeCompile; database?: AppDatabase; now?: () => number }) => {
     const metaEditor = new FakeMetaEditor(options.compile ?? SUCCESSFUL_COMPILE);
     const server = await startServer({
       eaPort: options.eaPort,
       httpPort: await freePort(),
       windowToken: "window-token-0123456789",
+      database: options.database,
+      now: options.now,
+      settings: { store: settings },
       terminals: {
         appDataFolder: fixture.appData,
         settings,
@@ -84,6 +91,79 @@ async function previousAppVersion(t: TestContext) {
 
   return { fixture, machine, spike, settings, oldBundle, cmc, easyForex, installWith, manage, decline, startNewer };
 }
+
+/** Synthetic durable admission from the previous run; no order is sent by this fixture. */
+function unfinishedPreview(terminalId: string): TradingPreview {
+  return {
+    id: "a".repeat(32), createdAt: 100, expiresAt: 30_100,
+    intent: { action: "new", accountId: "fixture-account", symbol: "EURUSD", kind: 0, ticket: "0", lots: "0.1", price: "1.10", stopLoss: "0", takeProfit: "0", expiry: null, brokerExpiry: 0, slippage: 20 },
+    source: { accountId: "fixture-account", session: "fixture-original-session", terminalId, brokerServer: "Fixture-Demo", login: "12345678" },
+    marketId: "fixture-market", target: null,
+    settings: { enabled: true, maxLots: "1.0", slippage: 20 },
+    limits: { broker: "100", ea: "1", app: "1", maxLots: "1" },
+    estimates: { loss: null, reward: null, currency: "USD" }, warnings: [],
+  };
+}
+
+for (const settlement of ["review", "result"] as const) test(`restart defers only the unresolved terminal through timeout/login changes; ${settlement} resumes its update`, { timeout: 30000 }, async (t) => {
+  const app = await previousAppVersion(t);
+  const eaPort = await freePort();
+  await app.installWith(app.oldBundle, app.cmc, eaPort);
+  await app.installWith(app.oldBundle, app.easyForex, eaPort);
+  await app.manage(app.cmc, app.easyForex);
+  const preview = unfinishedPreview(app.cmc.terminalId);
+  let database = await openDatabase(app.fixture.appData);
+  await database.journal.admit(preview, "app-window", 200);
+  await database.checkpointAndClose();
+  database = await openDatabase(app.fixture.appData);
+  t.after(() => database.checkpointAndClose());
+  const newer = await app.fixture.bundle("bundle-new", { changeEa: NEW_EA_MARKER });
+  const run = await app.startNewer({ bundle: newer, eaPort, database, now: () => 60_000 });
+  const web = await dashboard(run.server);
+  const ea = new FakeEA({ session: preview.source.session, terminal: app.cmc.terminalId, broker: preview.source.brokerServer,
+    identity: { installationFolder: app.cmc.installationFolder, dataFolder: app.cmc.dataFolder } }).connect(`tcp://127.0.0.1:${eaPort}`);
+  t.after(() => ea.close());
+  await heartbeat(run.server.bridge, ea);
+  await deliver(run.server.bridge, ea, `I|1|${ea.session}|87654321|USD|1|1|1|1.0`);
+  await web.post("/api/terminals/rescan", {});
+
+  assert.doesNotMatch(await mq4(app.cmc.dataFolder), new RegExp(NEW_EA_MARKER), "restart/timeout must not free the original terminal");
+  assert.match(await mq4(app.easyForex.dataFolder), new RegExp(NEW_EA_MARKER), "another terminal updates independently");
+  assert.equal(run.server.trading!.unresolvedCount(), 1);
+  assert.equal((await run.server.trading!.get(web.credential, preview.id)).outcome, "unknown");
+  assert.equal((await web.post("/api/terminals/install", { terminalIds: [app.cmc.terminalId] })).status, 409, "explicit recompile cannot bypass the request lock");
+  assert.equal((await web.post("/api/terminals/remove", { terminalId: app.cmc.terminalId })).status, 409, "explicit removal cannot interrupt unresolved execution");
+  if (settlement === "review") await run.server.trading!.review(web.credential, preview.id, "Checked open orders and account history in MetaTrader", true);
+  else await deliver(run.server.bridge, ea, `X|1|${ea.session}|${preview.id}|${preview.source.login}|succeeded|42|0|Confirmed operation`);
+  for (let n = 0; n < 200 && !(await mq4(app.cmc.dataFolder)).includes(NEW_EA_MARKER); n++) await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.match(await mq4(app.cmc.dataFolder), new RegExp(NEW_EA_MARKER), "definitive result or review automatically resumes the deferred update");
+  await run.close();
+});
+
+test("startup recovery does not remove a formerly locked EA while its original request is unresolved", { timeout: 30000 }, async (t) => {
+  const app = await previousAppVersion(t);
+  const eaPort = await freePort();
+  await app.installWith(app.oldBundle, app.cmc, eaPort);
+  const ex4 = join(app.cmc.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4");
+  const installer = new BridgeInstaller({ appDataFolder: app.fixture.appData, bundle: app.oldBundle,
+    fs: { ...nodeInstallerFileSystem, removeFile: async (path) => {
+      if (path === ex4) throw Object.assign(Error("fixture EA locked"), { code: "EBUSY" });
+      await nodeInstallerFileSystem.removeFile(path);
+    } },
+  });
+  assert.deepEqual((await installer.remove(app.cmc)).pending, ["MQL4/Experts/QuoteBridge.ex4"]);
+  const database = await openDatabase(app.fixture.appData);
+  t.after(() => database.checkpointAndClose());
+  const preview = unfinishedPreview(app.cmc.terminalId);
+  await database.journal.admit(preview, "app-window", 200);
+  const run = await app.startNewer({ bundle: app.oldBundle, eaPort, database });
+  assert.ok(await readIfExists(ex4), "startup recovery must defer terminal file removal too");
+  const web = await dashboard(run.server);
+  await run.server.trading!.review(web.credential, preview.id, "Checked open orders and account history in MetaTrader", true);
+  for (let n = 0; n < 200 && await readIfExists(ex4); n++) await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(await readIfExists(ex4), undefined, "review resumes pending removal recovery");
+  await run.close();
+});
 
 const mq4 = (dataFolder: string) => readFile(join(dataFolder, "MQL4", "Experts", "QuoteBridge.mq4"), "utf8");
 const template = (dataFolder: string) => readFile(join(dataFolder, "templates", "QuoteBridge.tpl"), "utf8");
@@ -215,7 +295,7 @@ async function dashboard(server: { httpOrigin: string }) {
     }
     assert.fail("the install never finished");
   };
-  return { post, state, idle };
+  return { post, state, idle, credential: { headers: { cookie, origin } } };
 }
 
 test("a terminal unticked on the setup screen is never installed: not by setup, not by a rescan, not by updates on later starts", { timeout: 30000 }, async (t) => {

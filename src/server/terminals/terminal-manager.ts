@@ -66,9 +66,8 @@ export interface TerminalManagerRuntime {
   eaPort: number;
   now: () => number;
   /**
-   * True while the terminal has an in-flight order request; its update then waits (ADR 9).
-   * Milestone 1 sends no order requests, so nothing is ever in flight. Milestone 4 supplies this
-   * and runs the held-back updates once the requests settle.
+   * True while the terminal has a reserved or unresolved request, including unknown outcomes.
+   * Timeout/login changes never release it; only definitive evidence or review does (ADR 9).
    */
   hasInFlightOrderRequests?: (terminalId: string) => boolean;
   /** A broker server's clock, or null while nothing was observed or set (ADR 11). */
@@ -183,6 +182,8 @@ export class TerminalManager {
   private entries: Entry[] = [];
   private scanning: Promise<void>;
   private queue: Promise<void> = Promise.resolve();
+  private updateChecks: Promise<void> = Promise.resolve();
+  private recoveryDeferred = false;
   private lastAttention: TerminalAttention[] = [];
   private closed = false;
   /** Aborted by `close()`: cancels a compile under way. */
@@ -204,12 +205,25 @@ export class TerminalManager {
     this.startedAt = runtime.now();
     // Interrupted installs are rolled back and locked removals retried before the first scan; then
     // out-of-date managed terminals are queued for their update.
-    this.scanning = this.installer
-      .recover()
+    this.scanning = this.recoverTerminalFiles(true)
       .catch((e) => console.error(`[QuoteBridge] install recovery failed: ${(e as Error).message}`))
       .then(() => this.scan())
       .then(() => this.queueUpdates());
     void this.scanning.then(() => this.emit());
+  }
+
+  /** Admission must not race a queued install, compile or removal. */
+  availableForTrading(terminalId: string): boolean {
+    return !this.closed && !this.operations.has(terminalId);
+  }
+
+  /** Result/review evidence may release a deferred update; repeated changes are serialized. */
+  requestsChanged(): void {
+    this.updateChecks = this.updateChecks.then(async () => {
+      await this.scanning;
+      if (!this.closed && this.recoveryDeferred) await this.recoverTerminalFiles();
+      if (!this.closed) await this.queueUpdates();
+    }).catch(() => console.error("[QuoteBridge] deferred EA updates could not be checked"));
   }
 
   /** A known terminal's data folder (where its HST files are), as of the last scan. */
@@ -309,17 +323,28 @@ export class TerminalManager {
     }
     await this.scanning;
     const entries = this.supportedEntries(body.install);
+    for (const entry of entries) {
+      this.assertNoUnresolved(entry);
+      if (this.operations.has(entry.terminalId!)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
+    }
+    // Claim before saving setup: request admission sees the queue immediately.
+    for (const entry of entries) this.setOperation(entry.terminalId!, "queued");
     const startWithWindows = body.startWithWindows;
     const ticked = new Set(body.install);
     const declined = this.entries.filter((e) => isSupported(e) && !ticked.has(e.terminalId!));
-    await this.saveSettings((s) => {
-      // Checked inside the update, so two setup requests at once cannot both complete it.
-      if (s.setupCompleted) throw new TerminalRequestError(409, "Setup is already complete. Use the Terminals view.");
-      for (const entry of entries) manage(s, entry);
-      for (const entry of declined) decline(s, entry);
-      s.startWithWindows = startWithWindows;
-      s.setupCompleted = true;
-    });
+    try {
+      await this.saveSettings((s) => {
+        // Checked inside the update, so two setup requests at once cannot both complete it.
+        if (s.setupCompleted) throw new TerminalRequestError(409, "Setup is already complete. Use the Terminals view.");
+        for (const entry of entries) manage(s, entry);
+        for (const entry of declined) decline(s, entry);
+        s.startWithWindows = startWithWindows;
+        s.setupCompleted = true;
+      });
+    } catch (e) {
+      for (const entry of entries) this.setOperation(entry.terminalId!, null);
+      throw e;
+    }
     this.enqueueInstalls(entries);
   }
 
@@ -331,6 +356,7 @@ export class TerminalManager {
     const settings = await this.options.settings.read();
     const entries = this.supportedEntries(ids, settings);
     for (const entry of entries) {
+      this.assertNoUnresolved(entry);
       if (this.operations.has(entry.terminalId!)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
     }
     // Claimed before the first await, so a second request (a double click) finds them taken.
@@ -352,11 +378,13 @@ export class TerminalManager {
     await this.scanning;
     const settings = await this.options.settings.read();
     const [entry] = this.supportedEntries([id], settings);
+    this.assertNoUnresolved(entry);
     if (this.operations.has(id)) throw new TerminalRequestError(409, `${entry.name} is already being installed or removed.`);
     this.setOperation(id, "removing");
     this.installErrors.delete(id);
     this.emit();
     try {
+      this.assertNoUnresolved(entry);
       const result = await this.installer.remove(target(entry));
       await this.saveSettings((s) => decline(s, entry));
       return result;
@@ -401,7 +429,7 @@ export class TerminalManager {
     this.listeners.clear();
     this.stopping.abort();
     let timer: NodeJS.Timeout | undefined;
-    await Promise.race([this.queue, new Promise((resolve) => (timer = setTimeout(resolve, CLOSE_WAIT_MS)))]);
+    await Promise.race([Promise.allSettled([this.scanning, this.updateChecks, this.queue]), new Promise((resolve) => (timer = setTimeout(resolve, CLOSE_WAIT_MS)))]);
     clearTimeout(timer);
   }
 
@@ -425,9 +453,10 @@ export class TerminalManager {
       const outdated: Entry[] = [];
       for (const entry of this.withManaged(settings)) {
         if (!isSupported(entry) || !settings.managedTerminals.some((m) => m.terminalId === entry.terminalId)) continue;
-        if (this.runtime.hasInFlightOrderRequests?.(entry.terminalId!)) continue;
+        if (this.operations.has(entry.terminalId!) || this.runtime.hasInFlightOrderRequests?.(entry.terminalId!)) continue;
         try {
-          if (await this.installer.updateReason(target(entry), { eaPort: this.runtime.eaPort })) outdated.push(entry);
+          if (await this.installer.updateReason(target(entry), { eaPort: this.runtime.eaPort }) &&
+            !this.closed && !this.operations.has(entry.terminalId!) && !this.runtime.hasInFlightOrderRequests?.(entry.terminalId!)) outdated.push(entry);
         } catch (e) {
           console.error(`[QuoteBridge] checking ${entry.name} for an EA update failed: ${(e as Error).message}`);
         }
@@ -443,6 +472,11 @@ export class TerminalManager {
     if (this.closed) return void this.setOperation(id, null);
     // An update waiting in the queue is dropped when the user stopped managing the terminal meanwhile.
     if (options.onlyIfManaged && !(await this.options.settings.read()).managedTerminals.some((m) => m.terminalId === id)) {
+      this.setOperation(id, null);
+      return this.emit();
+    }
+    // Recheck after the async settings read and the queue wait, immediately before compile/write.
+    if (this.closed || this.runtime.hasInFlightOrderRequests?.(id)) {
       this.setOperation(id, null);
       return this.emit();
     }
@@ -466,6 +500,25 @@ export class TerminalManager {
     } finally {
       this.setOperation(id, null);
       this.emit();
+    }
+  }
+
+  private async recoverTerminalFiles(cleanStaging = false) {
+    const claimed = new Set<string>();
+    this.recoveryDeferred = false;
+    try {
+      await this.installer.recover((id) => {
+        if (this.closed || this.operations.has(id) || this.runtime.hasInFlightOrderRequests?.(id)) {
+          this.recoveryDeferred = true;
+          return false;
+        }
+        // Recovery writes terminal files too. Hold the same admission barrier until it drains.
+        this.setOperation(id, "installing");
+        claimed.add(id);
+        return true;
+      }, { cleanStaging });
+    } finally {
+      for (const id of claimed) this.setOperation(id, null);
     }
   }
 
@@ -574,6 +627,13 @@ export class TerminalManager {
       hint,
       attention,
     };
+  }
+
+  private assertNoUnresolved(entry: Entry) {
+    if (this.closed) throw new TerminalRequestError(503, "Terminal management is stopping.");
+    if (this.runtime.hasInFlightOrderRequests?.(entry.terminalId!)) {
+      throw new TerminalRequestError(409, `${entry.name} has an unresolved order request. Wait for a definitive result or review it before changing bridge files.`);
+    }
   }
 
   private setOperation(id: string, operation: TerminalOperation | null) {

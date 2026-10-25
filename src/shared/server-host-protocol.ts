@@ -74,6 +74,8 @@ export type ServerStatus = {
   terminalsNeedingAttention: TerminalAttentionStatus[];
   /** EA messages the server could not parse since start. */
   invalidMessages: number;
+  /** Dispatched requests awaiting a definitive outcome or explicit review. Absent in older hosts. */
+  unresolvedRequests?: number;
 };
 
 /** Server → host. */

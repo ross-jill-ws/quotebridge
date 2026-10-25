@@ -379,13 +379,15 @@ export class BridgeInstaller {
 
   /**
    * Run on server start: rolls back installs interrupted by a crash or power loss (from their
-   * restoration manifests) and retries removals of files that were locked.
+   * restoration manifests) and retries removals of files that were locked. The manager may
+   * claim each terminal or defer it while its dispatched request remains unresolved.
    */
-  async recover(): Promise<{ rolledBack: string[]; removed: string[]; pending: string[] }> {
+  async recover(claimTerminal: (terminalId: string) => boolean = () => true, options: { cleanStaging?: boolean } = {}): Promise<{ rolledBack: string[]; removed: string[]; pending: string[] }> {
     const report = { rolledBack: [] as string[], removed: [] as string[], pending: [] as string[] };
     // Staging left behind by an interrupted install holds nothing worth keeping.
-    await this.fs.removeFolder(join(this.options.appDataFolder, "staging"));
+    if (options.cleanStaging !== false) await this.fs.removeFolder(join(this.options.appDataFolder, "staging"));
     for (const terminalId of await this.records.terminalIds()) {
+      if (!claimTerminal(terminalId)) continue;
       const runs = join(this.records.folderFor(terminalId), "runs");
       const committedRun = (await this.records.read(terminalId).catch(() => undefined))?.installed?.runId;
       for (const run of await this.fs.listFolder(runs)) {

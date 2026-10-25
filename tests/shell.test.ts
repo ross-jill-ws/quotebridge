@@ -177,6 +177,46 @@ test("Windows shutdown or logoff during Quit joins the same stop path and exits 
   assert.deepEqual(exits, [0]);
 });
 
+test("Quit warns once with unresolved requests, survives crash state, and still joins one stop path", async () => {
+  const { shell, supervisor, notifications, exits } = setup();
+  shell.start();
+  supervisor.emit({ type: "server-status", status: {
+    feeds: { total: 0, online: 0, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 },
+    terminals: [], terminalsNeedingAttention: [], invalidMessages: 0, unresolvedRequests: 2,
+  } });
+  supervisor.emit({ type: "state", status: { ...status(null), serverStatus: {
+    feeds: { total: 0, online: 0, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 },
+    terminals: [], terminalsNeedingAttention: [], invalidMessages: 0, unresolvedRequests: 0,
+  } } });
+  const quit = shell.quit("quit");
+  const shutdown = shell.quit("shutdown");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].body, /2 unresolved/i);
+  assert.match(notifications[0].body, /MetaTrader/i);
+  assert.deepEqual(supervisor.stops, ["quit"]);
+  assert.deepEqual(exits, []);
+  supervisor.finishStop({ reason: "quit", outcome: "stopped", checkpoint: true });
+  await Promise.all([quit, shutdown]);
+  assert.deepEqual(exits, [0]);
+});
+
+test("fresh recovered status can clear unresolved work; absent counts do not erase it", async () => {
+  for (const recovered of [false, true]) {
+    const { shell, supervisor, notifications } = setup();
+    const summary = {
+      feeds: { total: 0, online: 0, offline: 0, stale: 0, noQuote: 0, duplicateCharts: 0, dropped: 0 },
+      terminals: [], terminalsNeedingAttention: [], invalidMessages: 0,
+    };
+    supervisor.emit({ type: "server-status", status: { ...summary, unresolvedRequests: 1 } });
+    supervisor.emit({ type: "server-status", status: summary });
+    if (recovered) supervisor.emit({ type: "server-status", status: { ...summary, unresolvedRequests: 0 } });
+    const quitting = shell.quit("quit");
+    assert.equal(notifications.length, recovered ? 0 : 1);
+    supervisor.finishStop({ reason: "quit", outcome: "stopped", checkpoint: true });
+    await quitting;
+  }
+});
+
 test("after setup, Start with Windows registers the login item starting hidden; off removes it", () => {
   const on = setup();
   on.shell.start();

@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import { inProcessTransportPair, ipcTransport, type HostTransport } from "../src/shared/host-transport.js";
 import type { HostMessage, ServerMessage, ServerStartConfig } from "../src/shared/server-host-protocol.js";
 import { runServerHost, type ServerHostOptions } from "../src/server/host.js";
+import { openDatabase } from "../src/server/database.js";
+import type { TradingPreview } from "../src/server/trading/types.js";
 import { FakeClock, FakeEA } from "./fake-ea.js";
 import { terminalIdFor } from "../src/shared/terminal-catalog/index.js";
 import { MachineFixture } from "./terminal-fixtures.js";
@@ -125,7 +127,7 @@ test("the server process answers start with ready and its bound ports, and stop 
   assert.equal(ready.httpPort, config.httpPort);
   assert.equal(ready.httpOrigin, `http://127.0.0.1:${config.httpPort}`);
   assert.equal(ready.databaseFile, join(config.dataFolder, "quotebridge.duckdb"));
-  assert.equal(ready.schemaVersion, 8);
+  assert.equal(ready.schemaVersion, 9);
 
   host.send({ type: "stop" });
   const stopped = await host.next("stopped", undefined, 10000);
@@ -146,7 +148,7 @@ test("after stop the database is checkpointed and reopens cleanly with its schem
   second.send({ type: "start", config: { ...config, eaPort: await freePort(), httpPort: await freePort() } });
   const reopened = await second.next("ready");
   assert.equal(reopened.databaseFile, ready.databaseFile);
-  assert.equal(reopened.schemaVersion, 8);
+  assert.equal(reopened.schemaVersion, 9);
 });
 
 test("status reflects feeds and canonical terminal presence as verified EAs say hello", { timeout: 30000 }, async (t) => {
@@ -163,6 +165,7 @@ test("status reflects feeds and canonical terminal presence as verified EAs say 
     terminals: [],
     terminalsNeedingAttention: [],
     invalidMessages: 0,
+    unresolvedRequests: 0,
   });
 
   // The wire's legacy TerminalId is deliberately different: only the catalog's path pair supplies identity.
@@ -187,6 +190,28 @@ test("a (re)started server sends its first status right after ready, so main dro
   const first = await host.next("status", undefined, 2000);
   assert.deepEqual(first.status.terminalsNeedingAttention, []);
   assert.equal(first.status.feeds.total, 0);
+});
+
+test("initial and requested host status include recovered unresolved trading requests", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const database = await openDatabase(config.dataFolder);
+  const preview: TradingPreview = {
+    id: "b".repeat(32), createdAt: 100, expiresAt: 30100,
+    intent: { action: "new", accountId: "fixture-account", symbol: "EURUSD", kind: 0, ticket: "0", lots: "0.1", price: "1.1", stopLoss: "0", takeProfit: "0", expiry: null, brokerExpiry: 0, slippage: 20 },
+    source: { accountId: "fixture-account", session: "fixture-session", terminalId: "fixture-terminal", brokerServer: "Fixture-Demo", login: "10000001" },
+    marketId: "fixture-market", target: null,
+    settings: { enabled: true, maxLots: "1", slippage: 20 },
+    limits: { broker: "100", ea: "1", app: "1", maxLots: "1" },
+    estimates: { loss: null, reward: null, currency: "USD" }, warnings: [],
+  };
+  try { await database.journal.admit(preview, "app-window", 200); }
+  finally { await database.checkpointAndClose(); }
+  const host = hostInProcess(t, { statusIntervalMs: 60_000 });
+  host.send({ type: "start", config });
+  await host.next("ready");
+  assert.equal((await host.next("status")).status.unresolvedRequests, 1);
+  host.send({ type: "get-status" });
+  assert.equal((await host.next("status")).status.unresolvedRequests, 1);
 });
 
 test("status follows a feed going offline after the heartbeat gap, with no EA message", { timeout: 30000 }, async (t) => {
@@ -238,7 +263,31 @@ test("a taken EA port fails start with a structured port-in-use error, and start
 
   host.send({ type: "start", config: { ...config, eaPort: await freePort() } });
   const ready = await host.next("ready");
-  assert.equal(ready.schemaVersion, 8, "the database closed by the failed start opens again");
+  assert.equal(ready.schemaVersion, 9, "the database closed by the failed start opens again");
+});
+
+test("a failing onRunning hook releases the server before reporting start failure and permits retry", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  let fail = true;
+  let leaked: Parameters<NonNullable<ServerHostOptions["onRunning"]>>[0] | undefined;
+  const host = hostInProcess(t, { onRunning: (server) => {
+    if (fail) {
+      leaked = server;
+      throw new Error("fixture startup failure");
+    }
+  } });
+  // Also cleans up the deliberately broken implementation during the RED run.
+  t.after(async () => { await leaked?.close(); });
+  host.send({ type: "start", config });
+  const failed = await host.next("error");
+  assert.equal(failed.during, "start");
+  assert.match(failed.error.message, /fixture startup failure/);
+  assert.equal(await canBind(config.eaPort), true, "failed start releases EA port");
+  assert.equal(await canBind(config.httpPort), true, "failed start releases HTTP port");
+  fail = false;
+  host.send({ type: "start", config });
+  await host.next("ready");
+  assert.equal((await stopHost(host)).checkpoint, true);
 });
 
 test("a database held by another process fails start with a database error", { timeout: 30000 }, async (t) => {

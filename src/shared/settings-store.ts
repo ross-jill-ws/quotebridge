@@ -32,7 +32,14 @@ export type ChartColours = (typeof CHART_COLOURS)[number];
 export const TIMES_SHOWN = ["broker", "local", "utc"] as const;
 export type TimeShown = (typeof TIMES_SHOWN)[number];
 
+export interface TradingSettings {
+  enabled: boolean;
+  maxLots: string;
+  slippage: number;
+}
+
 export interface Settings {
+  trading: TradingSettings;
   format: typeof SETTINGS_FORMAT;
   managedTerminals: ManagedTerminal[];
   declinedTerminals: DeclinedTerminal[];
@@ -62,6 +69,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   format: SETTINGS_FORMAT,
+  trading: { enabled: false, maxLots: "1.0", slippage: 20 },
   managedTerminals: [],
   declinedTerminals: [],
   // 5555 is the legacy default, so existing templates keep working.
@@ -141,6 +149,7 @@ function withDefaults(stored: unknown): Settings {
   const defaults = structuredClone(DEFAULT_SETTINGS) as Settings;
   return {
     format: SETTINGS_FORMAT,
+    trading: isTradingSettings(partial.trading) ? { ...partial.trading } : defaults.trading,
     managedTerminals: Array.isArray(partial.managedTerminals) ? partial.managedTerminals : defaults.managedTerminals,
     declinedTerminals: Array.isArray(partial.declinedTerminals) ? partial.declinedTerminals : defaults.declinedTerminals,
     ports: readPorts(partial.ports, defaults.ports),
@@ -171,7 +180,21 @@ function isPort(port: unknown): port is number {
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
+/** Complete, strict trading settings; shared by persisted updates and the app-window boundary. */
+export function isTradingSettings(value: unknown): value is TradingSettings {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const given = value as Record<string, unknown>;
+  return Object.keys(given).length === 3
+    && Object.keys(given).every((key) => ["enabled", "maxLots", "slippage"].includes(key))
+    && typeof given.enabled === "boolean"
+    && typeof given.maxLots === "string"
+    && /^(?:0|[1-9]\d{0,14})(?:\.\d{1,10})?$/.test(given.maxLots)
+    && /[1-9]/.test(given.maxLots)
+    && typeof given.slippage === "number" && Number.isInteger(given.slippage) && given.slippage >= 0 && given.slippage <= 10000;
+}
+
 function validate(settings: Settings): void {
+  if (!isTradingSettings(settings.trading)) throw new Error("Invalid trading settings: expected enabled, positive decimal maxLots and nonnegative whole slippage.");
   for (const [name, port] of Object.entries(settings.ports)) {
     if (!isPort(port)) throw new Error(`The ${name} port must be a whole number from 1 to 65535, not ${port}`);
   }

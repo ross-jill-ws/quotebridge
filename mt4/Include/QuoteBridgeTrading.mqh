@@ -102,6 +102,12 @@ void ExecuteDemo(string &f[]){
  if(bid<=0||ask<bid||point<=0||step<=0||MarketInfo(symbol,MODE_TRADEALLOWED)==0){TradeResult(request,login,"rejected",0,9004,"Quotes or trading unavailable");return;}
  datetime quoteTime=(datetime)MarketInfo(symbol,MODE_TIME);
  if(TimeCurrent()-quoteTime>30||quoteTime-TimeCurrent()>5){TradeResult(request,login,"rejected",0,9012,"Stale symbol quote; wait for fresh ticks");return;}
+ // Broker slippage alone is relative to OrderSend/OrderClose's supplied price. Keep that price
+ // anchored to the approved preview, not a newer quote that could silently widen the approval.
+ if((action=="N"&&!pending)||action=="C"){
+  double approvedQuote=(action=="C"?(buy?bid:ask):(buy?ask:bid));
+  if(price<=0||MathAbs(approvedQuote-price)>slippage*point+0.00000001){TradeResult(request,login,"rejected",0,9014,"Price moved beyond approved slippage; preview again");return;}
+ }
  double tickSize=SymbolInfoDouble(symbol,SYMBOL_TRADE_TICK_SIZE);if(tickSize<=0)tickSize=point;
  if(action=="N"||action=="M"){
   if((sl>0&&MathAbs(sl/tickSize-MathRound(sl/tickSize))>0.0001)||(tp>0&&MathAbs(tp/tickSize-MathRound(tp/tickSize))>0.0001)||(pending&&MathAbs(price/tickSize-MathRound(price/tickSize))>0.0001)){
@@ -128,10 +134,10 @@ void ExecuteDemo(string &f[]){
  if(!TradeMarker(key,-1)){TradeResult(request,login,"rejected",0,9011,"Could not persist duplicate guard; no order sent");return;}
  ResetLastError();bool success=false;int resultTicket=ticket;
  if(action=="N"){
-  double entry=pending?price:(buy?ask:bid);
+  double entry=price;
   resultTicket=OrderSend(symbol,kind,lots,NormalizeDouble(entry,digits),slippage,NormalizeDouble(sl,digits),NormalizeDouble(tp,digits),"QB:"+StringSubstr(request,0,24),DemoMagicNumber,expiry,clrNONE);
   success=resultTicket>0;
- }else if(action=="C")success=OrderClose(ticket,OrderLots(),NormalizeDouble(buy?bid:ask,digits),slippage,clrNONE);
+ }else if(action=="C")success=OrderClose(ticket,OrderLots(),NormalizeDouble(price,digits),slippage,clrNONE);
  else if(action=="D")success=OrderDelete(ticket,clrNONE);
  else if(action=="M")success=OrderModify(ticket,pending?NormalizeDouble(price,digits):OrderOpenPrice(),NormalizeDouble(sl,digits),NormalizeDouble(tp,digits),pending?expiry:0,clrNONE);
  int error=GetLastError();

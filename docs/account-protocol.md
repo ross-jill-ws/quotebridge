@@ -117,7 +117,13 @@ X|1|chart-example|0123456789abcdef0123456789abcdef|12345678|succeeded|101|0|MT4 
 - `status=unknown`: ticket `0`, nonnegative code. This is not a retryable rejection.
 - Code is an integer `0..2147483647`; message is bounded text, not a safe diagnostic excerpt.
 
-The existing app-to-EA `X` command is distinct: exactly 24 fields, interpreted by `ExecuteDemo`. This parser handles only the nine-field EA result and does not authorize dispatch. EA durable duplicate markers remain unchanged; never automatically resend an ambiguous execution.
+The app-to-EA `X` command is distinct: exactly 24 fields, interpreted by `ExecuteDemo`:
+
+```text
+X|1|session|request|login|broker|action|kind|symbol|ticket|lots|price|sl|tp|expiry|slippage|cap|targetOpenTime|targetOpenPrice|targetLots|targetSL|targetTP|targetExpiry|deadline
+```
+
+Actions: `N` new, `M` modify, `C` full close, `D` pending cancellation. `expiry` and fingerprint times use broker seconds; `deadline` is the preview expiry in UTC seconds. New orders use zero target fields. Existing actions include the full original target fingerprint. `price` is the approved entry for placement, pending entry for modification, or current approved exit quote for full close. Market placement/close recheck price movement against approved slippage and pass the approved price (not a substituted current quote) to the broker operation. The cap constrains new volume only. This parser handles only the nine-field EA result and does not authorize dispatch. EA durable duplicate markers remain unchanged; never automatically resend an ambiguous execution. See [Trading request engine](trading-engine.md).
 
 ## `E`: read error (6 fields)
 
@@ -154,7 +160,7 @@ Financial fields and identities are strings; flags are booleans; counts, kind, p
 
 ## Account/source service
 
-`BridgeServer.accounts` is the shared internal read foundation. It is not an execution adapter and does not add public trading routes; the REST redesign, preview engine and trading UI are separate work.
+`BridgeServer.accounts` is the shared internal read/correlation foundation. It does not add public trading routes. The [request engine](trading-engine.md) owns mutation authorization and durable admission; REST and UI integrate with that engine.
 
 - `list()` / `get(accountId)` return deduplicated identities, source connection state, the latest **complete** single-terminal snapshot, Funds, positions and pending orders. `ready` describes readiness at capture. Account provenance separates `capturedBrokerTime` (broker seconds) from `receivedAt` (UTC epoch milliseconds); conditions provenance uses `receivedAt`, since `P` supplies quote time but no separate capture clock. Values absent after restart are `null`, with `state: "unavailable"`; retained in-process snapshots become `stale` after five seconds or source retirement. Empty order collections under `unavailable` do not assert the trading account has no orders.
 - `read(accountId)` requests a fresh `V` snapshot with a five-second deadline. Concurrent reads of the same source share its one frozen EA page stream and receive separate returned objects. Pages can arrive out of order, but missing, repeated, overlapping, duplicate-ticket or inconsistent pages never publish. Invalidating a read discards its pages rather than resuming it later.
@@ -162,6 +168,7 @@ Financial fields and identities are strings; flags are booleans; counts, kind, p
 - The optional `requireExecutor: true` argument to either read requires exactly one ready demo executor with a known positive EA cap, never a fallback. Permission/executor changes invalidate these reads. A fresh `V` reporting not-ready is rejected; its response is bound to the executor, even if another complete source wins ordinary account discovery ordering. This is a prerequisite for, not an authorization to send, a trade.
 - `executor(accountId)` distinguishes `zero`, `multiple`, `not-ready`, `real-account` and `ready`. Source flags and the EA cap remain explicit; the app never sets MetaTrader permissions.
 - `expectResult(requestId, binding)` / `onResult(listener)` retain an immutable original account/session/terminal binding for later execution evidence. They send nothing. Dispatched bindings survive revocation/login changes; unknown or mismatched results are rejected, not routed to the new login. Synchronous/asynchronous subscriber failures are contained with static diagnostic text, never exception messages containing account data. Durable request-journal recovery is the request engine's responsibility.
+- `restoreResult(requestId, binding)` registers a trusted durable-journal binding without requiring its original session to be online. `dispatch(requestId, binding, wire)` is the engine's post-admission transport boundary and checks that the original source is still the unique ready executor; it cannot reassign an execution to another terminal.
 
 Session binding is established only after verified `H` followed by `I`. A new login/server spell retires old sessions and discards partial reads; a changed login on the same session is refused and retired, never rebound. Full account identities are deliberately absent from diagnostic bridge snapshots and rejection logs.
 

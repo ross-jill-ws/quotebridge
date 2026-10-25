@@ -11,6 +11,29 @@ async function appData(t: { after(fn: () => Promise<void>): void }): Promise<str
   return folder;
 }
 
+test("trading defaults are safe and explicit changes survive reopening", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  assert.deepEqual((await store.read()).trading, { enabled: false, maxLots: "1.0", slippage: 20 });
+  await store.update((s) => void (s.trading = { enabled: true, maxLots: "0.25", slippage: 0 }));
+  assert.deepEqual((await new SettingsStore(store.folder).read()).trading, { enabled: true, maxLots: "0.25", slippage: 0 });
+});
+
+test("invalid trading settings are rejected on update and persisted corruption fails closed without losing other settings", async (t) => {
+  const store = new SettingsStore(await appData(t));
+  const invalid: unknown[] = [null, [], {}, { enabled: true },
+    ...["yes", 1, null].map((enabled) => ({ enabled, maxLots: "1.0", slippage: 20 })),
+    ...[1, "0", "-1", "1e2", " 1", "NaN", "Infinity", ".5", "1.", "01", "0.000", "9".repeat(16), "0.00000000001", "9".repeat(400)].map((maxLots) => ({ enabled: true, maxLots, slippage: 20 })),
+    ...[-1, 0.5, "20", null, Infinity, 10001, Number.MAX_SAFE_INTEGER + 1].map((slippage) => ({ enabled: true, maxLots: "1.0", slippage })),
+    { enabled: true, maxLots: "1.0", slippage: 20, extra: true }];
+  for (const trading of invalid) {
+    await assert.rejects(store.update((s) => { Object.assign(s, { trading }); }), /trading/i);
+    await writeFile(store.file, JSON.stringify({ format: 1, theme: "dark", trading }));
+    const loaded = await store.read();
+    assert.deepEqual(loaded.trading, { enabled: false, maxLots: "1.0", slippage: 20 }, JSON.stringify(trading));
+    assert.equal(loaded.theme, "dark");
+  }
+});
+
 const CMC = { terminalId: "mt4-0123456789ab", name: "CMC Markets MetaTrader 4", dataFolder: String.raw`C:\Users\me\AppData\Roaming\MetaQuotes\Terminal\ABC`, installationFolder: String.raw`C:\Program Files (x86)\CMC Markets MetaTrader 4` };
 
 test("first run: no settings file yet, defaults with the legacy EA port 5555 and Start with Windows on", async (t) => {

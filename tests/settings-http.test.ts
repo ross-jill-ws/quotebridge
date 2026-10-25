@@ -7,21 +7,27 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer, type ServerConfig } from "../src/server/index.js";
+import { openDatabase } from "../src/server/database.js";
+import { conditionsWire, deliver, LOGIN, pageWire, heartbeat } from "./account-fixtures.js";
+import { FakeClock, FakeEA, fakeTerminalIdentity } from "./fake-ea.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 import { SettingsStore, type Settings } from "../src/shared/settings-store.js";
 import { freePort } from "./free-port.js";
 
 const TOKEN = "window-token-0123456789";
 
-async function start(t: TestContext, options: { withSettings?: boolean } = {}) {
+async function start(t: TestContext, options: { withSettings?: boolean; withDatabase?: boolean; now?: () => number } = {}) {
   const folder = await mkdtemp(join(tmpdir(), "quotebridge-settings-http-"));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const store = new SettingsStore(folder);
   const saved: Settings[] = [];
+  const database = options.withDatabase ? await openDatabase(folder) : undefined;
+  t.after(() => database?.checkpointAndClose());
   const cfg: ServerConfig = {
     eaPort: await freePort(),
     httpPort: await freePort(),
     windowToken: TOKEN,
+    database, now: options.now, resolveTerminal: fakeTerminalIdentity,
     ...(options.withSettings === false ? {} : { settings: { store, onSaved: (s: Settings) => void saved.push(s) } }),
   };
   // The saved ports are the ones this server runs on, as in the app.
@@ -39,7 +45,7 @@ async function start(t: TestContext, options: { withSettings?: boolean } = {}) {
     const r = await fetch(`${origin}/api/settings`, { method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: JSON.stringify(body) });
     return { status: r.status, body: (await r.json()) as SettingsView & { error?: string } };
   };
-  return { cfg, store, saved, get, post };
+  return { cfg, store, saved, get, post, server, cookie };
 }
 
 test("GET /api/settings answers the saved settings the view shows and the ports this server runs on", async (t) => {
@@ -55,9 +61,99 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     flashPrices: true,
     chartColours: "default",
     timeShown: "broker",
+    trading: { enabled: false, maxLots: "1.0", slippage: 20 },
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
   });
+});
+
+test("app-window trading changes are persisted and handed to the host before the response", async (t) => {
+  const { store, saved, post, get } = await start(t);
+  const trading = { enabled: true, maxLots: "0.10", slippage: 5 };
+  const response = await post({ trading });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.trading, trading);
+  assert.deepEqual((await get()).body.trading, trading);
+  assert.deepEqual((await store.read()).trading, trading);
+  assert.deepEqual(saved.at(-1)?.trading, trading);
+});
+
+test("remote browsers and API credentials cannot mutate trading settings", async (t) => {
+  const f = await start(t);
+  assert.equal(f.server.trading, undefined, "there is no ephemeral request engine without a database");
+  const origin = f.server.httpOrigin;
+  f.server.addRemoteToken("remote-token-0123456789");
+  const exchange = await fetch(`${origin}/session?token=remote-token-0123456789`, { redirect: "manual" });
+  const remote = exchange.headers.get("set-cookie")!.split(";")[0];
+  for (const headers of [{ cookie: remote }, { authorization: "Bearer synthetic-not-a-key" }] as Record<string, string>[]) {
+    const response = await fetch(`${origin}/api/settings`, { method: "POST", headers: { ...headers, origin, "content-type": "application/json" },
+      body: JSON.stringify({ trading: { enabled: true, maxLots: "2", slippage: 1 } }) });
+    assert.equal(response.status, 403);
+    await response.text();
+  }
+  assert.equal((await f.get()).body.trading.enabled, false);
+  assert.equal(f.saved.length, 0);
+});
+
+test("trading setting changes discard unused previews, but unrelated settings preserve approval", { timeout: 15000 }, async (t) => {
+  const clock = new FakeClock();
+  const f = await start(t, { withDatabase: true, now: clock.now });
+  const credential = { headers: { cookie: f.cookie, origin: f.server.httpOrigin } };
+  const engine = f.server.trading!;
+  const ea = new FakeEA({ bars: () => [] }).connect(`tcp://127.0.0.1:${f.cfg.eaPort}`);
+  t.after(() => ea.close());
+  await heartbeat(f.server.bridge, ea);
+  await deliver(f.server.bridge, ea, `I|1|${ea.session}|${LOGIN}|USD|1|1|1|1.0`);
+  const accountId = f.server.bridge.accounts.list()[0].id;
+  const rule = await fetch(`${f.server.httpOrigin}/api/clock-rules`, { method: "POST", headers: { ...credential.headers, "content-type": "application/json" },
+    body: JSON.stringify({ brokerServer: ea.broker, winterOffsetMinutes: 0, dst: "none" }) });
+  assert.equal(rule.status, 200);
+  await rule.text();
+  await f.post({ trading: { enabled: true, maxLots: "1.0", slippage: 20 } });
+  const answer = async () => {
+    for (let n = 0; n < 2; n++) {
+      let fields = (await ea.receive()).split("|");
+      while (fields[0] === "B" || fields[0] === "C") fields = (await ea.receive()).split("|");
+      assert.ok(fields[0] === "V" || fields[0] === "P");
+      await deliver(f.server.bridge, ea, fields[0] === "V" ? pageWire(ea, fields[3], { capturedAt: Math.floor(clock.now() / 1000) })
+        : conditionsWire(ea, fields[3]).replace("|0|1700000002|", `|1|${Math.floor(clock.now() / 1000)}|`));
+    }
+  };
+  const preview = async () => {
+    const pending = engine.preview(credential, { action: "new", accountId, symbol: "EURUSD", side: "buy", type: "market", lots: "0.1" });
+    await answer();
+    return pending;
+  };
+  for (const trading of [{ enabled: true, maxLots: "0.5", slippage: 20 }, { enabled: true, maxLots: "0.5", slippage: 10 }, { enabled: false, maxLots: "0.5", slippage: 10 }]) {
+    const approved = await preview();
+    assert.equal((await f.post({ trading })).status, 200);
+    await assert.rejects(engine.execute(credential, approved.id, true), { code: "preview-unavailable" });
+    assert.deepEqual(await engine.list(credential), []);
+  }
+  await f.post({ trading: { enabled: true, maxLots: "0.5", slippage: 10 } });
+  const approved = await preview();
+  await f.post({ theme: "dark", trading: { enabled: true, maxLots: "0.5", slippage: 10 } });
+  const execution = engine.execute(credential, approved.id, true);
+  await answer();
+  assert.equal((await ea.receive()).split("|")[0], "X", "unrelated settings did not discard approval");
+  assert.equal((await execution).origin, "app-window");
+});
+
+test("invalid trading changes cannot save any settings or notify the host", async (t) => {
+  const { store, saved, post } = await start(t);
+  for (const trading of [null, [], {}, { enabled: true },
+    { enabled: "yes", maxLots: "1.0", slippage: 20 },
+    { enabled: true, maxLots: 1, slippage: 20 },
+    { enabled: true, maxLots: "0", slippage: 20 },
+    { enabled: true, maxLots: "1e2", slippage: 20 },
+    { enabled: true, maxLots: "1.0", slippage: -1 },
+    { enabled: true, maxLots: "1.0", slippage: 0.5 },
+    { enabled: true, maxLots: "1.0", slippage: 20, extra: true }]) {
+    assert.equal((await post({ theme: "dark", trading })).status, 400, JSON.stringify(trading));
+  }
+  assert.equal((await store.read()).theme, "system");
+  assert.deepEqual((await store.read()).trading, { enabled: false, maxLots: "1.0", slippage: 20 });
+  assert.equal(saved.length, 0);
 });
 
 test("a change is saved by the server, answered with the new view and handed on so main applies it", async (t) => {

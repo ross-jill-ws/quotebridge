@@ -216,8 +216,20 @@ export class AccountState {
 
   /** Future request engine registers immutable dispatch identity before sending. No mutation is sent here. */
   expectResult(request: string, binding: AccountBinding) {
-    if (!/^[0-9a-f]{32}$/.test(request) || this.dispatched.has(request) || this.dispatched.size >= MAX_READS || !this.current(binding)) throw new AccountReadError("invalid-response", 409);
+    if (!this.current(binding) || this.dispatched.has(request)) throw new AccountReadError("invalid-response", 409);
+    this.restoreResult(request, binding);
+  }
+  /** Trusted durable journal bindings survive restart; this registers evidence, never sends a command. */
+  restoreResult(request: string, binding: AccountBinding) {
+    const existing = this.dispatched.get(request);
+    if (!/^[0-9a-f]{32}$/.test(request) || (existing && !sameBinding(existing, binding))) throw new AccountReadError("invalid-response", 409);
     this.dispatched.set(request, { ...binding });
+  }
+  /** The engine calls only after durable admission. A changed source can never reroute this send. */
+  async dispatch(request: string, binding: AccountBinding, wire: string) {
+    const executor = this.executor(binding.accountId);
+    if (!this.current(binding) || executor.state !== "ready" || executor.source?.session !== binding.session || !this.dispatched.has(request)) throw new AccountReadError("account-changed", 409);
+    await this.transport.send(binding.session, wire);
   }
   onResult(listener: (result: TradeResult, binding: AccountBinding) => void | Promise<void>): () => void {
     this.resultListeners.add(listener);
@@ -246,6 +258,7 @@ export class AccountState {
 
 const bindingOf = (a: AccountBinding): AccountBinding => ({ accountId: a.accountId, session: a.session, terminalId: a.terminalId, brokerServer: a.brokerServer, login: a.login });
 const lexical = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+const sameBinding = (a: AccountBinding, b: AccountBinding) => a.accountId === b.accountId && a.session === b.session && a.terminalId === b.terminalId && a.brokerServer === b.brokerServer && a.login === b.login;
 
 /** Percent, rounded half away from zero to the wire's ten decimal places, without binary floating point. */
 function marginLevel(equity: string, margin: string): string | null {

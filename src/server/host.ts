@@ -39,6 +39,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
 
   async function start(config: ServerStartConfig) {
     let database: AppDatabase | undefined;
+    let server: RunningServer | undefined;
     try {
       database = await openDatabase(config.dataFolder);
       const settings = new SettingsStore(config.dataFolder);
@@ -53,7 +54,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         };
         if (options.terminals) terminals = await options.terminals(terminals);
       }
-      const server = await startServer({
+      server = await startServer({
         eaPort: config.eaPort,
         httpPort: config.httpPort,
         windowToken: config.windowToken,
@@ -71,6 +72,12 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
       // The first status follows ready at once: main may still show what a previous server reported.
       running.stopStatus = pushStatusOnChange(server);
     } catch (e) {
+      running?.stopStatus();
+      running?.stopHook();
+      running = undefined;
+      // A post-start hook may throw after both ports are bound. Flush/close the server
+      // before closing its database, just as on the normal stop path.
+      await server?.close().catch(() => {});
       await database?.checkpointAndClose().catch(() => {});
       settle("idle");
       send({ type: "error", during: "start", error: toServerError(e) });
@@ -104,7 +111,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   /** Sends a status now, then whenever the summary changes (ignoring lastHello heartbeats), throttled. */
   function pushStatusOnChange(server: RunningServer) {
     const interval = options.statusIntervalMs ?? 1000;
-    const current = () => summarise(server.bridge.snapshot(), server.terminals?.attention() ?? []);
+    const current = () => summarise(server.bridge.snapshot(), server.terminals?.attention() ?? [], server.trading?.unresolvedCount() ?? 0);
     let lastKey: string | undefined;
     let lastSent = 0;
     let trailing: NodeJS.Timeout | undefined;
@@ -126,11 +133,13 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
     };
     const unsubscribe = server.bridge.onChange(check);
     const unsubscribeTerminals = server.terminals?.onChange(check);
+    const unsubscribeTrading = server.trading?.onChange(check);
     const sweep = setInterval(check, interval);
     check();
     return () => {
       unsubscribe();
       unsubscribeTerminals?.();
+      unsubscribeTrading?.();
       clearInterval(sweep);
       clearTimeout(trailing);
     };
@@ -148,7 +157,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         return enqueue(() => start(message.config));
       case "get-status":
         if (!running) return rejectMessage(`"get-status" needs a running server (it is ${phase}).`);
-        return send({ type: "status", status: summarise(running.server.bridge.snapshot(), running.server.terminals?.attention() ?? []) });
+        return send({ type: "status", status: summarise(running.server.bridge.snapshot(), running.server.terminals?.attention() ?? [], running.server.trading?.unresolvedCount() ?? 0) });
       case "issue-window-token": {
         const requestId = typeof message.requestId === "number" ? message.requestId : undefined;
         if (!running) return rejectMessage(`"issue-window-token" needs a running server (it is ${phase}); pass the token with "start" instead.`, requestId);
@@ -203,7 +212,7 @@ function toServerError(e: unknown): ServerError {
   return { code: "internal", message: String(error?.message ?? e) };
 }
 
-export function summarise(snapshot: BridgeSnapshot, terminalsNeedingAttention: TerminalAttentionStatus[] = []): ServerStatus {
+export function summarise(snapshot: BridgeSnapshot, terminalsNeedingAttention: TerminalAttentionStatus[] = [], unresolvedRequests = 0): ServerStatus {
   const feeds = snapshot.feeds;
   const online = feeds.filter((f) => f.online).length;
   return {
@@ -219,6 +228,7 @@ export function summarise(snapshot: BridgeSnapshot, terminalsNeedingAttention: T
     terminals: snapshot.terminals.map((t) => ({ terminalId: t.terminalId, lastHello: t.lastHello, eaVersion: t.eaVersion })),
     terminalsNeedingAttention: terminalsNeedingAttention.map(({ terminalId, name, message }) => ({ terminalId, name, message })),
     invalidMessages: snapshot.invalidMessages,
+    unresolvedRequests,
   };
 }
 
