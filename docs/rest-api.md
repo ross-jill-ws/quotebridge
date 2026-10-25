@@ -209,7 +209,8 @@ HTTP/1.1 400 Bad Request
 ### Samples
 
 A recorded market's samples (switch recording on in the app's Feeds view), oldest first; samples of one second are
-in one stable order. `from` and `to` are inclusive. The cursor resumes exactly after the last sample given.
+in one stable order. `from` and `to` are inclusive. The cursor resumes exactly after the last sample given; send it
+with the same `from` and `to` (another market or other bounds answer `400 invalid-cursor`).
 
 ```http
 GET /api/v1/markets/{market}/samples?limit=10
@@ -925,9 +926,9 @@ HTTP/1.1 409 Conflict
 | `cross-broker-market` | 409 | The market is not on the account's broker server. |
 | `preview-unavailable`, `preview-expired`, `preview-invalidated`, `settings-changed`, `executor-changed`, `identity-changed`, `limits-changed`, `target-changed`, `price-changed`, `estimates-changed`, `expiry-conversion-changed`, `stale-snapshot`, `stale-quote` | 409 | The preview no longer holds: preview again. |
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
-| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409/503 | The account has no single ready demo trading chart. |
-| `request-not-unknown`, `account-changed`, `invalid-response`, `clock-rule-required`, `target-unavailable`, `terminal-updating` | 409 | The request conflicts with the current state. |
-| `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
+| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart. |
+| `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |
+| `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |
 | `body-too-large`, `unsupported-media-type` | 413, 415 | Send JSON bodies of at most 16 KiB. |
 | `quote-unavailable`, `feed-required`, `unavailable-source`, `read-failed`, `account-unavailable`, `journal-unavailable`, `trading-unavailable`, `trading-stopped` | 503 | The source, journal or engine is unavailable now. |

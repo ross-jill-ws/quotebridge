@@ -108,7 +108,7 @@ test("funds, positions and pending orders come fresh from one terminal as decima
   assert.equal((await read(`/api/v1/accounts/${ACCOUNT}/orders/14`)).data.type, "stop");
   assert.equal((await read(`/api/v1/accounts/${ACCOUNT}/positions/13`, 404)).error.code, "unknown-position", "a pending order is not a position");
   assert.equal((await read(`/api/v1/accounts/${ACCOUNT}/orders/11`, 404)).error.code, "unknown-order");
-  assert.equal((await app.read(`/api/v1/accounts/${ACCOUNT}/positions/0x1`, {}, 400)).error.code, "invalid-ticket");
+  for (const ticket of ["0x1", "012", "2147483648"]) assert.equal((await app.read(`/api/v1/accounts/${ACCOUNT}/positions/${ticket}`, {}, 400)).error.code, "invalid-ticket", ticket);
 });
 
 test("tickets are account-qualified: the same ticket on two accounts names two different positions", { timeout: 20000 }, async (t) => {

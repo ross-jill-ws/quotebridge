@@ -84,6 +84,22 @@ test("a place preview is normalized and single-use; execute answers 202, a dupli
   assert.deepEqual(done.events.map((e: Json) => e.type), ["result"]);
 });
 
+test("simultaneous executes of one preview send one order: one answers 202, the other the same record with 200", { timeout: 30000 }, async (t) => {
+  const { app, ea } = await trading(t);
+  const p = (await withReads(app, ea, "/api/v1/requests/preview", PLACE, 201)).data;
+  const execute = async (key: string) => {
+    const res = await app.cli(`/api/v1/requests/${p.requestId}/execute`, {}, { key, method: "POST", body: JSON.stringify({ confirm: true }) });
+    return { status: res.status, body: (await res.json()) as Json };
+  };
+  const both = Promise.all([execute(app.traderKey), execute(app.otherTraderKey)]);
+  await app.answer(ea, 2);
+  await command(ea);
+  const answers = await both;
+  assert.deepEqual(answers.map((a) => a.status).sort(), [200, 202]);
+  assert.deepEqual(answers[0].body.data, answers[1].body.data);
+  await noCommand(ea);
+});
+
 test("readonly may read requests but cannot preview, execute or review; the app window previews through the same engine", { timeout: 30000 }, async (t) => {
   const { app, ea } = await trading(t);
   for (const path of ["/api/v1/requests/preview", `/api/v1/requests/${"a".repeat(32)}/execute`, `/api/v1/requests/${"a".repeat(32)}/review`]) {

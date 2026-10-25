@@ -143,11 +143,15 @@ export class HistoryCatalog {
       digits: this.digits(market, best),
       clockRule: this.options.clockRule(market.brokerServer),
       latest: async (limit, before = Infinity) => {
-        const cut = (end: number | undefined) => (Math.min(end ?? Infinity, before) === Infinity ? undefined : Math.min(end ?? Infinity, before));
-        const newest = newer && before > newer.first ? (await saved!.before(market, period, cut(undefined), limit)).bars.filter((b) => b.time >= newer.first) : [];
-        const recent = file && newest.length < limit && before > hstFirst ? (await file.before(cut(newer?.fileEnd), limit - newest.length)).bars : [];
+        // A read ending before `end` and `before`, whichever is earlier; undefined reads to the newest.
+        const endingBefore = (end: number | undefined) => {
+          const earlier = Math.min(end ?? Infinity, before);
+          return earlier === Infinity ? undefined : earlier;
+        };
+        const newest = newer && before > newer.first ? (await saved!.before(market, period, endingBefore(undefined), limit)).bars.filter((b) => b.time >= newer.first) : [];
+        const recent = file && newest.length < limit && before > hstFirst ? (await file.before(endingBefore(newer?.fileEnd), limit - newest.length)).bars : [];
         const taken = newest.length + recent.length;
-        const rest = older && taken < limit ? (await saved!.before(market, period, cut(best?.span.first), limit - taken)).bars : [];
+        const rest = older && taken < limit ? (await saved!.before(market, period, endingBefore(best?.span.first), limit - taken)).bars : [];
         return [...rest, ...recent, ...newest];
       },
     };

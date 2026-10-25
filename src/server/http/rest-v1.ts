@@ -66,9 +66,12 @@ export function apiError(res: ServerResponse, status: number, code: string, mess
   json(res, status, { error: { code, message, details } });
 }
 
-type Context = { url: URL; query: URLSearchParams; req: IncomingMessage; res: ServerResponse; credential: RestCredential; params: string[] };
+type Context = { query: URLSearchParams; req: IncomingMessage; res: ServerResponse; credential: RestCredential; params: string[] };
 type Answer = { data: unknown; meta?: Record<string, unknown>; status?: number } | "sent";
 type Route = { method: "GET" | "POST"; pattern: RegExp; run: (c: Context) => Promise<Answer> };
+
+/** A bar read's timeframe, `limit` and bounds in broker seconds: `from` inclusive, `before` exclusive (none when undefined). */
+type BarWindow = { period: Period; limit: number; from: number; before: number | undefined };
 
 /** A known market, as discovery lists it. */
 type KnownMarket = Market & { id: string; digits: number | null };
@@ -91,8 +94,8 @@ export class RestV1 {
       get(/^\/accounts$/, (c) => this.accounts(c)),
       get(/^\/accounts\/([^/]+)$/, (c) => this.account(c)),
       get(/^\/accounts\/([^/]+)\/funds$/, (c) => this.funds(c)),
-      get(/^\/accounts\/([^/]+)\/positions(?:\/([^/]+))?$/, (c) => this.positions(c)),
-      get(/^\/accounts\/([^/]+)\/orders(?:\/([^/]+))?$/, (c) => this.pendingOrders(c)),
+      get(/^\/accounts\/([^/]+)\/positions(?:\/([^/]+))?$/, (c) => this.trades(c, "positions")),
+      get(/^\/accounts\/([^/]+)\/orders(?:\/([^/]+))?$/, (c) => this.trades(c, "orders")),
       get(/^\/accounts\/([^/]+)\/markets\/([^/]+)\/conditions$/, (c) => this.conditions(c)),
       get(/^\/terminals$/, (c) => this.terminals(c)),
       get(/^\/terminals\/([^/]+)$/, (c) => this.terminal(c)),
@@ -120,7 +123,7 @@ export class RestV1 {
       if (!found) throw new ApiError(405, "method-not-allowed", `${req.method} is not allowed here; use ${[...new Set(matching.map((r) => r.route.method))].join(" or ")}.`);
       // An optional segment left out stays undefined.
       const params = found.match!.slice(1).map((p) => (p === undefined ? (undefined as never) : segment(p)));
-      const answer = await found.route.run({ url, query: url.searchParams, req, res, credential, params });
+      const answer = await found.route.run({ query: url.searchParams, req, res, credential, params });
       if (answer === "sent") return;
       json(res, answer.status ?? 200, { data: answer.data, meta: answer.meta ?? {} });
     } catch (e) {
@@ -145,6 +148,7 @@ export class RestV1 {
     return { data: this.marketView(await this.knownMarket(c.params[0])) };
   }
 
+  /** A market as discovery describes it, with its feeds as sources. */
   private marketView(m: KnownMarket) {
     const feeds = this.feedsOf(m);
     return {
@@ -248,19 +252,20 @@ export class RestV1 {
     const from = time(c.query, "from") ?? 0, to = time(c.query, "to") ?? MAX_MS;
     if (from > to) throw new ApiError(400, "invalid-time", "from must not be after to.", { parameter: "from" });
     const limit = integer(c.query, "limit", 1, 10_000, 1000);
+    // A cursor holds the market and bounds it pages through: with others, its position would skip samples silently.
     const cursor = cursorOf(c.query);
-    if (cursor && !(cursor.length === 2 && cursor.every((n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0))) {
-      throw new ApiError(400, "invalid-cursor", "cursor is not one this API gave out.", { parameter: "cursor" });
+    const [cursorMarket, cursorFrom, cursorTo, at, skip] = (cursor ?? [market.id, from, to, from, 0]) as [string, number, number, number, number];
+    if (cursor && (cursor.length !== 5 || cursorMarket !== market.id || cursorFrom !== from || cursorTo !== to || ![at, skip].every((n) => Number.isSafeInteger(n) && n >= 0) || at < from)) {
+      throw new ApiError(400, "invalid-cursor", "cursor is not one this API gave out for this market, from and to.", { parameter: "cursor" });
     }
-    const [at, skip] = (cursor as [number, number] | null) ?? [from, 0];
-    const rows = (await this.options.recorder?.samples(market, Math.max(from, at), to, limit + 1, false, skip)) ?? [];
+    const rows = (await this.options.recorder?.samples(market, at, to, limit + 1, false, skip)) ?? [];
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     const sameTime = last ? page.filter((s) => s.utcMs === last.utcMs).length + (last.utcMs === at ? skip : 0) : 0;
     const digits = market.digits ?? 5;
     return {
       data: page.map((s) => ({ time: iso(s.utcMs), brokerTime: brokerIso(s.brokerSeconds), bid: price(s.bid, digits), ask: price(s.ask, digits), receivedAt: iso(s.receivedMs) })),
-      meta: { marketId: market.id, digits, count: page.length, limit, nextCursor: rows.length > limit && last ? encodeCursor([last.utcMs, sameTime]) : null },
+      meta: { marketId: market.id, digits, count: page.length, limit, nextCursor: rows.length > limit && last ? encodeCursor([market.id, from, to, last.utcMs, sameTime]) : null },
     };
   }
 
@@ -351,21 +356,14 @@ export class RestV1 {
     };
   }
 
-  /** GET /accounts/{accountId}/positions[/{ticket}]: open positions (market buys and sells) only. */
-  private async positions(c: Context): Promise<Answer> {
-    only(c.query, c.params[1] === undefined ? ["limit", "cursor"] : []);
-    return this.orders(c, "positions");
-  }
-
-  /** GET /accounts/{accountId}/orders[/{ticket}]: pending limit and stop orders only. */
-  private async pendingOrders(c: Context): Promise<Answer> {
-    only(c.query, c.params[1] === undefined ? ["limit", "cursor"] : []);
-    return this.orders(c, "orders");
-  }
-
-  private async orders(c: Context, kind: "positions" | "orders"): Promise<Answer> {
+  /**
+   * GET /accounts/{accountId}/positions[/{ticket}] (open positions, market buys and sells only) and
+   * /accounts/{accountId}/orders[/{ticket}] (pending limit and stop orders only), from one fresh snapshot.
+   */
+  private async trades(c: Context, kind: "positions" | "orders"): Promise<Answer> {
     const ticket = c.params[1];
-    if (ticket !== undefined && !TICKET.test(ticket)) throw new ApiError(400, "invalid-ticket", "A ticket is MetaTrader's order number, such as 12345678.");
+    only(c.query, ticket === undefined ? ["limit", "cursor"] : []);
+    if (ticket !== undefined && !isTicket(ticket)) throw new ApiError(400, "invalid-ticket", "A ticket is MetaTrader's order number, such as 12345678.");
     const a = await this.accountSnapshot(c.params[0]);
     const views = a[kind].map((o) => this.orderView(a, o));
     if (ticket === undefined) {
@@ -423,6 +421,7 @@ export class RestV1 {
     };
   }
 
+  /** An account by its exact ID; unknown answers 404. */
   private knownAccount(id: string): AccountSnapshot {
     const account = this.options.bridge.accounts.get(id);
     if (!account) throw new ApiError(404, "unknown-account", "No known trading account has this ID. List them with GET /api/v1/accounts.");
@@ -436,6 +435,7 @@ export class RestV1 {
     return accountRead(() => this.options.bridge.accounts.read(id));
   }
 
+  /** An account as discovery describes it: identity, connection, executor and sources; no Funds. */
   private accountView(a: AccountSnapshot) {
     const executor = this.options.bridge.accounts.executor(a.id);
     return {
@@ -455,16 +455,15 @@ export class RestV1 {
   /** A position or pending order; MetaTrader's zero stop, take profit or expiry is none (null). */
   private orderView(a: AccountSnapshot, o: AccountOrder) {
     const opened = this.times(a.brokerServer, o.openTime);
-    const none = (value: string) => (/^0(\.0*)?$/.test(value) ? null : canonical(value));
-    const head = { ticket: o.ticket, accountId: a.id, marketId: marketId(a.brokerServer, o.symbol), symbol: o.symbol, side: o.kind % 2 === 0 ? "buy" : "sell" };
-    const common = { lots: canonical(o.lots), stopLoss: none(o.stopLoss), takeProfit: none(o.takeProfit), magic: o.magic };
+    const head = { ticket: o.ticket, accountId: a.id, marketId: marketId(a.brokerServer, o.symbol), symbol: o.symbol, side: sideOf(o.kind) };
+    const common = { lots: canonical(o.lots), stopLoss: unlessZero(o.stopLoss), takeProfit: unlessZero(o.takeProfit), magic: o.magic };
     if (o.kind < 2) {
       return { ...head, ...common, openPrice: canonical(o.openPrice), openTime: opened.time, openBrokerTime: opened.brokerTime, currentPrice: canonical(o.closePrice), profit: canonical(o.profit), swap: canonical(o.swap), commission: canonical(o.commission) };
     }
     const expiry = o.expiration ? this.times(a.brokerServer, o.expiration) : null;
     return {
       ...head,
-      type: o.kind < 4 ? "limit" : "stop",
+      type: typeOf(o.kind),
       ...common,
       price: canonical(o.openPrice),
       placedAt: opened.time,
@@ -512,9 +511,9 @@ export class RestV1 {
     if (keys.length !== 1 || (body as { confirm?: unknown }).confirm !== true) {
       throw new ApiError(400, "confirmation-required", "Confirm the previewed request explicitly with { \"confirm\": true }.");
     }
-    const existing = await this.engine(async (engine) => engine.get(c.credential, id).catch((e) => (e instanceof TradingError && e.code === "request-not-found" ? undefined : Promise.reject(e))));
-    const record = await this.engine((engine) => engine.execute(c.credential, id, true));
-    return { status: existing ? 200 : 202, data: this.recordView(record) };
+    // 202 only for the call that admitted the dispatch; one joining or repeating it answers the existing record.
+    const { record, admitted } = await this.engine((engine) => engine.executeRequest(c.credential, id, true));
+    return { status: admitted ? 202 : 200, data: this.recordView(record) };
   }
 
   /** POST /requests/{requestId}/review `{ note, acknowledged: true }`: acknowledges an unknown outcome after checking MetaTrader. */
@@ -541,7 +540,7 @@ export class RestV1 {
   private async request(c: Context): Promise<Answer> {
     only(c.query, []);
     const id = requestId(c.params[0]);
-    const record = await this.engine((engine) => engine.get(c.credential, id).catch((e) => (e instanceof TradingError && e.code === "request-not-found" ? undefined : Promise.reject(e))));
+    const record = await this.engine((engine) => engine.get(c.credential, id).catch((e: unknown) => (e instanceof TradingError && e.code === "request-not-found" ? undefined : Promise.reject(e))));
     if (record) return { data: this.recordView(record) };
     const preview = await this.engine((engine) => engine.previewOf(c.credential, id));
     if (!preview) throw new ApiError(404, "request-not-found", "No request or valid preview has this ID; previews expire after 30 seconds.");
@@ -551,7 +550,7 @@ export class RestV1 {
   /** Runs on the shared request engine; its refusals answer with their stable codes. */
   private async engine<T>(run: (engine: RequestEngine<RestCredential>) => Promise<T>): Promise<T> {
     const engine = this.options.trading?.();
-    if (!engine) throw new ApiError(503, "trading-unavailable", "Trading needs the app's database, which this server does not have.");
+    if (!engine) throw new ApiError(503, "trading-unavailable", "Trading needs the app's database, which this run of the app does not have.");
     try {
       return await run(engine);
     } catch (e) {
@@ -561,6 +560,7 @@ export class RestV1 {
     }
   }
 
+  /** A preview, as preview and GET /requests/{requestId} answer it while valid. */
   private previewView(p: TradingPreview) {
     return {
       requestId: p.id,
@@ -571,6 +571,7 @@ export class RestV1 {
     };
   }
 
+  /** A journal record: the approved preview, outcome, result and evidence events. */
   private recordView(r: JournalRecord) {
     const result = (x: TradeResult) => ({ status: x.status, ticket: x.ticket === "0" ? null : x.ticket, code: x.code, message: x.message });
     return {
@@ -591,7 +592,6 @@ export class RestV1 {
   /** What a preview approved: the account, market and terminal, the normalized intent, its target, limits and estimates. */
   private approval(p: TradingPreview) {
     const i = p.intent;
-    const none = (value: string) => (/^0(\.0*)?$/.test(value) ? null : value);
     const target = p.target;
     const brokerServer = p.source.brokerServer;
     return {
@@ -602,25 +602,25 @@ export class RestV1 {
         action: i.action === "new" ? "place" : i.action,
         ticket: i.action === "new" ? null : i.ticket,
         symbol: i.symbol,
-        side: i.kind % 2 === 0 ? "buy" : "sell",
-        type: i.kind < 2 ? "market" : i.kind < 4 ? "limit" : "stop",
+        side: sideOf(i.kind),
+        type: typeOf(i.kind),
         lots: i.lots,
-        price: none(i.price),
-        stopLoss: none(i.stopLoss),
-        takeProfit: none(i.takeProfit),
+        price: unlessZero(i.price),
+        stopLoss: unlessZero(i.stopLoss),
+        takeProfit: unlessZero(i.takeProfit),
         expiry: i.expiry,
         slippage: i.slippage,
       },
       target: target && {
         ticket: target.ticket,
         symbol: target.symbol,
-        side: target.kind % 2 === 0 ? "buy" : "sell",
-        type: target.kind < 2 ? "market" : target.kind < 4 ? "limit" : "stop",
+        side: sideOf(target.kind),
+        type: typeOf(target.kind),
         lots: canonical(target.lots),
         openPrice: canonical(target.openPrice),
         openTime: this.times(brokerServer, target.openTime).time,
-        stopLoss: none(canonical(target.stopLoss)),
-        takeProfit: none(canonical(target.takeProfit)),
+        stopLoss: unlessZero(target.stopLoss),
+        takeProfit: unlessZero(target.takeProfit),
         expiry: target.expiration ? this.times(brokerServer, target.expiration).time : null,
       },
       limits: p.limits,
@@ -661,12 +661,14 @@ export class RestV1 {
     return { data: this.feedView(feed) };
   }
 
+  /** A terminal heard from since the app started, by its exact ID; unknown answers 404. */
   private knownTerminal(id: string, snapshot: BridgeSnapshot): TerminalPresence {
     const terminal = snapshot.terminals.find((t) => t.terminalId === id);
     if (!terminal) throw new ApiError(404, "unknown-terminal", "No terminal with this ID has connected since the app started. List them with GET /api/v1/terminals.");
     return terminal;
   }
 
+  /** A terminal's diagnostics. */
   private terminalView(t: TerminalPresence, snapshot: BridgeSnapshot) {
     return {
       id: t.terminalId,
@@ -679,6 +681,7 @@ export class RestV1 {
     };
   }
 
+  /** A feed's health and its own terminal's quote. */
   private feedView(f: FeedSnapshot) {
     const quote = f.latest;
     return {
@@ -714,6 +717,7 @@ export class RestV1 {
     return { data: packageView(this.indicatorPackage(c.params[0])) };
   }
 
+  /** The installed packages switched on in the Indicators page. */
   private enabledPackages(): IndicatorPackage[] {
     const packages = this.options.indicators?.packages;
     return (packages?.list() ?? []).filter((p) => packages!.enabled(p.manifest.id));
@@ -746,7 +750,8 @@ export class RestV1 {
     }
     const feed = selectMarketSource(this.options.bridge.snapshot(), market)?.feed;
     if (!feed) throw new ApiError(503, "feed-required", "Indicators are calculated over a terminal's chart of this market; none has connected since the app started.");
-    const { bars, forming, page, source } = await this.bars(market, window);
+    // The values' cache and the bars come from this one feed.
+    const { bars, forming, page, source } = await this.bars(market, window, feed);
     // The cache works over the page in UTC seconds, and times its values so.
     const utc = (b: Candle) => this.utcMs(market.brokerServer, b.time) / 1000;
     const answer = await this.options.indicators!.values.valuesOver(feed, window.period, pkg, parameters, { ...page!, candles: bars.map((b) => ({ ...b, time: utc(b) })) });
@@ -778,7 +783,7 @@ export class RestV1 {
   }
 
   /** A bar read's timeframe, limit and bounds (broker seconds: `before` exclusive, `from` inclusive). */
-  private barWindow(q: URLSearchParams, market: Market, fallback: number) {
+  private barWindow(q: URLSearchParams, market: Market, fallback: number): BarWindow {
     const period = timeframe(q);
     const limit = integer(q, "limit", 1, 5000, fallback);
     const rule = this.options.clockRule(market.brokerServer) ?? UNKNOWN_RULE;
@@ -793,8 +798,7 @@ export class RestV1 {
    * A market's newest bars in a window, oldest first: its best feed's chart history (live candles included), else the
    * HST files and saved history of a market without a feed. `forming` is the forming live candle's start, if any.
    */
-  private async bars(market: KnownMarket, window: ReturnType<RestV1["barWindow"]>) {
-    const feed = selectMarketSource(this.options.bridge.snapshot(), market)?.feed;
+  private async bars(market: KnownMarket, window: BarWindow, feed = selectMarketSource(this.options.bridge.snapshot(), market)?.feed) {
     let bars: Candle[];
     let digits = market.digits ?? feed?.digits;
     let forming: number | undefined;
@@ -819,9 +823,14 @@ export class RestV1 {
   }
 
   /** The window of the page before a full one, or null when this one reached `from` or the oldest bar. */
-  private next(market: Market, bars: Candle[], window: ReturnType<RestV1["barWindow"]>) {
+  private next(market: Market, bars: Candle[], window: BarWindow) {
     if (bars.length < window.limit || bars[0].time <= window.from) return null;
-    return { to: iso(this.utcMs(market.brokerServer, bars[0].time) - 1000) };
+    // The broker second before the oldest bar, written in UTC: read back, it is that same broker second. In a gap the
+    // broker clock skips at a clock change it does not exist; the UTC second before the bar's start reads back earlier.
+    const rule = this.options.clockRule(market.brokerServer) ?? UNKNOWN_RULE;
+    const oldest = bars[0].time;
+    const to = this.utcMs(market.brokerServer, oldest - 1);
+    return { to: iso(Math.floor(utcToBroker(rule, to) / 1000) < oldest ? to : this.utcMs(market.brokerServer, oldest) - 1000) };
   }
 
   /** A broker time in seconds as `time` (UTC ISO, by the broker server's clock rule) and `brokerTime`. */
@@ -909,8 +918,15 @@ function tradingMessage(code: string): string {
   return `The request was refused: ${code}. See the REST API manual's error codes.`;
 }
 
-/** MetaTrader's ticket: a positive 32-bit integer, in decimal. */
-const TICKET = /^[1-9]\d{0,9}$/;
+/** Whether text is MetaTrader's ticket: a positive 32-bit integer, in decimal, as the request engine takes it. */
+const isTicket = (text: string) => /^[1-9]\d{0,9}$/.test(text) && Number(text) <= 2147483647;
+
+/** MetaTrader's order kinds: 0 buy, 1 sell, 2 buy limit, 3 sell limit, 4 buy stop, 5 sell stop. */
+const sideOf = (kind: number) => (kind % 2 === 0 ? "buy" : "sell");
+const typeOf = (kind: number) => (kind < 2 ? "market" : kind < 4 ? "limit" : "stop");
+
+/** MetaTrader's zero price, stop loss or take profit is none: null; any other, canonical. */
+const unlessZero = (value: string) => (/^0(\.0*)?$/.test(value) ? null : canonical(value));
 
 /** An EA decimal string (ten fraction digits on the wire) without trailing zeros: `1000.0000000000` is `1000`. */
 function canonical<T extends string | null>(value: T): T {
@@ -934,7 +950,8 @@ async function accountRead<T>(read: () => Promise<T>): Promise<T> {
       "executor-unavailable": "The account's trading chart is not available.",
       "cross-broker-market": "This market is on another broker server than the account.",
     };
-    throw new ApiError(e.status, e.code, messages[e.code]);
+    // One stable status per code: the request engine answers executor-unavailable with 409 too.
+    throw new ApiError(e.code === "executor-unavailable" ? 409 : e.status, e.code, messages[e.code]);
   }
 }
 
@@ -1035,8 +1052,8 @@ type SortKey = (string | number)[];
  * `nextCursor` (opaque) continues after the last item, null at the end; nothing is skipped or repeated while items
  * are added.
  */
-function paginate<T>(q: URLSearchParams, items: T[], key: (item: T) => SortKey, page = PAGE): Answer {
-  const limit = integer(q, "limit", 1, page.max, page.default);
+function paginate<T>(q: URLSearchParams, items: T[], key: (item: T) => SortKey): Answer {
+  const limit = integer(q, "limit", 1, PAGE.max, PAGE.default);
   const after = cursorOf(q);
   const sorted = items.map((item) => ({ item, key: key(item) })).sort((a, b) => compareKeys(a.key, b.key));
   const rest = after ? sorted.filter((s) => compareKeys(s.key, after) > 0) : sorted;
@@ -1045,8 +1062,10 @@ function paginate<T>(q: URLSearchParams, items: T[], key: (item: T) => SortKey, 
   return { data: shown.map((s) => s.item), meta: { count: shown.length, limit, nextCursor } };
 }
 
+/** A cursor: the last item's sort key, opaque to clients. */
 const encodeCursor = (key: SortKey) => Buffer.from(JSON.stringify(key)).toString("base64url");
 
+/** The `cursor` parameter's sort key, null when not given; one this API did not give out answers 400. */
 function cursorOf(q: URLSearchParams): SortKey | null {
   const cursor = q.get("cursor");
   if (cursor === null) return null;
@@ -1057,6 +1076,7 @@ function cursorOf(q: URLSearchParams): SortKey | null {
   throw new ApiError(400, "invalid-cursor", "cursor is not one this API gave out.", { parameter: "cursor" });
 }
 
+/** Orders sort keys element by element: numbers numerically, strings by code unit. */
 function compareKeys(a: SortKey, b: SortKey): number {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const x = a[i], y = b[i];

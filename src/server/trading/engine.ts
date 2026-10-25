@@ -19,7 +19,7 @@ export type RequestEngineOptions<Credential> = {
 export class RequestEngine<Credential> {
   private previews = new Map<string, TradingPreview>();
   private records = new Map<string, JournalRecord>();
-  private executions = new Map<string, Promise<JournalRecord>>();
+  private executions = new Map<string, Promise<{ record: JournalRecord; admitted: boolean }>>();
   private accountsExecuting = new Map<string, string>();
   private reservedTerminals = new Map<string, string>();
   private listeners = new Set<() => void>();
@@ -103,20 +103,25 @@ export class RequestEngine<Credential> {
     return structuredClone(preview);
   }
   async execute(credential: Credential, id: string, confirm: boolean): Promise<JournalRecord> {
+    return (await this.executeRequest(credential, id, confirm)).record;
+  }
+  /** As `execute`; `admitted` is true only for the one call whose execution admitted the dispatch, not a duplicate joining or repeating it. */
+  async executeRequest(credential: Credential, id: string, confirm: boolean): Promise<{ record: JournalRecord; admitted: boolean }> {
     this.authorize(credential, true);
     if (confirm !== true) throw new TradingError("confirmation-required", 400);
     this.assertOpen();
     let work = this.executions.get(id);
+    const joined = !!work;
     if (!work) {
       work = this.executeOnce(credential, id);
       this.executions.set(id, work);
     }
-    try { const result = await work; this.authorize(credential, true); return structuredClone(result); }
+    try { const { record, admitted } = await work; this.authorize(credential, true); return { record: structuredClone(record), admitted: admitted && !joined }; }
     finally { if (this.executions.get(id) === work) this.executions.delete(id); }
   }
-  private async executeOnce(credential: Credential, id: string): Promise<JournalRecord> {
+  private async executeOnce(credential: Credential, id: string): Promise<{ record: JournalRecord; admitted: boolean }> {
     const existing = await this.options.journal.get(id);
-    if (existing) return existing;
+    if (existing) return { record: existing, admitted: false };
     const preview = this.previews.get(id);
     if (!preview) throw new TradingError("preview-unavailable");
     const accountId = preview.intent.accountId;
@@ -143,7 +148,7 @@ export class RequestEngine<Credential> {
         const unknown = await this.options.journal.markUnknown(id, this.now(), "dispatch-interrupted");
         this.remember(unknown);
       }
-      return await this.options.journal.get(id) ?? record;
+      return { record: await this.options.journal.get(id) ?? record, admitted: true };
     } finally {
       this.previews.delete(id);
       this.accountsExecuting.delete(accountId);

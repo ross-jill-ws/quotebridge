@@ -137,6 +137,25 @@ test("candles: 900 by default and 5000 at most; from/to bound the newest bars an
   assert.equal((await app.read(path, { timeframe: "M1", from: to, to: from }, 400)).error.code, "invalid-time", "from after to");
 });
 
+test("candle pages back across the broker clock's spring-forward gap without repeating or skipping a bar", { timeout: 20000 }, async (t) => {
+  const data = await tempFolder(t, "rest-data");
+  // 14 March 2027: the GMT+2 broker moves to GMT+3 at 07:00 UTC, so broker 09:00–09:59 does not exist.
+  const start = Date.UTC(2027, 2, 14, 5) / 1000;
+  const h1 = bars(start, HOUR, 10).filter((b) => b.time !== start + 4 * HOUR);
+  await writeHst(data, DEMO, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: h1 });
+  const app = await startRest(t, await tempFolder(t, "rest-db"), { dataFolders: { [TERMINAL]: data } });
+  await app.connect({ symbol: "GBPUSD" });
+  const seen: string[] = [];
+  let query: Record<string, string | number> = { timeframe: "H1", limit: 1, to: "2027-03-14T12:00:00Z" };
+  for (let n = 0; n < 20; n++) {
+    const pageOf = await app.read(`/api/v1/markets/${EURUSD}/candles`, query);
+    seen.unshift(...pageOf.data.map((b: Json) => b.brokerTime));
+    if (!pageOf.meta.next) break;
+    query = { ...query, to: pageOf.meta.next.to };
+  }
+  assert.deepEqual(seen, h1.map((b) => brokerIso(b.time)));
+});
+
 test("samples page by cursor through duplicate timestamps without loss or repeats, also with no terminal running", { timeout: 20000 }, async (t) => {
   const db = await tempFolder(t, "rest-db");
   const app = await startRest(t, db);
@@ -167,6 +186,13 @@ test("samples page by cursor through duplicate timestamps without loss or repeat
   assert.equal((await app.read(path, { limit: 10000 })).meta.limit, 10000);
   for (const limit of [0, 10001]) assert.equal((await app.read(path, { limit }, 400)).error.code, "invalid-parameter");
   assert.equal((await app.read(path, { cursor: "bm90LWEtY3Vyc29y" }, 400)).error.code, "invalid-cursor");
+  // A cursor continues only the query that gave it: other bounds or another market would skip samples silently.
+  const { nextCursor } = (await app.read(path, { limit: 2 })).meta;
+  assert.equal((await app.read(path, { limit: 2, cursor: nextCursor, from: utcIso(t0 + 1) }, 400)).error.code, "invalid-cursor");
+  await app.post("/api/markets/recording", { brokerServer: DEMO, symbol: "EURUSD", on: false });
+  await app.connect({ symbol: "GBPUSD" });
+  await app.post("/api/markets/recording", { brokerServer: DEMO, symbol: "GBPUSD", on: true });
+  assert.equal((await app.read(`/api/v1/markets/${marketId(DEMO, "GBPUSD")}/samples`, { cursor: nextCursor }, 400)).error.code, "invalid-cursor");
 
   await app.stop();
   const again = await startRest(t, db, { clock: app.clock });
