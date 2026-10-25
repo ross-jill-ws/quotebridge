@@ -9,6 +9,6 @@ export { HistorySaver, SAVE_CHECK_MS, SAVE_EVERY_MS } from "./history-saver.js";
 export type { HistorySaverOptions, SaveProgress } from "./history-saver.js";
 export { SavedBarStore } from "./saved-store.js";
 export type { SavedBar, SavedSpan } from "./saved-store.js";
-export type { HistoryFile, HistoryMarket, HistoryPeriod, HistorySeries, HistorySpan } from "./history-catalog.js";
+export type { HistoryMarket, HistoryPeriod, HistorySeries, HistorySpan } from "./history-catalog.js";
 export { HstFile, hstHeaderBytes, hstPath, hstRecordBytes } from "./hst-file.js";
 export type { HstBar, HstHeader, HstPage } from "./hst-file.js";

@@ -174,7 +174,7 @@ direction:
   slate).
 - A histogram whose `palette` has the keys `rising` and `falling` draws those bars in the chart's Uptick and Downtick
   colours, as on the candles. Give each of its points one of the two keys.
-- Other palette keys are kept in the data (REST answers them as `<output>_style`) but are drawn in the output's one
+- Other palette keys are kept in the data (REST answers them in `styles`) but are drawn in the output's one
   colour.
 - The trader can change any output's colour, or swap rising and falling, from the legend.
 

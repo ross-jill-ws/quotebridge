@@ -42,17 +42,9 @@ export type HistoryMarket = {
 export type HistorySeries = HistorySpan & {
   digits: number;
   clockRule: ClockRule | null;
-  /** The newest `limit` bars, oldest first. */
-  latest(limit: number): Promise<HstBar[]>;
-  /** Up to `limit` bars from `from` to `to` (both included), oldest first. */
-  between(from: number, to: number, limit: number): Promise<HstBar[]>;
+  /** The newest `limit` bars older than `before` (broker seconds; all when not given), oldest first. */
+  latest(limit: number, before?: number): Promise<HstBar[]>;
 };
-
-/**
- * An HST file in a terminal's data folder, as the REST API lists it: `file` (`<terminal ID>/<broker server>/<name>`)
- * is how a download names it, never a path.
- */
-export type HistoryFile = { file: string; terminalId: string; brokerServer: string; period: Period; hst: HstFile; span: HistorySpan };
 
 /** A download: everything available for a market's period, oldest first, in broker seconds, a page at a time. */
 export type HistoryDownload = { digits: number; clockRule: ClockRule | null; pages: AsyncIterable<HstBar[]> };
@@ -143,7 +135,6 @@ export class HistoryCatalog {
     const file = best?.file;
     const hstFirst = best?.span.first ?? Infinity;
     const newer = await this.newerSaved(market, period, best);
-    const fileEnd = newer?.fileEnd ?? Infinity;
     const fileBars = best ? best.span.bars - (newer && newer.fileEnd === best.span.last ? 1 : 0) : 0;
     return {
       bars: fileBars + (older?.bars ?? 0) + (newer?.bars ?? 0),
@@ -151,19 +142,13 @@ export class HistoryCatalog {
       last: newer?.last ?? best?.span.last ?? older!.last,
       digits: this.digits(market, best),
       clockRule: this.options.clockRule(market.brokerServer),
-      latest: async (limit) => {
-        const newest = newer ? (await saved!.before(market, period, undefined, limit)).bars.filter((b) => b.time >= newer.first) : [];
-        const recent = file && newest.length < limit ? (await file.before(newer?.fileEnd, limit - newest.length)).bars : [];
+      latest: async (limit, before = Infinity) => {
+        const cut = (end: number | undefined) => (Math.min(end ?? Infinity, before) === Infinity ? undefined : Math.min(end ?? Infinity, before));
+        const newest = newer && before > newer.first ? (await saved!.before(market, period, cut(undefined), limit)).bars.filter((b) => b.time >= newer.first) : [];
+        const recent = file && newest.length < limit && before > hstFirst ? (await file.before(cut(newer?.fileEnd), limit - newest.length)).bars : [];
         const taken = newest.length + recent.length;
-        const rest = older && taken < limit ? (await saved!.before(market, period, best?.span.first, limit - taken)).bars : [];
+        const rest = older && taken < limit ? (await saved!.before(market, period, cut(best?.span.first), limit - taken)).bars : [];
         return [...rest, ...recent, ...newest];
-      },
-      between: async (from, to, limit) => {
-        const early = older && from < hstFirst ? await saved!.between(market, period, from, Math.min(to, hstFirst - 1), limit) : [];
-        const middle = file && to >= hstFirst && from < fileEnd && early.length < limit ? await file.between(Math.max(from, hstFirst), Math.min(to, fileEnd - 1), limit - early.length) : [];
-        const taken = early.length + middle.length;
-        const late = newer && to >= newer.first && taken < limit ? await saved!.between(market, period, Math.max(from, newer.first), to, limit - taken) : [];
-        return [...early, ...middle, ...late];
       },
     };
   }
@@ -190,27 +175,6 @@ export class HistoryCatalog {
       if (newer) yield* saved!.pages(market, period, undefined, newer.first);
     }
     return { digits, clockRule: this.options.clockRule(market.brokerServer), pages: pages() };
-  }
-
-  /** The HST files of every terminal the app has heard from, in every broker server's folder, by terminal, server and name. */
-  async files(): Promise<HistoryFile[]> {
-    const out: HistoryFile[] = [];
-    const terminals = [...new Set(this.options.snapshot().terminals.map((t) => t.terminalId))].sort();
-    for (const terminalId of terminals) {
-      const dataFolder = this.options.dataFolder(terminalId);
-      if (!dataFolder) continue;
-      const servers = (await readdir(join(dataFolder, "history"), { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory());
-      for (const brokerServer of servers.map((d) => d.name).sort()) {
-        const names = await readdir(join(dataFolder, "history", brokerServer)).catch(() => [] as string[]);
-        for (const name of names.filter((n) => /\.hst$/i.test(n)).sort()) {
-          const hst = await HstFile.open(join(dataFolder, "history", brokerServer, name));
-          const period = hst && PERIOD_OF.get(hst.header.minutes);
-          const span = hst && period ? await hst.span() : null;
-          if (hst && period && span) out.push({ file: `${terminalId}/${brokerServer}/${name}`, terminalId, brokerServer, period, hst, span });
-        }
-      }
-    }
-    return out;
   }
 
   /**

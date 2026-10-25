@@ -1,6 +1,6 @@
 # Trading request engine
 
-The embedded server's `RunningServer.trading` is the shared preview/execute/review service. It is available only with a durable database. This is an internal TypeScript interface; the public REST/CLI and Trading page are separate integrations.
+The embedded server's `RunningServer.trading` is the shared preview/execute/review service. It is available only with a durable database. This is an internal TypeScript interface. The public REST API's trading requests ([REST API](rest-api.md#trading-requests)) call it with the caller's key or session; the Trading page and CLI are separate integrations.
 
 ## Interface
 

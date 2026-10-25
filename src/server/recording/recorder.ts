@@ -159,14 +159,14 @@ export class Recorder {
 
   /**
    * Up to `limit` of a market's samples from `fromMs` to `toMs` (UTC ms, both included), oldest first, or newest first
-   * when `newest`; the buffered ones are written first. None for a market never stored.
+   * when `newest`, after skipping `offset`; the buffered ones are written first. None for a market never stored.
    */
-  async samples(market: Market, fromMs: number, toMs: number, limit: number, newest = false): Promise<SampleRow[]> {
+  async samples(market: Market, fromMs: number, toMs: number, limit: number, newest = false, offset = 0): Promise<SampleRow[]> {
     const stored = this.markets.get(marketKey(market));
     if (!stored) return [];
     return this.serial(async () => {
       await this.write();
-      return this.store.samples(stored.id, fromMs, toMs, limit, newest);
+      return this.store.samples(stored.id, fromMs, toMs, limit, newest, offset);
     });
   }
 

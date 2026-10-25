@@ -116,7 +116,7 @@ test("a key is shown once, works as a Bearer key, is listed with its last use, a
   assert.deepEqual(body.key, { name: "Laptop CLI", prefix: key.slice(0, 12), scope: "readonly" });
   assert.equal(body.expires, null);
   assert.equal((await app.keys())[0].lastUsedAt, NOW + 60_000);
-  assert.equal((await app.cli(key, "/api/v1/nothing-here")).status, 404, "past the key check, nothing answers yet");
+  assert.equal((await app.cli(key, "/api/v1/nothing-here")).status, 404, "past the key check, an unknown route answers 404");
 
   // Kept across a restart: only its hash is stored, and that is enough.
   await app.stop();
@@ -133,13 +133,13 @@ test("a key is shown once, works as a Bearer key, is listed with its last use, a
 
 test("without a key or with a wrong one /api/v1 answers 401; HTTP Basic is refused", { timeout: 15000 }, async (t) => {
   const app = await start(t, await tempFolder(t));
-  assert.equal((await fetch(`${app.origin}/api/v1/symbols`)).status, 401);
+  assert.equal((await fetch(`${app.origin}/api/v1/markets`)).status, 401);
   assert.equal((await fetch(`${app.origin}/api/auth/session`)).status, 401);
-  assert.equal((await app.cli(`qbk_${"0".repeat(64)}`, "/api/v1/symbols")).status, 401, "unknown key");
-  assert.equal((await app.cli("qbk_short", "/api/v1/symbols")).status, 401, "not a key");
-  const basic = await fetch(`${app.origin}/api/v1/symbols`, { headers: { authorization: `Basic ${Buffer.from("admin:secret").toString("base64")}` } });
+  assert.equal((await app.cli(`qbk_${"0".repeat(64)}`, "/api/v1/markets")).status, 401, "unknown key");
+  assert.equal((await app.cli("qbk_short", "/api/v1/markets")).status, 401, "not a key");
+  const basic = await fetch(`${app.origin}/api/v1/markets`, { headers: { authorization: `Basic ${Buffer.from("admin:secret").toString("base64")}` } });
   assert.equal(basic.status, 401);
-  assert.match(((await basic.json()) as { error: string }).error, /Bearer/);
+  assert.match(((await basic.json()) as { error: { message: string } }).error.message, /Bearer/);
   assert.equal((await app.window.get("/api/v1/nothing-here")).status, 404, "the window session reaches /api/v1 too");
 });
 
@@ -201,16 +201,16 @@ test("readonly denies every mutation including preview, execute and review; trad
   const readonly = (await app.create("Reader", "readonly")).key;
   const trader = (await app.create("Trader", "trader")).key;
   const change = (key: string, path: string, method = "POST") => app.cli(key, path, { method, headers: { "content-type": "application/json" }, body: "{}" });
-  for (const path of ["/api/v1/requests/preview", "/api/v1/requests/request-id/execute", "/api/v1/requests/request-id/review", "/api/v1/orders/preview"]) {
+  for (const path of ["/api/v1/requests/preview", "/api/v1/requests/request-id/execute", "/api/v1/requests/request-id/review"]) {
     assert.equal((await change(readonly, path)).status, 403, path);
   }
   for (const method of ["PUT", "PATCH", "DELETE", "OPTIONS"]) {
     assert.equal((await change(readonly, "/api/v1/requests/request-id", method)).status, 403, method);
   }
-  assert.equal((await change(trader, "/api/v1/orders/preview")).status, 501, "past authorization: the request engine is not implemented yet");
+  assert.equal((await change(trader, "/api/v1/requests/preview")).status, 400, "past authorization: the body names no account");
   for (const key of [readonly, trader]) {
-    assert.equal((await app.cli(key, "/api/v1/symbols")).status, 200, "both scopes can read");
-    assert.equal((await app.cli(key, "/api/v1/symbols", { method: "HEAD" })).status, 200, "HEAD is read-only");
+    assert.equal((await app.cli(key, "/api/v1/markets")).status, 200, "both scopes can read");
+    assert.equal((await app.cli(key, "/api/v1/markets", { method: "HEAD" })).status, 200, "HEAD is read-only");
   }
   const session = await app.cli(trader, "/api/auth/session");
   assert.equal(((await session.json()) as { key: { scope: string } }).key.scope, "trader");
@@ -229,7 +229,7 @@ test("stored legacy scopes migrate without changing secrets, metadata, revocatio
   const assertPermissions = async (active: typeof app) => {
     assert.equal((await active.cli(stored[0].key, "/api/auth/session")).status, 200, "the original reader secret still works");
     assert.equal((await active.cli(stored[0].key, "/api/v1/requests/preview", { method: "POST" })).status, 403, "read is not upgraded to trader");
-    assert.equal((await active.cli(stored[1].key, "/api/v1/orders/preview", { method: "POST" })).status, 501, "the original trader secret retains mutation access");
+    assert.equal((await active.cli(stored[1].key, "/api/v1/requests/preview", { method: "POST" })).status, 415, "the original trader secret retains mutation access");
     assert.equal((await active.cli(stored[2].key, "/api/auth/session")).status, 401, "a revoked key stays revoked");
     assert.deepEqual((await active.keys()).map(({ scope }) => scope), ["readonly", "trader", "readonly", "trader"]);
   };
@@ -244,7 +244,7 @@ test("unknown stored scopes fail closed for reads and mutations, rather than bec
   const app = await start(t, folder);
   for (const { key } of stored) {
     assert.equal((await app.cli(key, "/api/auth/session")).status, 401);
-    assert.equal((await app.cli(key, "/api/v1/symbols")).status, 401);
+    assert.equal((await app.cli(key, "/api/v1/markets")).status, 401);
     assert.equal((await app.cli(key, "/api/v1/requests/review", { method: "POST" })).status, 401);
   }
   assert.deepEqual(await app.keys(), [], "invalid scopes are not presented as usable keys");

@@ -167,6 +167,12 @@ export class RequestEngine<Credential> {
     if (!record) throw new TradingError("request-not-found", 404);
     this.authorize(credential, false); return record;
   }
+  /** An unexecuted preview while it is still valid (memory only), detached; undefined once expired, invalidated or executed. */
+  async previewOf(credential: Credential, id: string): Promise<TradingPreview | undefined> {
+    this.authorize(credential, false); await this.expire();
+    const preview = this.previews.get(id);
+    this.authorize(credential, false); return preview && structuredClone(preview);
+  }
   async list(credential: Credential) { this.authorize(credential, false); await this.expire(); const result = await this.options.journal.list(); this.authorize(credential, false); return result; }
   async review(credential: Credential, id: string, note: string, acknowledged: boolean) {
     this.authorize(credential, true); this.assertOpen(); await this.expire(); this.authorize(credential, true);

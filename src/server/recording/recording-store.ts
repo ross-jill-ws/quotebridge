@@ -84,14 +84,17 @@ export class RecordingStore {
     }
   }
 
-  /** Up to `limit` of a market's samples from `fromMs` to `toMs` (UTC ms, both included), oldest first, or newest first when `newest`. */
-  async samples(marketId: number, fromMs: number, toMs: number, limit: number, newest = false): Promise<SampleRow[]> {
+  /**
+   * Up to `limit` of a market's samples from `fromMs` to `toMs` (UTC ms, both included), oldest first, or newest first
+   * when `newest`, after skipping `offset`. Every column orders them, so equal times keep one stable order.
+   */
+  async samples(marketId: number, fromMs: number, toMs: number, limit: number, newest = false, offset = 0): Promise<SampleRow[]> {
     const order = newest ? "DESC" : "ASC";
     const rows = (
       await this.connection.runAndReadAll(
         `SELECT utc_ms, broker_seconds, bid, ask, received_ms FROM samples WHERE market_id = $1 AND utc_ms BETWEEN $2 AND $3
-          ORDER BY utc_ms ${order}, received_ms ${order} LIMIT $4`,
-        [marketId, BigInt(fromMs), BigInt(toMs), limit],
+          ORDER BY utc_ms ${order}, received_ms ${order}, broker_seconds ${order}, bid ${order}, ask ${order} LIMIT $4 OFFSET $5`,
+        [marketId, BigInt(fromMs), BigInt(toMs), limit, offset],
       )
     ).getRowObjectsJS();
     return rows.map((row) => ({

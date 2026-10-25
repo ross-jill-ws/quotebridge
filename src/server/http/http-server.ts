@@ -22,7 +22,8 @@ import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
 import { json, write } from "./respond.js";
-import { info, RestV1 } from "./rest-v1.js";
+import { apiError, info, RestV1, type RestCredential } from "./rest-v1.js";
+import type { RequestEngine } from "../trading/index.js";
 import { sessionCookie, type SessionKind, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
@@ -50,6 +51,8 @@ export type HttpServerOptions = {
   settings?: AppSettings;
   /** Indicator packages and their cached values. */
   indicators?: { packages: IndicatorPackages; values: IndicatorValues };
+  /** The shared trading request engine, when the server has a durable database. */
+  trading?: () => RequestEngine<RestCredential> | undefined;
 };
 
 /** The most values one chart request asks for: a run's bars, less the most warm-up a package may declare. */
@@ -94,8 +97,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   const server = createServer((req, res) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     handle(req, res).catch(() => {
-      if (!res.headersSent) json(res, 500, { error: "Request failed. Check the app's logs." });
-      else res.destroy();
+      if (res.headersSent) res.destroy();
+      else if (req.url?.startsWith("/api/v1")) apiError(res, 500, "internal-error", "Request failed. Check the app's logs.");
+      else json(res, 500, { error: "Request failed. Check the app's logs." });
     });
   });
   const live = new LiveSnapshots(bridge, options.indicators?.values, options.indicators?.packages);
@@ -108,6 +112,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     recorder: options.recorder,
     indicators: options.indicators,
     terminalName: (terminalId) => options.terminals?.()?.name(terminalId),
+    trading: options.trading,
   });
   server.on("upgrade", (req, socket: Socket, head: Buffer) => {
     if (req.headers.host !== host || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
@@ -152,29 +157,33 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     // Public: the CLI checks the API version before it has a key.
     if (url.pathname === "/api/v1/info" && (req.method === "GET" || req.method === "HEAD")) return json(res, 200, info());
 
-    const api = url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/") || url.pathname === "/api/auth/session";
+    const v1 = url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/");
+    const api = v1 || url.pathname === "/api/auth/session";
+    // REST v1 answers its errors structured, `{ error: { code, message, details } }`.
+    const refuse = (status: number, code: string, message: string) => (v1 ? apiError(res, status, code, message) : json(res, status, { error: message }));
     const authorization = req.headers.authorization?.trim();
     if (authorization !== undefined) {
       // The CLI and scripts. The app window never sends one, so a key cannot reach the key endpoints (ADR 5). No
       // cookie is involved, so there is no cross-site request to guard against with the Origin check.
       const scheme = authorization.split(" ")[0];
-      if (scheme.toLowerCase() !== "bearer") return json(res, 401, { error: `${SEND_A_KEY} HTTP Basic is not accepted.` });
+      if (scheme.toLowerCase() !== "bearer") return refuse(401, "unauthenticated", `${SEND_A_KEY} HTTP Basic is not accepted.`);
       if (!api) return json(res, 403, { error: "An API key reaches only /api/v1 and /api/auth/session." });
       const writes = req.method !== "GET" && req.method !== "HEAD";
-      const check = options.apiKeys?.check(authorization.slice(scheme.length).trim(), writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
-      if (!check.ok) return json(res, check.status, { error: check.error });
-      return handleApi(url, req, res, check.key);
+      const apiKey = authorization.slice(scheme.length).trim();
+      const check = options.apiKeys?.check(apiKey, writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
+      if (!check.ok) return refuse(check.status, check.status === 401 ? "unauthenticated" : "insufficient-scope", check.error);
+      return handleApi(url, req, res, check.key, { apiKey });
     }
 
     const session = sessions.kind(req.headers, cookie);
     if (!session) {
-      return json(res, 401, { error: api ? `${SEND_A_KEY} Create one in Settings › API keys.` : "Open the dashboard from the app window." });
+      return refuse(401, "unauthenticated", api ? `${SEND_A_KEY} Create one in Settings › API keys.` : "Open the dashboard from the app window.");
     }
 
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
-    if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return json(res, 403, { error: "Forbidden origin" });
+    if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return refuse(403, "forbidden-origin", "Forbidden origin");
 
-    if (api) return handleApi(url, req, res, null);
+    if (api) return handleApi(url, req, res, null, { headers: req.headers });
     if (session !== "window" && req.method !== "GET" && req.method !== "HEAD" &&
       (["/api/settings", "/api/setup", "/api/clock-rules", "/api/recordings/delete", "/api/markets/recording", "/api/history/save", "/api/feeds/remove"].includes(url.pathname) || url.pathname.startsWith("/api/terminals/"))) {
       return json(res, 403, { error: "Only the app window can change administrative settings, recordings or terminal setup." });
@@ -217,8 +226,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   }
 
   /** The REST API, past the key or window session check: GET /api/auth/session tells the CLI whose key it holds. */
-  function handleApi(url: URL, req: IncomingMessage, res: ServerResponse, key: ApiKeyView | null) {
-    if (url.pathname !== "/api/auth/session") return rest.handle(url, req, res);
+  function handleApi(url: URL, req: IncomingMessage, res: ServerResponse, key: ApiKeyView | null, credential: RestCredential) {
+    if (url.pathname !== "/api/auth/session") return rest.handle(url, req, res, credential);
     if (!key) return json(res, 401, { error: SEND_A_KEY });
     json(res, 200, { username: windowsUser(), key: { name: key.name, prefix: key.prefix, scope: key.scope }, expires: null });
   }

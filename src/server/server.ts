@@ -207,7 +207,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     startupCleanup.shift();
     startupCleanup.push(() => bridge.close());
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
-    const http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues } });
+    const http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues }, trading: () => trading });
     startupCleanup.push(() => http.close());
     // Only after both ports are bound and journal recovery completed: no install/detection on a failed bind.
     terminals = config.terminals ? new TerminalManager(config.terminals, {
