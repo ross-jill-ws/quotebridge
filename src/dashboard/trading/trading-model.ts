@@ -190,12 +190,29 @@ export function requestBody(form: OrderForm): { body: Record<string, unknown> } 
 
 /**
  * What a preview was made for: the inputs, the account (connected, its trading chart and EA cap, and whether a request
- * of its own is unresolved) and the trading settings. The dialog discards a preview once this changes; the server
+ * of its own is unresolved), the trading settings and, for an existing trade, that trade as it is now (`trade`: its
+ * current row, `null` once gone; omitted for a new order). The dialog discards a preview once this changes; the server
  * would refuse its execute anyway.
  */
-export function previewKey(form: OrderForm, account: AccountView, settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>): string {
+export function previewKey(form: OrderForm, account: AccountView, settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>,
+  trade?: PositionView | PendingView | null): string {
   return JSON.stringify([form, account.id, account.connected, account.executor, executorSource(account)?.maxLots ?? null, unresolved.get(account.id)?.requestId ?? null,
-    settings.enabled, settings.maxLots, settings.slippage]);
+    settings.enabled, settings.maxLots, settings.slippage, trade === undefined ? undefined : targetFingerprint(trade)]);
+}
+
+/**
+ * The parts of an existing trade a preview was made for (`null` once it is gone), not its live price, profit or swap.
+ * Only the dialog uses it, to drop a stale preview early; the server compares its own exact fingerprint at execute.
+ */
+function targetFingerprint(trade: PositionView | PendingView | null) {
+  if (!trade) return null;
+  return [trade.symbol, trade.side, trade.lots, trade.stopLoss, trade.takeProfit,
+    ...("type" in trade ? [trade.type, trade.price, trade.placedAt, trade.expiry] : [trade.openPrice, trade.openTime])];
+}
+
+/** The current row of an existing trade, by account and ticket; `null` once it is no longer open. */
+export function currentTrade(positions: ReadonlyMap<string, PositionView[]>, orders: ReadonlyMap<string, PendingView[]>, accountId: string, ticket: string): PositionView | PendingView | null {
+  return [...(positions.get(accountId) ?? []), ...(orders.get(accountId) ?? [])].find((t) => t.ticket === ticket) ?? null;
 }
 
 /** Seconds left of a preview's 30, counted on this PC's clock from when its answer arrived (`receivedAt`, ms). */

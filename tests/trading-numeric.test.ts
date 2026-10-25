@@ -45,6 +45,7 @@ test("runtime new-order schema rejects ambiguous values and unsupported fields",
     { ...buy(), price: "1.1" }, { ...buy(), expiry: "2026-01-16T00:00:00Z" },
     { ...buy(), stopLoss: null }, { ...buy(), stopLoss: "0" }, { ...buy(), takeProfit: "0.0000" },
     { ...buy(), risk: { loss: { amount: "10" }, rewardRatio: "2" }, stopLoss: "1.09" },
+    { ...buy(), risk: { loss: { amount: "10" }, rewardRatio: "2" }, takeProfit: "1.12" },
     ...["1e-1", " 0.1", "+0.1", "-0.1", ".1", "01", "1.", "NaN", "Infinity", "0.12345678901", "1000000000000000", "0"].map((lots) => ({ ...buy(), lots }))]) rejects(input);
 });
 

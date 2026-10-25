@@ -180,6 +180,127 @@ test("separate installations sharing broker, login, symbol and default label sta
   assert.ok((await app.state()).terminals.filter((t) => t.kind === "mt4").every((t) => t.checklist.eaConnected));
 });
 
+/** Polls /api/state until `match` holds. */
+async function untilSnapshot(app: Awaited<ReturnType<typeof start>>, match: (s: BridgeSnapshot) => boolean) {
+  for (let i = 0; i < 200; i++) {
+    const s = (await app.get<BridgeSnapshot>("/api/state")).body;
+    if (match(s)) return s;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.fail(`state never matched; last ${JSON.stringify((await app.get<BridgeSnapshot>("/api/state")).body.feeds)}`);
+}
+
+/** The Feeds grouping as the dashboard builds it, named from the Terminals catalog. */
+async function feedGroups(app: Awaited<ReturnType<typeof start>>, snapshot: BridgeSnapshot) {
+  const names = new Map((await app.state()).terminals.flatMap((t) => t.terminalId ? [[t.terminalId, t.name] as const] : []));
+  return groupFeeds(snapshot, names, snapshot.time).groups.map((g) => [g.name, g.feeds.map((f) => [f.symbol, f.market.brokerServer]).sort()]);
+}
+
+// Synthetic logins, not real accounts.
+const LOGIN_A = "11112222";
+const LOGIN_B = "33334444";
+const accountHello = (chart: FakeEA, login: string) => `I|1|${chart.session}|${login}|USD|1|0|1`;
+
+test("a login switch on the same broker server keeps the canonical terminal, one feed per symbol and the Feeds name", { timeout: 15000 }, async (t) => {
+  const clock = new FakeClock();
+  const app = await start(t, { now: clock.now });
+  const terminal = await app.terminal(EASY_FOREX);
+  const id = terminal.terminalId!;
+  const expectOne = async (symbols: string[]) => {
+    const snapshot = await untilSnapshot(app, (s) => s.feeds.filter((f) => f.online).length === symbols.length);
+    assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]), [[id, "Demo-Broker"]]);
+    assert.deepEqual(snapshot.feeds.filter((f) => f.online).map((f) => [f.terminal, f.symbol, f.instances]).sort(), symbols.map((s) => [id, s, 1]).sort());
+    assert.deepEqual(await feedGroups(app, snapshot), [[EASY_FOREX, symbols.map((s) => [s, "Demo-Broker"]).sort()]]);
+    assert.equal((await app.terminal(EASY_FOREX)).checklist.eaConnected, true);
+  };
+  const chart = app.ea(id, { terminal: "mt4-main" });
+  const gold = app.ea(id, { symbol: "XAUUSD" });
+  for (const c of [chart, gold]) {
+    assert.equal(await c.request(c.helloWire()), `C|1|${c.session}|1`);
+    await c.send(accountHello(c, LOGIN_A));
+  }
+  await expectOne(["EURUSD", "XAUUSD"]);
+  // The same session announcing another login is retired, never relabelled; its sibling goes once login B is established.
+  await chart.send(accountHello(chart, LOGIN_B));
+  await untilSnapshot(app, (s) => s.feeds.map((f) => f.symbol).join() === "XAUUSD");
+  assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|0`);
+  // The EA's new session under login B returns to the same catalog terminal.
+  for (const symbol of ["EURUSD", "XAUUSD"]) {
+    const c = app.ea(id, { symbol, terminal: symbol === "EURUSD" ? "mt4-main" : id });
+    assert.equal(await c.request(c.helloWire()), `C|1|${c.session}|1`);
+    await c.send(accountHello(c, LOGIN_B));
+    if (symbol === "EURUSD") chart.close();
+  }
+  await expectOne(["EURUSD", "XAUUSD"]);
+  // EA restart: every chart closes, the online window passes and new sessions with another legacy label say hello.
+  clock.advance(8000);
+  for (const symbol of ["EURUSD", "XAUUSD"]) {
+    const c = app.ea(id, { symbol, terminal: "another-old-label" });
+    assert.equal(await c.request(c.helloWire()), `C|1|${c.session}|1`);
+    await c.send(accountHello(c, LOGIN_B));
+  }
+  await expectOne(["EURUSD", "XAUUSD"]);
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  assert.deepEqual([...new Set(snapshot.feeds.map((f) => f.terminal))], [id], "no feed of any other terminal ID, online or not");
+  assert.equal(new Set(snapshot.feeds.map((f) => f.feed)).size, snapshot.feeds.length, "no duplicate feed per symbol");
+});
+
+test("separate installations stay distinct across EA restarts and a broker and login change of one", { timeout: 15000 }, async (t) => {
+  const clock = new FakeClock();
+  const app = await start(t, { now: clock.now });
+  const [cmc, easy] = (await Promise.all([app.terminal(CMC), app.terminal(EASY_FOREX)])).map((x) => x.terminalId!);
+  const connect = async (id: string, login: string, broker = "Demo-Broker") => {
+    const chart = app.ea(id, { terminal: "mt4-main", broker });
+    assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+    await chart.send(accountHello(chart, login));
+    return chart;
+  };
+  const expect = async (brokers: Record<string, string>) => {
+    const snapshot = await untilSnapshot(app, (s) => s.feeds.filter((f) => f.online).length === 2 && s.terminals.every((p) => p.brokerServer === brokers[p.terminalId]));
+    assert.deepEqual(snapshot.terminals.map((p) => [p.terminalId, p.brokerServer]).sort(), [[cmc, brokers[cmc]], [easy, brokers[easy]]].sort());
+    const online = snapshot.feeds.filter((f) => f.online);
+    assert.deepEqual(online.map((f) => [f.terminal, f.symbol, f.market.brokerServer, f.instances]).sort(), [[cmc, "EURUSD", brokers[cmc], 1], [easy, "EURUSD", brokers[easy], 1]].sort());
+    assert.ok(snapshot.feeds.every((f) => f.market.brokerServer === brokers[f.terminal]), "no feed relabelled across installations");
+    assert.deepEqual(await feedGroups(app, snapshot), [[CMC, [["EURUSD", brokers[cmc]]]], [EASY_FOREX, [["EURUSD", brokers[easy]]]]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    assert.ok((await app.state()).terminals.filter((x) => x.kind === "mt4").every((x) => x.checklist.eaConnected));
+  };
+  let charts = [await connect(cmc, LOGIN_A), await connect(easy, LOGIN_A)];
+  await expect({ [cmc]: "Demo-Broker", [easy]: "Demo-Broker" });
+  for (const c of charts) c.close();
+  clock.advance(8000);
+  charts = [await connect(cmc, LOGIN_A), await connect(easy, LOGIN_A)];
+  await expect({ [cmc]: "Demo-Broker", [easy]: "Demo-Broker" });
+  // CMC logs into another broker server and login; its old chart closes, as the EA restarts its session.
+  charts[0].close();
+  await connect(cmc, LOGIN_B, "Other-Broker");
+  await expect({ [cmc]: "Other-Broker", [easy]: "Demo-Broker" });
+  assert.equal(await charts[1].request(charts[1].helloWire()), `C|1|${charts[1].session}|1`, "easy-forex's chart is untouched");
+  await expect({ [cmc]: "Other-Broker", [easy]: "Demo-Broker" });
+});
+
+test("REST v1 terminals carry the same IDs and catalog names as Terminals and the Feeds groups", { timeout: 15000 }, async (t) => {
+  const app = await start(t, { recording: true });
+  const catalog = new Map((await app.state()).terminals.filter((x) => x.kind === "mt4").map((x) => [x.terminalId!, x.name]));
+  for (const id of catalog.keys()) {
+    const chart = app.ea(id, { terminal: "mt4-main" });
+    assert.equal(await chart.request(chart.helloWire()), `C|1|${chart.session}|1`);
+  }
+  const created = await app.post<{ key: string }>("/api/api-keys", { name: "Reader", scope: "readonly" });
+  assert.equal(created.status, 201);
+  const res = await fetch(`${app.origin}/api/v1/terminals`, { headers: { authorization: `Bearer ${created.body.key}` } });
+  assert.equal(res.status, 200);
+  const { data } = (await res.json()) as { data: { id: string; name: string; brokerServer: string; connected: boolean; feeds: number }[] };
+  assert.deepEqual(data.map((x) => [x.id, x.name]).sort(), [...catalog].sort());
+  assert.deepEqual(data.map((x) => [x.name, x.brokerServer, x.connected, x.feeds]).sort(), [[CMC, "Demo-Broker", true, 1], [EASY_FOREX, "Demo-Broker", true, 1]]);
+  const snapshot = (await app.get<BridgeSnapshot>("/api/state")).body;
+  const groups = groupFeeds(snapshot, catalog, snapshot.time).groups;
+  assert.deepEqual(groups.map((g) => [g.terminal, g.name]).sort(), data.map((x) => [x.id, x.name]).sort());
+  for (const x of data) {
+    const one = await fetch(`${app.origin}/api/v1/terminals/${x.id}`, { headers: { authorization: `Bearer ${created.body.key}` } });
+    assert.deepEqual(((await one.json()) as { data: unknown }).data, x);
+  }
+});
+
 test("label changes, replay, reconnect and EA restart keep one canonical feed and do not repeat accepted samples", { timeout: 15000 }, async (t) => {
   const clock = new FakeClock();
   const app = await start(t, { now: clock.now });

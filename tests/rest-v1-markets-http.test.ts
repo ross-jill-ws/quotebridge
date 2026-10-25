@@ -241,7 +241,15 @@ test("export answers the M3 History pipeline's CSV and HST files byte for byte; 
     const m3 = await fetch(`${app.origin}/api/history/${format}?market=${market}&period=H1`, { headers: { cookie: app.cookie } });
     assert.equal(exported.status, 200);
     for (const header of ["content-type", "content-disposition"]) assert.equal(exported.headers.get(header), m3.headers.get(header), header);
-    assert.deepEqual(Buffer.from(await exported.arrayBuffer()), Buffer.from(await m3.arrayBuffer()), format);
+    const bytes = Buffer.from(await exported.arrayBuffer());
+    // On its own, whatever the History page answers: the ten closed bars, not the candle forming at broker 10:00.
+    if (format === "csv") {
+      const lines = bytes.toString("utf8").trim().split("\n");
+      assert.equal(lines.length, 1 + h1.length, "csv: the header and the closed bars");
+      assert.ok(lines.at(-1)!.startsWith("2027-01-14 23:00:00,"), "the last closed bar ends it");
+      assert.ok(!lines.some((line) => line.startsWith("2027-01-15 10:00:00")), "no forming bar");
+    } else assert.equal(bytes.length, 148 + h1.length * 60, "hst: an HST v401 header and the closed bars' records");
+    assert.deepEqual(bytes, Buffer.from(await m3.arrayBuffer()), format);
   }
   const narrowed = await app.cli(path, { timeframe: "H1", format: "csv", from: utcIso(h1[2].time), to: utcIso(h1[4].time) });
   assert.deepEqual((await narrowed.text()).trim().split("\n"), [

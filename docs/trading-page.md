@@ -33,7 +33,7 @@ expiry (30 seconds).
   preview itself. Only the **Send to MetaTrader** button sends, and only that exact preview.
 - An expiry is entered in this computer's time. Other times on the page follow Settings › Appearance › Time shown.
 - Any change discards the preview: an input, the account, the account going offline or getting an unresolved request,
-  its trading chart or EA cap, or Settings › Trading. Preview again.
+  its trading chart or EA cap, Settings › Trading, or the trade itself changing or closing in MetaTrader. Preview again.
 - After sending, the dialog follows the request until MetaTrader answers: **Succeeded**, **Failed** with the broker's
   code and message, or **Unknown**.
 

@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { accountId, marketId } from "../src/server/identity/index.js";
-import { LOGIN } from "./account-fixtures.js";
+import { LOGIN, orderRow } from "./account-fixtures.js";
 import { DEMO, startRest, tempFolder, TERMINAL, type Json } from "./rest-fixtures.js";
 
 const MARKET = marketId(DEMO, "EURUSD");
@@ -123,4 +123,42 @@ test("administration stays out of the public API: trader keys reach no settings,
   }
   const settings = await app.windowGet("/api/settings");
   assert.equal(settings.trading.enabled, false, "trading stays off: only the app window turns it on");
+});
+
+test("collections page by cursor to the end without repeats or skips, also while items are added; limit and cursor are checked", { timeout: 40000 }, async (t) => {
+  const app = await startRest(t, await tempFolder(t, "rest-db"));
+  const ea = await app.connect();
+  for (const symbol of ["GBPUSD", "USDJPY"]) await app.connect({ symbol });
+  const seen: string[] = [];
+  let query: Record<string, string | number> = { limit: 1 };
+  for (let n = 0; n < 10; n++) {
+    const page = await app.read("/api/v1/markets", query);
+    seen.push(...page.data.map((m: Json) => m.symbol));
+    // Between pages, two markets appear: one before the page reached, one after it.
+    if (n === 0) for (const symbol of ["AUDUSD", "XAUUSD"]) await app.connect({ symbol });
+    if (!page.meta.nextCursor) break;
+    query = { limit: 1, cursor: page.meta.nextCursor };
+  }
+  assert.deepEqual(seen, ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"], "each once, in order; AUDUSD sorts before the cursor");
+
+  for (const path of ["/api/v1/markets", "/api/v1/accounts", "/api/v1/terminals", "/api/v1/indicators"]) {
+    assert.equal((await app.read(path, { limit: 500 })).meta.limit, 500, path);
+    assert.equal((await app.read(path, { limit: 501 }, 400)).error.code, "invalid-parameter", path);
+    assert.equal((await app.read(path, { cursor: "garbage" }, 400)).error.code, "invalid-cursor", path);
+  }
+
+  // Positions page by ticket, each page from a fresh read.
+  await app.announce(ea);
+  const rows = [5, 3, 9, 1, 7].map((ticket) => orderRow(ticket, ticket % 2));
+  const tickets: string[] = [];
+  query = { limit: 2 };
+  for (let n = 0; n < 10; n++) {
+    const pending = app.read(`/api/v1/accounts/${ACCOUNT}/positions`, query);
+    await app.answer(ea, 1, { rows, total: rows.length });
+    const page = await pending;
+    tickets.push(...page.data.map((p: Json) => p.ticket));
+    if (!page.meta.nextCursor) break;
+    query = { limit: 2, cursor: page.meta.nextCursor };
+  }
+  assert.deepEqual(tickets, ["1", "3", "5", "7", "9"]);
 });

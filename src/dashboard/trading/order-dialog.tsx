@@ -1,13 +1,14 @@
 // The one order dialog for every trading action: a new order (its account chosen explicitly, never preselected), or a
 // change, close or cancel of an existing trade (bound to its account and ticket). Preview first: the dialog shows what
 // the app approved, its limits, warnings and expiry, and only the Send button executes that exact preview. Enter
-// previews (again) and never sends. A change of the inputs, the account, its trading chart or the trading settings
-// discards the preview.
+// previews (again) and never sends. A change of the inputs, the account, its trading chart, the trading settings or the
+// existing trade itself (in MetaTrader) discards the preview.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { ApiError, get, getAll, post, type Envelope } from "../api.js";
 import {
   actionBlock,
+  currentTrade,
   describeIntent,
   enterKeyAction,
   newOrderForm,
@@ -112,9 +113,10 @@ export function OrderDialog({ target, trading, timeShown, onClose }: { target: O
   const choices = orderAccounts(trading.accounts, settings, unresolved, fixedMarket?.brokerServer);
 
   const block: ActionBlock | undefined = account ? actionBlock(account, settings, unresolved) : undefined;
-  const key = account ? previewKey(form, account, settings, unresolved) : "";
+  const liveTrade = form.kind === "place" ? undefined : currentTrade(trading.positions, trading.orders, form.accountId, form.ticket);
+  const key = account ? previewKey(form, account, settings, unresolved, liveTrade) : "";
   const left = preview ? secondsLeft(preview.view, preview.receivedAt, now) : 0;
-  // A preview that no longer holds is discarded: changed inputs, account, chart or settings, or expired.
+  // A preview that no longer holds is discarded: changed inputs, account, chart, settings or trade, or expired.
   const stale = preview && (preview.key !== key || left === 0);
   useEffect(() => {
     if (stale && stage === "previewed") {

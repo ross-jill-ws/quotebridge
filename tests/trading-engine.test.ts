@@ -10,7 +10,7 @@ import type { TradingSettings, TradeInput } from "../src/server/trading/types.js
 import { conditionsWire, deliver, heartbeat, LOGIN, OTHER_LOGIN, orderRow, pageWire, resultWire, startAccounts, type Page } from "./account-fixtures.js";
 import type { FakeEA } from "./fake-ea.js";
 
-async function setup(t: TestContext) {
+async function setup(t: TestContext, extra: { terminalAvailable?: (terminalId: string) => boolean } = {}) {
   const fixture = await startAccounts(t);
   const folder = await mkdtemp(join(tmpdir(), "qb-engine-"));
   const db = await openDatabase(folder);
@@ -23,6 +23,7 @@ async function setup(t: TestContext) {
     bridge: fixture.bridge, journal: db.journal, now: fixture.clock.now,
     settings: async () => settings, clockRule: () => ({ winterOffsetMinutes: 0, dst: "none" as const }),
     authorize: (key: string, write: boolean) => keys.check(key, write).ok ? "api-key" as const : undefined,
+    ...extra,
   };
   let engine = await RequestEngine.open(options);
   t.after(() => engine.close());
@@ -45,6 +46,10 @@ async function setup(t: TestContext) {
 }
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
+/** A FakeEA receive that times out: the engine sent the EA nothing at all. */
+const NOTHING_SENT = /temporarily unavailable|timed out|EAGAIN/i;
+/** A pending buy limit placed outside QuoteBridge (magic -42), clear of the stop and freeze levels. */
+const pendingRow = (ticket: number) => `${ticket},2,EURUSD,0.1000000000,1.0900000000,1700000000,0,0,0,0,0,0,-42,1.1000000000`;
 async function approve(f: Fixture, input: TradeInput = f.input, ea = f.ea, page: Page = {}) {
   const pending = f.engine.preview(f.trader.key, input); await f.answer(ea, page); return pending;
 }
@@ -115,6 +120,7 @@ test("restart recovers a lost reply as unknown, retains original source, and nev
   assert.deepEqual(await f.engine.execute(f.trader.key, p.id, true), recovered);
   const replacement = await f.connect({ terminal: f.ea.terminal });
   await f.announce(replacement, { login: OTHER_LOGIN, enabled: true });
+  await Promise.all([f.ea, replacement].map((ea) => assert.rejects(ea.receive(), NOTHING_SENT)));
   await deliver(f.bridge, replacement, resultWire(replacement, p.id, OTHER_LOGIN));
   assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "unknown");
   await deliver(f.bridge, f.ea, resultWire(f.ea, p.id));
@@ -317,4 +323,133 @@ test("simultaneous execute joins one dispatch, persisted before the EA sees it, 
   await assert.rejects(f.engine.execute(f.readonly.key, preview.id, true), { code: "not-authorized" });
   await f.keys.revoke({ id: f.trader.apiKey.id });
   await assert.rejects(f.engine.execute(f.trader.key, preview.id, true), { code: "not-authorized" });
+});
+
+/**
+ * Execute an approved preview against an unchanged page and return the order command's fields once the EA's success is
+ * journaled. Fields (docs/account-protocol.md): 4 login, 6 action, 7 kind, 8 symbol, 9 ticket, 10 lots, 11 price,
+ * 12 SL, 13 TP, 17–22 the target fingerprint (open time, open price, lots, SL, TP, expiration).
+ */
+async function sent(f: Fixture, id: string, page: Page) {
+  const pending = f.engine.execute(f.trader.key, id, true); await f.answer(f.ea, page);
+  const wire = (await f.ea.receive()).split("|");
+  await pending; await deliver(f.bridge, f.ea, resultWire(f.ea, id));
+  assert.equal((await f.engine.get(f.trader.key, id)).outcome, "succeeded");
+  return wire;
+}
+
+test("close, modify and cancel send the account-qualified ticket and its target fingerprint, whatever the new-order caps", async (t) => {
+  const f = await setup(t);
+  // An outside position four times the EA cap (0.5) and twice the app cap (1).
+  const page = { total: 2, rows: [orderRow(42).replace("0.1000000000", "2.0000000000"), pendingRow(51)] };
+  const fingerprint = ["1700000000", "1.1", "2", "0", "0", "0"];
+  const close = await approve(f, { action: "close", accountId: f.account.id, ticket: "42" }, f.ea, page);
+  assert.ok(close.warnings.includes("This trade was created outside QuoteBridge."));
+  const closing = await sent(f, close.id, page);
+  assert.deepEqual([closing[4], closing[6], closing[8], closing[9], closing[10]], [LOGIN, "C", "EURUSD", "42", "2"]);
+  assert.deepEqual(closing.slice(17, 23), fingerprint);
+  const modify = await approve(f, { action: "modify", accountId: f.account.id, ticket: "42", takeProfit: "1.2" }, f.ea, page);
+  const modifying = await sent(f, modify.id, page);
+  assert.deepEqual([modifying[6], modifying[9], modifying[10], modifying[12], modifying[13]], ["M", "42", "2", "0", "1.2"]);
+  assert.deepEqual(modifying.slice(17, 23), fingerprint);
+  const cancel = await approve(f, { action: "cancel", accountId: f.account.id, ticket: "51" }, f.ea, page);
+  assert.ok(cancel.warnings.includes("This trade was created outside QuoteBridge."));
+  const cancelling = await sent(f, cancel.id, page);
+  assert.deepEqual([cancelling[6], cancelling[7], cancelling[9], cancelling[11]], ["D", "2", "51", "1.09"]);
+  assert.deepEqual(cancelling.slice(17, 23), ["1700000000", "1.09", "0.1", "0", "0", "0"]);
+});
+
+test("trading off refuses close, modify and cancel and discards their previews without reading or sending", async (t) => {
+  const f = await setup(t);
+  const page = { total: 2, rows: [orderRow(42), pendingRow(51)] };
+  const close = await approve(f, { action: "close", accountId: f.account.id, ticket: "42" }, f.ea, page);
+  f.changeSettings({ enabled: false, maxLots: "1", slippage: 20 });
+  await assert.rejects(f.engine.execute(f.trader.key, close.id, true), { code: "preview-unavailable" });
+  for (const input of [{ action: "close", accountId: f.account.id, ticket: "42" }, { action: "modify", accountId: f.account.id, ticket: "42", stopLoss: null },
+    { action: "cancel", accountId: f.account.id, ticket: "51" }] satisfies TradeInput[]) {
+    await assert.rejects(f.engine.preview(f.trader.key, input), { code: "trading-disabled" });
+  }
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+  assert.deepEqual(await f.engine.list(f.trader.key), []);
+});
+
+test("a revoked key cannot preview, even mid-read, or review an unknown request", async (t) => {
+  const f = await setup(t), p = await approve(f);
+  await dispatch(f, p.id); f.clock.advance(20_000); await heartbeat(f.bridge, f.ea);
+  const before = await f.engine.get(f.readonly.key, p.id);
+  assert.equal(before.outcome, "unknown");
+  const reviewer = await f.keys.create({ name: "Reviewer", scope: "trader" });
+  await f.keys.revoke({ id: reviewer.apiKey.id });
+  await assert.rejects(f.engine.review(reviewer.key, p.id, "Inspected MT4 orders/history", true), { code: "not-authorized" });
+  assert.deepEqual(await f.engine.get(f.readonly.key, p.id), before);
+  const late = await f.keys.create({ name: "Late", scope: "trader" });
+  const reading = assert.rejects(f.engine.preview(late.key, f.input), { code: "not-authorized" });
+  await f.keys.revoke({ id: late.apiKey.id }); await f.answer(f.ea); await reading;
+  await f.keys.revoke({ id: f.trader.apiKey.id });
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "not-authorized" });
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+});
+
+test("an engine restart, a new EA session or a login switch discards an unused preview, which never sends", async (t) => {
+  const f = await setup(t);
+  const restarted = await approve(f); await f.restartEngine();
+  await assert.rejects(f.engine.execute(f.trader.key, restarted.id, true), { code: "preview-unavailable" });
+  const reconnected = await approve(f);
+  // The EA restarts on its chart: the old session falls silent and a new one announces the same account.
+  f.clock.advance(6000);
+  const replacement = await f.connect({ terminal: f.ea.terminal });
+  await f.announce(replacement, { enabled: true });
+  await assert.rejects(f.engine.execute(f.trader.key, reconnected.id, true), { code: "preview-unavailable" });
+  const switched = await approve(f, f.input, replacement);
+  // MetaTrader signed in to another login: the EA restarts its session with that login.
+  const signedIn = await f.connect({ terminal: f.ea.terminal });
+  await f.announce(signedIn, { login: OTHER_LOGIN, enabled: true });
+  await assert.rejects(f.engine.execute(f.trader.key, switched.id, true), { code: "preview-unavailable" });
+  await Promise.all([f.ea, replacement, signedIn].map((ea) => assert.rejects(ea.receive(), NOTHING_SENT)));
+  assert.deepEqual(await f.engine.list(f.trader.key), []);
+});
+
+test("a refused execute consumes its preview: retrying the same ID cannot send", async (t) => {
+  const f = await setup(t);
+  const page = { total: 1, rows: [orderRow(42)] };
+  const p = await approve(f, { action: "close", accountId: f.account.id, ticket: "42" }, f.ea, page);
+  const refused = assert.rejects(f.engine.execute(f.trader.key, p.id, true), { code: "target-changed" });
+  await f.answer(f.ea, { ...page, rows: [orderRow(42).replace("0.1000000000", "2.0000000000")] }); await refused;
+  await assert.rejects(f.engine.execute(f.trader.key, p.id, true), { code: "preview-unavailable" });
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+});
+
+test("a terminal being updated refuses preview and execute, and an execute reading fresh data reserves its terminal", async (t) => {
+  let available = true;
+  const f = await setup(t, { terminalAvailable: () => available });
+  const p = await approve(f);
+  available = false;
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "terminal-updating" });
+  await assert.rejects(f.engine.execute(f.trader.key, p.id, true), { code: "terminal-updating" });
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+  available = true;
+  const next = await approve(f);
+  const executing = f.engine.execute(f.trader.key, next.id, true);
+  const reads = [await f.ea.receive(), await f.ea.receive()];
+  assert.ok(reads.every((wire) => /^[VP]\|/.test(wire)));
+  assert.equal(f.engine.hasUnresolvedTerminal(f.ea.terminal), true, "an update must wait while execute validates");
+  f.clock.advance(5000); f.bridge.accounts.list();
+  await assert.rejects(executing, { code: "read-timeout" });
+  assert.equal(f.engine.hasUnresolvedTerminal(f.ea.terminal), false);
+  assert.deepEqual(await f.engine.list(f.trader.key), []);
+  await assert.rejects(f.ea.receive(), NOTHING_SENT);
+});
+
+test("an outcome stays dispatching until 20 seconds, and after review the account can trade again", async (t) => {
+  const f = await setup(t), p = await approve(f), next = await approve(f);
+  await dispatch(f, p.id);
+  f.clock.advance(19_999);
+  assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "dispatching");
+  f.clock.advance(1);
+  assert.equal((await f.engine.get(f.trader.key, p.id)).outcome, "unknown");
+  await heartbeat(f.bridge, f.ea);
+  await assert.rejects(f.engine.execute(f.trader.key, next.id, true), { code: "account-unresolved" });
+  await f.engine.review(f.trader.key, p.id, "Inspected MT4 orders/history", true);
+  // Review lifts the block: the account's other, still valid preview may now dispatch.
+  await dispatch(f, next.id);
 });

@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { accountId, marketId } from "../src/server/identity/index.js";
-import { LOGIN, OTHER_LOGIN, orderRow, resultWire } from "./account-fixtures.js";
+import { actionBlock, newOrderForm, requestBody, unresolvedByAccount, type AccountView, type OrderForm, type RequestView } from "../src/dashboard/trading/trading-model.js";
+import { deliver, LOGIN, OTHER_LOGIN, orderRow, resultWire } from "./account-fixtures.js";
 import type { FakeEA } from "./fake-ea.js";
 import { DEMO, OTHER_TERMINAL, REAL, startRest, tempFolder, type Json, type RestApp } from "./rest-fixtures.js";
 
@@ -46,6 +47,24 @@ async function noCommand(ea: FakeEA) {
     }
     assert.ok(wire.startsWith("G|"), `unexpected ${wire.split("|")[0]} message`);
   }
+}
+
+/** POSTs as a browser session (`cookie`, the app window's by default) does, asserting the status. */
+async function browserSend(app: RestApp, path: string, body: unknown, status: number, cookie = app.cookie) {
+  const res = await fetch(`${app.origin}${path}`, { method: "POST", headers: { cookie, origin: app.origin, "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal(res.status, status, `${path}: ${await res.clone().text()}`);
+  return (await res.json()) as Json;
+}
+
+/** A heartbeat from the chart, as after the clock moved on: its terminal is connected again. */
+async function alive(app: RestApp, ea: FakeEA) {
+  await deliver(app.server.bridge, ea, ea.helloWire());
+  for (let wire = await ea.receive(); !wire.startsWith("C|"); wire = await ea.receive());
+}
+
+/** Waits until the request's status is no longer dispatching. */
+async function settled(app: RestApp, id: string) {
+  for (let i = 0; i < 100 && (await app.read(`/api/v1/requests/${id}`)).data.status === "dispatching"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 test("a place preview is normalized and single-use; execute answers 202, a duplicate the same record, and only one order is sent", { timeout: 30000 }, async (t) => {
@@ -197,7 +216,7 @@ test("requests list the journal oldest first by cursor, filtered by exact accoun
     await command(ea);
     await executing;
     await ea.send(resultWire(ea, preview.requestId));
-    for (let i = 0; i < 100 && (await app.read(`/api/v1/requests/${preview.requestId}`)).data.status === "dispatching"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    await settled(app, preview.requestId);
     ids.push(preview.requestId);
     app.clock.advance(1000);
   }
@@ -207,4 +226,206 @@ test("requests list the journal oldest first by cursor, filtered by exact accoun
   assert.deepEqual([rest.data.map((r: Json) => r.requestId), rest.meta.nextCursor], [ids.slice(2), null]);
   assert.deepEqual((await app.read("/api/v1/requests", { accountId: accountId(DEMO, OTHER_LOGIN) })).data, []);
   assert.equal((await app.read("/api/v1/requests", { limit: 501 }, 400)).error.code, "invalid-parameter");
+});
+
+test("a real account reads over REST, but its place and close previews answer 409 executor-real-account and the EA receives no order", { timeout: 30000 }, async (t) => {
+  const app = await startRest(t, await tempFolder(t, "rest-db"), { trading: true });
+  const ea = await app.connect();
+  await app.announce(ea, { demo: false, enabled: true });
+  const page = { demo: false, rows: [orderRow(7, 0), orderRow(8, 2)], total: 2 };
+  const read = async (path: string) => {
+    const pending = app.read(path);
+    await app.answer(ea, 1, page);
+    return (await pending).data;
+  };
+  const account = (await app.read(`/api/v1/accounts/${ACCOUNT}`)).data;
+  assert.deepEqual([account.demo, account.executor.state], [false, "real-account"]);
+  const funds = await read(`/api/v1/accounts/${ACCOUNT}/funds`);
+  assert.deepEqual([funds.balance, funds.state], ["1000", "fresh"]);
+  assert.deepEqual((await read(`/api/v1/accounts/${ACCOUNT}/positions`)).map((p: Json) => p.ticket), ["7"]);
+  assert.deepEqual((await read(`/api/v1/accounts/${ACCOUNT}/orders`)).map((o: Json) => o.ticket), ["8"]);
+
+  for (const body of [PLACE, { accountId: ACCOUNT, action: "close", ticket: "7" }]) {
+    assert.equal((await app.send("/api/v1/requests/preview", body, 409)).error.code, "executor-real-account", body.action);
+  }
+  // No account read, conditions read or order: nothing at all reaches the EA.
+  await noCommand(ea);
+});
+
+test("a key revoked mid-flow is refused at once: its execute answers 401 and sends nothing, another trader key may still execute; a revoked key's duplicate gets no record", { timeout: 40000 }, async (t) => {
+  const { app, ea } = await trading(t);
+  const revoke = async (name: string) => {
+    const { keys } = await app.windowGet("/api/api-keys");
+    await app.post("/api/api-keys/revoke", { id: (keys as Json[]).find((k) => k.name === name)!.id });
+  };
+  const p = (await withReads(app, ea, "/api/v1/requests/preview", PLACE, 201)).data;
+  const execute = `/api/v1/requests/${p.requestId}/execute`;
+  await revoke("Trader");
+  assert.equal((await app.send(execute, { confirm: true }, 401, app.traderKey)).error.code, "unauthenticated");
+  await noCommand(ea);
+
+  // The preview is still valid: another trader key executes it.
+  const executing = app.send(execute, { confirm: true }, 202, app.otherTraderKey);
+  await app.answer(ea, 2);
+  await command(ea);
+  assert.equal((await executing).data.requestId, p.requestId);
+  await revoke("Other trader");
+  const duplicate = await app.send(execute, { confirm: true }, 401, app.otherTraderKey);
+  assert.deepEqual([Object.keys(duplicate), duplicate.error.code], [["error"], "unauthenticated"], "not the record");
+  assert.equal((await app.read(`/api/v1/requests/${p.requestId}`, {}, 401, app.otherTraderKey)).error.code, "unauthenticated");
+  await noCommand(ea);
+});
+
+test("after a restart a journal-linked account is offline with null Funds; its request is unknown, and executing it again answers the record without a send", { timeout: 40000 }, async (t) => {
+  const db = await tempFolder(t, "rest-db");
+  const app = await startRest(t, db, { trading: true });
+  const ea = await app.connect();
+  await app.announce(ea, { enabled: true });
+  const p = (await withReads(app, ea, "/api/v1/requests/preview", PLACE, 201)).data;
+  const execute = `/api/v1/requests/${p.requestId}/execute`;
+  const executing = app.send(execute, { confirm: true }, 202);
+  await app.answer(ea, 2);
+  await command(ea);
+  await executing;
+  // The app stops before MetaTrader's answer arrives.
+  await app.stop();
+
+  const again = await startRest(t, db, { clock: app.clock, trading: true });
+  const [account] = (await again.read("/api/v1/accounts")).data;
+  assert.deepEqual([account.id, account.connected, account.state, account.currency, account.executor.state], [ACCOUNT, false, "unavailable", null, "zero"]);
+  const funds = (await again.read(`/api/v1/accounts/${ACCOUNT}/funds`)).data;
+  for (const field of ["balance", "equity", "margin", "freeMargin", "marginLevel", "profit", "leverage"]) assert.equal(funds[field], null, `${field} is unknown, never zero`);
+  const listed = (await again.read("/api/v1/requests", { accountId: ACCOUNT })).data;
+  assert.deepEqual(listed.map((r: Json) => [r.requestId, r.status, r.reviewed, r.origin]), [[p.requestId, "unknown", false, "api-key"]]);
+  assert.deepEqual(listed[0].events.map((e: Json) => [e.type, e.reason]), [["unknown", "restart"]]);
+
+  // Its chart connects again, ready to trade: executing the same ID answers the record and sends nothing.
+  const back = await again.connect();
+  await again.announce(back, { enabled: true });
+  const duplicate = await again.send(execute, { confirm: true }, 200);
+  assert.deepEqual(duplicate.data, listed[0]);
+  await noCommand(back);
+});
+
+test("a remote browser may preview, execute and review, recorded as remote-browser; its settings and key changes stay 403", { timeout: 40000 }, async (t) => {
+  const { app, ea } = await trading(t);
+  const token = "remote-token-0123456789";
+  app.server.addRemoteToken(token);
+  const signIn = await fetch(`${app.origin}/session?token=${token}`, { redirect: "manual" });
+  const remote = signIn.headers.get("set-cookie")!.split(";")[0];
+
+  const previewing = browserSend(app, "/api/v1/requests/preview", PLACE, 201, remote);
+  await app.answer(ea, 2);
+  const p = (await previewing).data;
+  const executing = browserSend(app, `/api/v1/requests/${p.requestId}/execute`, { confirm: true }, 202, remote);
+  await app.answer(ea, 2);
+  await command(ea);
+  assert.deepEqual([(await executing).data.status, (await executing).data.origin], ["dispatching", "remote-browser"]);
+  app.clock.advance(20_000);
+  const unknown = (await (await fetch(`${app.origin}/api/v1/requests/${p.requestId}`, { headers: { cookie: remote } })).json()) as Json;
+  assert.equal(unknown.data.status, "unknown");
+  const reviewed = (await browserSend(app, `/api/v1/requests/${p.requestId}/review`, { note: "Checked MT4 orders and history", acknowledged: true }, 200, remote)).data;
+  assert.deepEqual([reviewed.status, reviewed.reviewed], ["unknown", true]);
+  assert.equal((await app.read(`/api/v1/requests/${p.requestId}`)).data.origin, "remote-browser", "the journal records who executed it");
+
+  // In the same session: no settings and no keys.
+  await browserSend(app, "/api/settings", { trading: { enabled: false, maxLots: "1.0", slippage: 20 } }, 403, remote);
+  await browserSend(app, "/api/api-keys", { name: "Remote trader", scope: "trader" }, 403, remote);
+  assert.equal((await app.windowGet("/api/settings")).trading.enabled, true);
+  assert.deepEqual(((await app.windowGet("/api/api-keys")).keys as Json[]).map((k) => k.name), ["Reader", "Trader", "Other trader"]);
+});
+
+test("the CLI's key and the dashboard's window session see one journal: an unknown request blocks only its account until the window reviews it", { timeout: 60000 }, async (t) => {
+  const { app, ea } = await trading(t);
+  const other = await app.connect({ terminal: OTHER_TERMINAL });
+  const B = await app.announce(other, { login: OTHER_LOGIN, enabled: true });
+  const placeOn = (id: string) => ({ ...PLACE, accountId: id });
+  const page = (id: string) => (id === B ? { login: OTHER_LOGIN } : {});
+  const eaOf = (id: string) => (id === B ? other : ea);
+  /** POSTs with the window session, answering the engine's reads of the account's chart. */
+  const windowWithReads = async (id: string, path: string, body: unknown, status: number) => {
+    const pending = browserSend(app, path, body, status);
+    await app.answer(eaOf(id), 2, page(id));
+    return pending;
+  };
+  /** What the Trading page shows: the accounts, settings and requests it reads with the window session. */
+  const dashboard = async () => {
+    const accounts = (await app.windowGet("/api/v1/accounts")).data as AccountView[];
+    const settings = (await app.windowGet("/api/settings")).trading;
+    const unresolved = unresolvedByAccount((await app.windowGet("/api/v1/requests")).data as RequestView[]);
+    const block = (id: string) => actionBlock(accounts.find((a) => a.id === id)!, settings, unresolved);
+    return { unresolved, block };
+  };
+
+  // A trader key's preview, executed through the window: the window is its origin.
+  const first = (await withReads(app, other, "/api/v1/requests/preview", placeOn(B), 201, app.traderKey, page(B))).data;
+  const viaWindow = browserSend(app, `/api/v1/requests/${first.requestId}/execute`, { confirm: true }, 202);
+  await app.answer(other, 2, page(B));
+  await command(other);
+  assert.equal((await viaWindow).data.origin, "app-window");
+  await other.send(resultWire(other, first.requestId, OTHER_LOGIN));
+  await settled(app, first.requestId);
+
+  // The CLI's trader key previews and executes on A; MetaTrader never answers.
+  const p = (await withReads(app, ea, "/api/v1/requests/preview", PLACE, 201)).data;
+  const executing = app.send(`/api/v1/requests/${p.requestId}/execute`, { confirm: true }, 202);
+  await app.answer(ea, 2);
+  await command(ea);
+  assert.equal((await executing).data.origin, "api-key");
+  app.clock.advance(20_000);
+  await alive(app, ea);
+  await alive(app, other);
+
+  const before = await dashboard();
+  assert.deepEqual([...before.unresolved.keys()], [ACCOUNT]);
+  assert.deepEqual([before.block(ACCOUNT)?.kind, before.block(ACCOUNT)?.requestId], ["unresolved", p.requestId]);
+  assert.equal(before.block(B), undefined, "another account is not blocked");
+
+  // The window's own preview on A is refused at execute; on B it runs.
+  const onA = (await windowWithReads(ACCOUNT, "/api/v1/requests/preview", PLACE, 201)).data;
+  assert.equal((await browserSend(app, `/api/v1/requests/${onA.requestId}/execute`, { confirm: true }, 409)).error.code, "account-unresolved");
+  const onB = (await windowWithReads(B, "/api/v1/requests/preview", placeOn(B), 201)).data;
+  const runningB = browserSend(app, `/api/v1/requests/${onB.requestId}/execute`, { confirm: true }, 202);
+  await app.answer(other, 2, page(B));
+  await command(other);
+  assert.deepEqual([(await runningB).data.status, (await runningB).data.origin], ["dispatching", "app-window"]);
+  await noCommand(ea);
+
+  // The window reviews A as the review dialog posts it; the CLI reads it back.
+  const note = " Checked MT4 orders and history ";
+  await browserSend(app, `/api/v1/requests/${p.requestId}/review`, { note: note.trim(), acknowledged: true }, 200);
+  const back = (await app.read(`/api/v1/requests/${p.requestId}`, {}, 200, app.traderKey)).data;
+  assert.deepEqual([back.status, back.reviewed], ["unknown", true], "reviewed, the outcome still unknown");
+  const after = await dashboard();
+  assert.equal(after.block(ACCOUNT), undefined, "A may trade again");
+  assert.deepEqual([...after.unresolved.keys()], [B], "only B's own request, still sending, is open");
+});
+
+test("the dashboard's request bodies are REST v1 previews: every order form the dialogs post previews with 201 and nothing is sent", { timeout: 60000 }, async (t) => {
+  const { app, ea } = await trading(t);
+  // A position with a stop loss and a buy limit at 1.095, as the dialogs open them.
+  const rows = [orderRow(21, 0).replace(",0,0,0,-1.25", ",1.0900000000,0,0,-1.25"), orderRow(22, 2).replace(",1.1000000000,", ",1.0950000000,")];
+  const place = (form: Partial<OrderForm>) => ({ ...newOrderForm("buy", EURUSD), accountId: ACCOUNT, lots: "0.10", ...form }) as OrderForm;
+  const expiry = "2027-01-16T12:00";
+  const forms: [string, OrderForm][] = [
+    ["market", place({})],
+    ["stop with expiry", place({ type: "stop", price: "1.10100", expiry })],
+    ...(["amount", "balancePercent", "points"] as const).map((lossBy): [string, OrderForm] => [`risk by ${lossBy}`, place({ stops: "risk", lossBy, loss: { amount: "5", balancePercent: "1", points: "200" }[lossBy], rewardRatio: "2" })]),
+    ["modify clearing the stop loss", { kind: "modify", accountId: ACCOUNT, ticket: "21", pending: false, original: { price: "1.1", stopLoss: "1.09", takeProfit: "", expiry: "" }, price: "1.1", stopLoss: "", takeProfit: "", expiry: "" }],
+    ["pending modify with expiry", { kind: "modify", accountId: ACCOUNT, ticket: "22", pending: true, original: { price: "1.095", stopLoss: "", takeProfit: "", expiry: "" }, price: "1.095", stopLoss: "", takeProfit: "", expiry }],
+    ["close", { kind: "close", accountId: ACCOUNT, ticket: "21" }],
+    ["cancel", { kind: "cancel", accountId: ACCOUNT, ticket: "22" }],
+  ];
+  for (const [name, form] of forms) {
+    const built = requestBody(form);
+    assert.ok("body" in built, `${name}: ${"error" in built ? built.error : ""}`);
+    if (name === "modify clearing the stop loss") assert.equal(built.body.stopLoss, null, "a cleared field is null");
+    const pending = browserSend(app, "/api/v1/requests/preview", built.body, 201);
+    await app.answer(ea, 2, { rows, total: rows.length });
+    const preview = (await pending).data;
+    assert.equal(preview.status, "preview", name);
+    if ("lossBy" in form && form.stops === "risk") assert.ok(preview.normalizedIntent.stopLoss && preview.normalizedIntent.takeProfit, `${name}: the plan sets both stops`);
+  }
+  await noCommand(ea);
+  assert.deepEqual((await app.read("/api/v1/requests")).data, [], "previews only: nothing executed");
 });

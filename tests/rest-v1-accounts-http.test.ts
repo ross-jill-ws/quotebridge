@@ -188,3 +188,21 @@ test("after a restart a known account is offline with null Funds, never zero; a 
   const positions = await again.read(`/api/v1/accounts/${ACCOUNT}/positions`);
   assert.deepEqual([positions.data, positions.meta.state], [[], "unavailable"]);
 });
+
+test("an account whose terminal falls silent for over five seconds is disconnected and stale, with its last Funds, never null or zero", { timeout: 20000 }, async (t) => {
+  const app = await startRest(t, await tempFolder(t, "rest-db"));
+  const ea = await app.connect();
+  await app.announce(ea);
+  const reading = app.read(`/api/v1/accounts/${ACCOUNT}/funds`);
+  await app.answer(ea, 1, { rows: [orderRow(11, 0)], total: 1 });
+  const fresh = (await reading).data;
+  assert.deepEqual([fresh.state, fresh.balance, fresh.equity], ["fresh", "1000", "999"]);
+
+  // No heartbeat for 5.001 seconds: no terminal of the account is connected; nothing is asked of the EA.
+  app.clock.advance(5001);
+  const account = (await app.read(`/api/v1/accounts/${ACCOUNT}`)).data;
+  assert.deepEqual([account.connected, account.state, account.sources.map((s: Json) => s.connected)], [false, "stale", [false]]);
+  assert.deepEqual((await app.read(`/api/v1/accounts/${ACCOUNT}/funds`)).data, { ...fresh, state: "stale" }, "the last values, marked stale");
+  const positions = await app.read(`/api/v1/accounts/${ACCOUNT}/positions`);
+  assert.deepEqual([positions.meta.state, positions.data.map((p: Json) => p.ticket)], ["stale", ["11"]]);
+});

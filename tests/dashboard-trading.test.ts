@@ -2,7 +2,7 @@
 // accounts an action may use, preview invalidation, keyboard safety, executor guidance and chart trade lines.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accountGroups, actionBlock, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
+import { accountGroups, actionBlock, currentTrade, money, describeIntent, chartLines, executorGuide, requestStatus, reviewError, unresolvedBanners, newOrderForm, orderAccounts, shownTime, enterKeyAction, previewKey, requestBody, secondsLeft, unresolvedByAccount, type AccountView, type OrderForm, type PendingView, type PositionView, type RequestView } from "../src/dashboard/trading/trading-model.js";
 
 const account = (id: string, brokerServer: string, extra: Partial<AccountView> = {}): AccountView => ({
   id, brokerServer, login: id.replace(/\D/g, "") || "1", label: `${brokerServer} · ${id}`, demo: true, connected: true, state: "fresh", currency: "USD",
@@ -128,6 +128,23 @@ test("a preview holds only for the inputs, account, executor and settings it was
   assert.notEqual(previewKey(PLACE, A, { ...ON, enabled: false }, new Map()), key, "trading off");
   assert.notEqual(previewKey(PLACE, { ...A, executor: { state: "ready", terminalId: "mt4-bbbbbbbbbbbb" } }, ON, new Map()), key, "another trading chart");
   assert.notEqual(previewKey(PLACE, { ...A, sources: [{ ...A.sources[0], maxLots: "0.2" }] }, ON, new Map()), key, "EA cap");
+});
+
+test("a preview of an existing trade holds only while that trade is unchanged, not for live price or profit", () => {
+  const close: OrderForm = { kind: "close", accountId: "acct-1", ticket: "11" };
+  const trade = position("acct-1", "11");
+  const positions = new Map([["acct-1", [trade]], ["acct-2", [position("acct-2", "21")]]]);
+  assert.equal(currentTrade(positions, new Map([["acct-1", [pending("acct-1", "21")]]]), "acct-1", "11"), trade);
+  assert.equal(currentTrade(positions, new Map(), "acct-1", "21"), null, "a ticket is looked up within its own account only");
+  const key = previewKey(close, A, ON, new Map(), trade);
+  assert.equal(previewKey(close, A, ON, new Map(), { ...trade, currentPrice: "1.2", profit: "50", swap: "-1" }), key);
+  assert.notEqual(previewKey(close, A, ON, new Map(), { ...trade, stopLoss: "1.08" }), key, "stop loss changed in MetaTrader");
+  assert.notEqual(previewKey(close, A, ON, new Map(), { ...trade, lots: "0.2" }), key, "lots changed");
+  assert.notEqual(previewKey(close, A, ON, new Map(), null), key, "the trade is gone");
+  const order = pending("acct-1", "21");
+  const cancel = previewKey({ kind: "cancel", accountId: "acct-1", ticket: "21" }, A, ON, new Map(), order);
+  assert.notEqual(previewKey({ kind: "cancel", accountId: "acct-1", ticket: "21" }, A, ON, new Map(), { ...order, price: "1.07" }), cancel, "entry moved");
+  assert.notEqual(previewKey({ kind: "cancel", accountId: "acct-1", ticket: "21" }, A, ON, new Map(), { ...order, expiry: "2027-01-16T00:00:00.000Z" }), cancel, "expiry set");
 });
 
 test("the countdown runs from when the preview arrived, whatever the PC's clock says", () => {
