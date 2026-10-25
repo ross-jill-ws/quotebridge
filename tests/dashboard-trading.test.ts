@@ -69,6 +69,16 @@ test("real accounts are read-only, and trading off, offline or an unready tradin
   assert.match(actionBlock(account("n", "Demo-Broker", { executor: { state: "not-ready", terminalId: "t" } }), ON, none)!.text, /not ready/);
 });
 
+test("a trading chart still running an EA without its lot cap says to reload the EA, not to check permissions", () => {
+  // One terminal, three charts: only the enabled one is the trading chart, wherever it sorts.
+  const chart = (enabled: boolean, maxLots: string | null) => ({ terminalId: "t", connected: true, executorEnabled: enabled, ready: true, maxLots });
+  const old = account("o", "Demo-Broker", { executor: { state: "not-ready", terminalId: "t" }, sources: [chart(false, "1"), chart(true, null), chart(false, "1")] });
+  const block = actionBlock(old, ON, new Map())!;
+  assert.match(block.text, /older than 1\.12/);
+  assert.match(block.text, /attach QuoteBridge to that chart again/);
+  assert.equal(executorGuide(old, ON).caps.startsWith("The EA does not report its lot cap"), true);
+});
+
 test("a chart's Buy and Sell offer only demo accounts on the chart's own broker server, and none is chosen for you", () => {
   const real = account("acct-9", "Demo-Broker", { demo: false, executor: { state: "real-account", terminalId: null } });
   const choice = orderAccounts([A, OTHER, real], ON, new Map(), "Demo-Broker");

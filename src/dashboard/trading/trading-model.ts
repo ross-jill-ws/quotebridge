@@ -92,8 +92,8 @@ export function unresolvedByAccount(requests: RequestView[]): Map<string, Reques
 /** A real account (or one whose terminal says so): readable, never traded by QuoteBridge. */
 export const isReal = (a: AccountView) => a.demo === false || a.executor.state === "real-account";
 
-/** The account's trading chart (its executor) among its sources, if it has one. */
-const executorSource = (a: AccountView) => a.sources.find((s) => s.terminalId === a.executor.terminalId);
+/** The account's trading chart (its executor) among its sources, if it has one: one terminal may have several charts. */
+const executorSource = (a: AccountView) => a.sources.find((s) => s.terminalId === a.executor.terminalId && s.connected && s.executorEnabled);
 
 export type ActionBlock = { kind: "real" | "unknown-demo" | "off" | "offline" | "executor" | "unresolved"; text: string; requestId?: string };
 
@@ -102,6 +102,7 @@ const EXECUTOR_BLOCKS: Record<Exclude<ExecutorState, "ready" | "real-account">, 
   multiple: "More than one chart of this account has demo trading enabled. Leave it on in exactly one.",
   "not-ready": "The account's trading chart is not ready: check AutoTrading and the EA's permissions in MetaTrader.",
 };
+const OLD_EA_BLOCK = "The trading chart runs an EA older than 1.12, which does not report its lot cap. In MetaTrader, attach QuoteBridge to that chart again, or restart MetaTrader when safe.";
 
 /**
  * Why an account cannot preview a trade now, or undefined when it can. Each account stands alone: another account's
@@ -113,6 +114,8 @@ export function actionBlock(account: AccountView, settings: TradingSettings, unr
   if (!settings.enabled) return { kind: "off", text: "Demo trading is off. Switch it on in the app window's Settings › Trading." };
   if (!account.connected) return { kind: "offline", text: "This account's terminal is offline." };
   const executor = account.executor.state;
+  // An EA older than 1.12 sends no lot cap, so its chart is never ready whatever MetaTrader's permissions.
+  if (executor === "not-ready" && executorSource(account)?.maxLots === null) return { kind: "executor", text: OLD_EA_BLOCK };
   if (executor !== "ready" && executor !== "real-account") return { kind: "executor", text: EXECUTOR_BLOCKS[executor] };
   const open = unresolved.get(account.id);
   if (open) return { kind: "unresolved", text: "This account has a request without a definitive result. Check it before sending another.", requestId: open.requestId };
