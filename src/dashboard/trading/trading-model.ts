@@ -98,7 +98,7 @@ const executorSource = (a: AccountView) => a.sources.find((s) => s.terminalId ==
 export type ActionBlock = { kind: "real" | "unknown-demo" | "off" | "offline" | "executor" | "unresolved"; text: string; requestId?: string };
 
 const EXECUTOR_BLOCKS: Record<Exclude<ExecutorState, "ready" | "real-account">, string> = {
-  zero: "No chart of this account has demo trading enabled. See Set up trading below.",
+  zero: "No chart of this account has demo trading enabled. Set it up under Set up trading on the Trading page.",
   multiple: "More than one chart of this account has demo trading enabled. Leave it on in exactly one.",
   "not-ready": "The account's trading chart is not ready: check AutoTrading and the EA's permissions in MetaTrader.",
 };
@@ -122,15 +122,18 @@ export function actionBlock(account: AccountView, settings: TradingSettings, unr
 /**
  * The accounts a new order may name, each with what blocks it now: demo accounts only, and for a chart's Buy or Sell
  * (`brokerServer` given) only those on the chart's own broker server; a symbol of the same name at another broker is
- * another market. `note` explains an empty list and the real accounts left out.
+ * another market. `note` explains an empty list, the real accounts left out and why a blocked account's option cannot
+ * be chosen (all but trading off, which the dialog already says once).
  */
 export function orderAccounts(accounts: AccountView[], settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>, brokerServer?: string) {
   const here = accounts.filter((a) => brokerServer === undefined || a.brokerServer === brokerServer);
   const demo = here.filter((a) => a.demo === true && !isReal(a));
   const real = here.filter(isReal).length;
   const where = brokerServer ? ` on ${brokerServer}` : "";
-  const notes = [!demo.length && `No demo account${where} can trade here.`, real > 0 && `Real accounts${where} are read-only in QuoteBridge (${real}).`].filter(Boolean);
-  return { options: demo.map((account) => ({ account, block: actionBlock(account, settings, unresolved) })), note: notes.length ? notes.join(" ") : undefined };
+  const options = demo.map((account) => ({ account, block: actionBlock(account, settings, unresolved) }));
+  const blocked = options.flatMap(({ account, block }) => (block && block.kind !== "off" ? [`${account.label}: ${block.text}`] : []));
+  const notes = [!demo.length && `No demo account${where} can trade here.`, real > 0 && `Real accounts${where} are read-only in QuoteBridge (${real}).`, ...blocked].filter(Boolean);
+  return { options, note: notes.length ? notes.join(" ") : undefined };
 }
 
 export type LossBy = "amount" | "balancePercent" | "points";

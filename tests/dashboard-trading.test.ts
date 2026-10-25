@@ -82,6 +82,15 @@ test("a chart's Buy and Sell offer only demo accounts on the chart's own broker 
   assert.deepEqual(orderAccounts([OTHER, real, A], ON, new Map()).options.map((o) => o.account.id), ["acct-3", "acct-1"]);
 });
 
+test("a demo account that cannot trade now says why under the list, as its option cannot be chosen", () => {
+  const unset = account("acct-5", "Demo-Broker", { executor: { state: "zero", terminalId: null } });
+  const choice = orderAccounts([unset], ON, new Map(), "Demo-Broker");
+  assert.equal(choice.options[0]!.block?.kind, "executor");
+  assert.match(choice.note!, /Demo-Broker · acct-5: No chart of this account has demo trading enabled\. Set it up under Set up trading on the Trading page\./);
+  assert.equal(orderAccounts([unset, A], ON, new Map(), "Demo-Broker").note, "Demo-Broker · acct-5: No chart of this account has demo trading enabled. Set it up under Set up trading on the Trading page.");
+  assert.equal(orderAccounts([A], ON, new Map(), "Demo-Broker").note, undefined);
+});
+
 test("times follow Time shown: the broker's clock where MetaTrader stamps one, else UTC labelled as such", () => {
   const iso = "2027-01-15T08:00:00.000Z";
   assert.equal(shownTime(iso, "2027-01-15T10:00:00", "broker"), "2027-01-15 10:00");
