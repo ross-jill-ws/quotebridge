@@ -25,6 +25,7 @@ import { latestView, RIGHT_OFFSET, viewAfterSet, type ChartType, type LogicalRan
 import { COLOUR_TOKENS } from "../colour-tokens.js";
 import type { ChartScheme } from "./chart-scheme.js";
 import type { IndicatorDraw } from "./indicators.js";
+import type { ChartLine } from "../trading/trading-model.js";
 
 const FONT = "Archivo, Segoe UI, sans-serif";
 /** The price pane's share against each indicator pane's 1. */
@@ -52,6 +53,9 @@ export class ChartCanvas {
   /** After a live update of the candles, the first index that changed; undefined after a full set. */
   private changedFrom?: number;
   private readonly indicators = new Map<string, IndicatorSeries>();
+  /** The trade lines drawn on the main series, and what they show (drawn again with a new series or scheme). */
+  private tradeLines: IPriceLine[] = [];
+  private tradeLineSpecs: readonly ChartLine[] = [];
 
   /** `onVisibleFrom` gets the logical index of the leftmost visible bar whenever the view moves (negative past the first bar). */
   constructor(container: HTMLElement, scheme: ChartScheme, onCrosshair: (time: number | undefined) => void, onVisibleFrom: (index: number) => void) {
@@ -76,15 +80,19 @@ export class ChartCanvas {
   setScheme(scheme: ChartScheme) {
     this.scheme = scheme;
     this.applyScheme();
+    this.setTradeLines(this.tradeLineSpecs);
   }
 
   setType(type: ChartType) {
     if (type === this.type) return;
     this.type = type;
     this.chart.removeSeries(this.main);
+    // The removed series took its price lines with it.
+    this.tradeLines = [];
     this.createMain();
     this.applyScheme();
     this.main.setData(this.candles.map((c) => this.point(c)));
+    this.setTradeLines(this.tradeLineSpecs);
   }
 
   setDigits(digits: number) {
@@ -122,6 +130,21 @@ export class ChartCanvas {
   setAsk(ask: number | null) {
     if (ask === null) this.ask!.applyOptions({ lineVisible: false });
     else this.ask!.applyOptions({ price: ask, lineVisible: true });
+  }
+
+  /**
+   * The read-only trade lines of every account on this market (see trading-model's chartLines), each labelled on the
+   * price scale. They take the series palette, never a price colour: entry slate, pending entry violet, stop loss gold,
+   * take profit azure; stops dashed. Nothing on the chart can be dragged to trade.
+   */
+  setTradeLines(lines: readonly ChartLine[]) {
+    for (const line of this.tradeLines) this.main.removePriceLine(line);
+    const [gold, azure, violet, slate] = this.scheme.series;
+    const colour: Record<ChartLine["kind"], string> = { entry: slate, pending: violet, "stop-loss": gold, "take-profit": azure };
+    this.tradeLines = lines.map((l) =>
+      this.main.createPriceLine({ price: l.price, color: colour[l.kind], lineWidth: 1, lineStyle: l.kind === "entry" ? LineStyle.Solid : LineStyle.Dashed, axisLabelVisible: true, title: l.label }),
+    );
+    this.tradeLineSpecs = lines;
   }
 
   /**

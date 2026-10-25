@@ -2641,3 +2641,391 @@ a.path {
   font-weight: 600;
   color: var(--caution);
 }
+
+/* Trading (M5): accounts grouped by broker server, each a panel like a feed group; no active account, no totals. */
+.caution-text {
+  color: var(--caution);
+}
+
+/* Profit is data: Uptick and Downtick text, never on a control. */
+.up-text {
+  color: var(--uptick);
+}
+
+.down-text {
+  color: var(--downtick);
+}
+
+.trading-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+  margin: 4px 0 6px;
+  font-size: 13px;
+}
+
+.trading-filters label {
+  display: grid;
+  gap: 3px;
+  color: var(--ink-3);
+}
+
+.trading-filters .input {
+  min-width: 180px;
+}
+
+.account {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 18px;
+  padding-bottom: 6px;
+  overflow: hidden;
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.account-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.account-head .group-state {
+  margin-left: auto;
+}
+
+.account-executor {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.account > .notice,
+.account-note {
+  margin: 10px 18px 0;
+}
+
+.account-note {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.funds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+  padding: 12px 18px 4px;
+}
+
+.funds dt {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.funds dd {
+  margin: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.trades-title {
+  margin: 14px 18px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.trades-empty {
+  margin: 0 18px 4px;
+  font-size: 13px;
+}
+
+.trades {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.trades th,
+.trades td {
+  padding: 6px 18px 6px 0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.trades th:first-child,
+.trades td:first-child {
+  padding-left: 18px;
+}
+
+.trades th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.trades td {
+  border-top: 1px solid var(--line-soft);
+}
+
+.trades .num {
+  text-align: right;
+}
+
+.trades td .flag {
+  margin-left: 6px;
+}
+
+.trades .actions {
+  text-align: right;
+}
+
+.broker-group > .trades,
+.broker-group > .table-scroll {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.account-setup {
+  margin: 12px 18px 6px;
+  font-size: 13px;
+}
+
+.account-setup summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.setup-checklist {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.setup-checklist li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink-2);
+}
+
+.setup-checklist li.done {
+  color: var(--ink-3);
+}
+
+/* The order and review dialogs. */
+.order-dialog {
+  width: min(600px, 94vw);
+  max-height: 92vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 16px 18px;
+}
+
+.order-dialog::backdrop {
+  background: rgb(8 16 29 / 0.45);
+}
+
+.order-dialog .notice {
+  margin: 10px 0;
+}
+
+.order-dialog > form > .muted {
+  font-size: 13px;
+}
+
+.order-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 16px;
+  margin: 14px 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.order-field {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.order-field .input {
+  min-width: 0;
+  width: 100%;
+}
+
+.order-field small {
+  font-size: 12px;
+}
+
+.order-field.wide,
+.order-fields .wide {
+  grid-column: 1 / -1;
+}
+
+.order-static {
+  padding: 4px 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.input.number {
+  text-align: right;
+}
+
+.order-hint,
+.order-bound {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.order-bound {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.order-preview {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--sunk);
+}
+
+.order-preview:focus-visible {
+  outline-offset: 0;
+}
+
+.order-preview-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.order-preview dl,
+.order-dialog dl.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.order-preview dt,
+.order-dialog dl.facts dt {
+  color: var(--ink-3);
+}
+
+.order-preview dd,
+.order-dialog dl.facts dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.order-warnings {
+  margin: 10px 0 0;
+  padding: 8px 12px 8px 28px;
+  border-radius: var(--radius-small);
+  background: var(--caution-bg);
+  color: var(--caution);
+  font-size: 13px;
+}
+
+.order-sent {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.order-sent p {
+  margin: 4px 0 0;
+}
+
+.order-events {
+  margin: 10px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.review-check {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 12px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.review-note {
+  resize: vertical;
+  font: inherit;
+}
+
+.order-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+/* Settings › Trading's cap and slippage. */
+.trading-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.trading-value .input {
+  min-width: 0;
+  width: 90px;
+}
+
+/* A chart's Buy and Sell: quiet buttons, never green or red. */
+.chart-trade {
+  display: flex;
+  gap: 6px;
+}
+
+.account-lines .menu {
+  gap: 2px;
+}
+
+.account-lines-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* A visually hidden column head stays inside its scrolling table (it is positioned absolutely). */
+.table-scroll {
+  position: relative;
+}
+
+.notice .link {
+  white-space: nowrap;
+}

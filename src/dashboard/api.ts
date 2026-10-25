@@ -41,7 +41,26 @@ async function answer<T>(res: Response): Promise<T> {
   }
   if (res.ok) return body as T;
   const { error, notAvailable } = (body ?? {}) as { error?: unknown; notAvailable?: unknown };
+  // REST v1 answers { error: { code, message, details } }; the dashboard's own routes { error: "message" }.
+  if (typeof error === "object" && error !== null && typeof (error as { message?: unknown }).message === "string") {
+    throw new ApiError((error as { message: string }).message, res.status);
+  }
   throw new ApiError(typeof error === "string" ? error : `The app answered ${res.status}.`, res.status, notAvailable === true);
+}
+
+/** A REST v1 answer's envelope: `{ data, meta }`. */
+export type Envelope<T> = { data: T; meta: Record<string, unknown> };
+
+/** Every item of a cursor-paged REST v1 collection, following `meta.nextCursor` (500 a page). */
+export async function getAll<T>(path: string): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: Envelope<T[]> = await get(`${path}${path.includes("?") ? "&" : "?"}limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    items.push(...page.data);
+    cursor = (page.meta.nextCursor as string | null | undefined) ?? null;
+  } while (cursor);
+  return items;
 }
 
 /** Whether this page's window session still works. Rejects when the server cannot be reached. */

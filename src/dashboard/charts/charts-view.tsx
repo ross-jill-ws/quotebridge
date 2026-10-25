@@ -16,6 +16,9 @@ import { Price } from "../price.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
 import { ChartCanvas } from "./chart-canvas.js";
+import { OrderDialog, type OrderTarget } from "../trading/order-dialog.js";
+import { chartLines, type ChartLine } from "../trading/trading-model.js";
+import { useTrading } from "../trading/use-trading.js";
 import {
   candlesSince,
   chartLegend,
@@ -114,6 +117,18 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   const [crosshair, setCrosshair] = useState<number>();
   // Asks the chart to scroll back to the latest bar.
   const [toLatest, setToLatest] = useState(0);
+  // Every account's trades on this exact market (its broker server and symbol), read-only; the accounts hidden here only
+  // change what the chart shows. Buy and Sell open the order dialog, which asks for the account.
+  const trading = useTrading(feed !== undefined, { brokerServer: feed?.market.brokerServer });
+  const [tradesShown, setTradesShown] = useState(true);
+  const [hiddenAccounts, setHiddenAccounts] = useState<ReadonlySet<string>>(new Set());
+  const [order, setOrder] = useState<OrderTarget>();
+  const market = feed?.market;
+  const tradeLines = useMemo(
+    () => (market && tradesShown ? chartLines(market, trading.accounts, { positions: [...trading.positions.values()].flat(), orders: [...trading.orders.values()].flat() }, hiddenAccounts) : []),
+    [market?.brokerServer, market?.symbol, tradesShown, trading.accounts, trading.positions, trading.orders, hiddenAccounts],
+  );
+  const marketAccounts = market ? trading.accounts.filter((a) => a.brokerServer === market.brokerServer) : [];
 
   // Keys 1–9 pick M1…MN1, as the segmented control shows them.
   useEffect(() => {
@@ -186,11 +201,27 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
             <button aria-pressed={memory.askLine} title="Show the Ask line" onClick={() => setMemory({ askLine: !memory.askLine })}>
               Ask
             </button>
+            <button aria-pressed={tradesShown} title="Show the entry, stop loss and take profit of every account's trades on this market" onClick={() => setTradesShown(!tradesShown)}>
+              Trades
+            </button>
           </div>
+          {tradesShown && marketAccounts.length > 1 && (
+            <AccountLinesMenu accounts={marketAccounts} hidden={hiddenAccounts} onChange={setHiddenAccounts} />
+          )}
           <button class="button" title="Scroll back to the latest bar" onClick={() => setToLatest((n) => n + 1)}>
             Latest
           </button>
           <IndicatorMenu packages={packages} full={memory.indicators.length >= MAX_INDICATORS} onAdd={addIndicator} />
+          {feed && (
+            <div class="chart-trade" role="group" aria-label="New order">
+              <button class="button" title={`New buy order for ${feed.symbol} on ${feed.market.brokerServer}: you choose the account`} onClick={() => setOrder({ kind: "place", side: "buy", market: feed.market })}>
+                Buy…
+              </button>
+              <button class="button" title={`New sell order for ${feed.symbol} on ${feed.market.brokerServer}: you choose the account`} onClick={() => setOrder({ kind: "place", side: "sell", market: feed.market })}>
+                Sell…
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -211,6 +242,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
         scheme={scheme}
         greenOnBlack={chartColours === "green-on-black"}
         draws={drawn.draws}
+        tradeLines={tradeLines}
         specs={indicators}
         packages={packages}
         legend={legend}
@@ -225,8 +257,10 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
           <kbd>1</kbd>–<kbd>9</kbd> switch period
         </span>
         <span>Scroll to zoom, drag to pan</span>
+        {tradeLines.length > 0 && <span>Trade lines are read-only: change trades from Trading</span>}
         {fetched && showsCandlesSince(fetched.candles, fetched.since) && <span class="since">{candlesSince(fetched.since, Date.now())}</span>}
       </div>
+      {order && <OrderDialog target={order} trading={trading} timeShown={timeShown} onClose={() => setOrder(undefined)} />}
     </section>
   );
 }
@@ -253,6 +287,32 @@ const TYPE_ICONS: Record<ChartType, preact.JSX.Element> = {
     </svg>
   ),
 };
+
+/** Which accounts' trade lines the chart shows: visibility only, never where an order goes. */
+function AccountLinesMenu({ accounts, hidden, onChange }: { accounts: { id: string; label: string }[]; hidden: ReadonlySet<string>; onChange: (hidden: ReadonlySet<string>) => void }) {
+  return (
+    <details class="indicator-menu account-lines">
+      <summary class="button">Accounts</summary>
+      <div class="menu" role="group" aria-label="Show trade lines of">
+        {accounts.map((a) => (
+          <label key={a.id} class="account-lines-item">
+            <input
+              type="checkbox"
+              checked={!hidden.has(a.id)}
+              onChange={(e) => {
+                const next = new Set(hidden);
+                if (e.currentTarget.checked) next.delete(a.id);
+                else next.add(a.id);
+                onChange(next);
+              }}
+            />
+            {a.label}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 /** The symbol in large type over a native picker of the feeds, grouped by terminal. */
 function SymbolPicker({ groups, feed, groupName, onPick }: { groups: FeedGroup[]; feed?: FeedSnapshot; groupName?: string; onPick: (feed: string) => void }) {
@@ -308,6 +368,8 @@ type FrameProps = {
   scheme: ChartScheme;
   greenOnBlack: boolean;
   draws: IndicatorDraw[];
+  /** Every shown account's trade lines on this market. */
+  tradeLines: readonly ChartLine[];
   specs: IndicatorSpec[];
   packages: ReadonlyMap<string, PackageInfo>;
   legend?: Legend;
@@ -321,7 +383,7 @@ type FrameProps = {
 };
 
 /** The chart canvas with its legends: the price pane's top-left, and one at the top of each indicator pane. */
-function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, packages, legend, toLatest, onCrosshair, onVisibleFrom, onChangeIndicator }: FrameProps) {
+function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, tradeLines, specs, packages, legend, toLatest, onCrosshair, onVisibleFrom, onChangeIndicator }: FrameProps) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ChartCanvas>();
   const [paneTops, setPaneTops] = useState<Map<string, number>>(new Map());
@@ -369,6 +431,7 @@ function ChartFrame({ data, type, askLine, scheme, greenOnBlack, draws, specs, p
   useEffect(() => {
     if (toLatest) canvas.current?.scrollToLatest();
   }, [toLatest]);
+  useEffect(() => canvas.current?.setTradeLines(tradeLines), [tradeLines]);
 
   const legendRows = legend?.indicators ?? [];
   const manifestOf = (id: string) => packages.get(specs.find((s) => s.id === id)?.package ?? "")?.manifest;

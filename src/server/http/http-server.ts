@@ -214,7 +214,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     if (url.pathname === "/api/history" || url.pathname.startsWith("/api/history/")) return handleHistory(url, req, res);
     if (url.pathname === "/api/clock-rules") return handleClockRules(req, res);
     if (options.recorder && ["/api/markets/recording", "/api/recordings", "/api/recordings/delete"].includes(url.pathname)) return handleRecording(options.recorder, url, req, res);
-    if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, req, res);
+    if (options.settings && url.pathname === "/api/settings") return handleSettings(options.settings, session, req, res);
     const terminals = options.terminals?.();
     if (terminals) {
       const handled = await handleTerminals(terminals, url, req, res);
@@ -462,9 +462,10 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     res.end();
   }
 
-  /** The Settings view: GET answers what it shows, POST applies a change and answers the same. */
-  async function handleSettings(settings: AppSettings, req: IncomingMessage, res: ServerResponse) {
-    if (req.method === "GET") return json(res, 200, await settings.view());
+  /** The Settings view: GET answers what it shows and whether this session may change it, POST applies a change and answers the same. */
+  async function handleSettings(settings: AppSettings, session: SessionKind, req: IncomingMessage, res: ServerResponse) {
+    const manage = session === "window";
+    if (req.method === "GET") return json(res, 200, { ...(await settings.view()), manage });
     if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
     let body: unknown;
     try {
@@ -473,7 +474,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return json(res, 400, { error: "Expected a JSON body." });
     }
     try {
-      json(res, 200, await settings.change(body));
+      json(res, 200, { ...(await settings.change(body)), manage });
     } catch (e) {
       if (!(e instanceof SettingsRequestError)) throw e;
       json(res, e.status, { error: e.message });

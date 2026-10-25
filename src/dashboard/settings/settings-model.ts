@@ -144,3 +144,19 @@ export function revokeApiKey(k: Pick<ApiKeyView, "name">): { title: string; body
     confirm: "Revoke key",
   };
 }
+
+type TradingSettings = SettingsView["trading"];
+
+/**
+ * Settings › Trading: the trading settings with the app's lot cap or the slippage set to what was typed, or why it
+ * cannot be. The server checks the same.
+ */
+export function tradingChange(trading: TradingSettings, field: "maxLots" | "slippage", text: string): { trading: TradingSettings } | { error: string } {
+  const value = text.trim();
+  if (field === "maxLots") {
+    if (!/^(?:0|[1-9]\d{0,14})(?:\.\d{1,10})?$/.test(value) || !/[1-9]/.test(value)) return { error: "The lot cap is a positive number of lots, such as 0.5." };
+    return { trading: { ...trading, maxLots: value } };
+  }
+  if (!/^\d{1,5}$/.test(value) || Number(value) > 10000) return { error: "Slippage is a whole number of points from 0 to 10000." };
+  return { trading: { ...trading, slippage: Number(value) } };
+}

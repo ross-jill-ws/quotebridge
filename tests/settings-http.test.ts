@@ -64,6 +64,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     trading: { enabled: false, maxLots: "1.0", slippage: 20 },
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
+    manage: true,
   });
 });
 
@@ -93,6 +94,11 @@ test("remote browsers and API credentials cannot mutate trading settings", async
   }
   assert.equal((await f.get()).body.trading.enabled, false);
   assert.equal(f.saved.length, 0);
+  // The dashboard shows the trading settings read-only where it may not change them.
+  assert.equal((await f.get()).body.manage, true, "the app window manages settings");
+  const remoteView = (await (await fetch(`${origin}/api/settings`, { headers: { cookie: remote } })).json()) as SettingsView;
+  assert.equal(remoteView.manage, false, "a remote browser sees them read-only");
+  assert.deepEqual(remoteView.trading, { enabled: false, maxLots: "1.0", slippage: 20 });
 });
 
 test("trading setting changes discard unused previews, but unrelated settings preserve approval", { timeout: 15000 }, async (t) => {

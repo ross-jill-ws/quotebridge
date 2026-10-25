@@ -1,4 +1,4 @@
-// The Settings view: Startup, Appearance, Recording, API keys, Connection and About. A change applies at once (the server
+// The Settings view: Startup, Appearance, Trading, Recording, API keys, Connection and About. A change applies at once (the server
 // saves it and main applies it); only a port change asks first, because it restarts the app.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
@@ -11,7 +11,7 @@ import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store
 import { get, post } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
-import { apiKeyRows, deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, revokeApiKey, type PortRole } from "./settings-model.js";
+import { apiKeyRows, deleteRecording, parsePort, PORT_LABELS, portChange, portsNote, recordingRows, revokeApiKey, tradingChange, type PortRole } from "./settings-model.js";
 
 /** As the server checks it; a constant here, so the dashboard bundle takes nothing of the server's code. */
 const MAX_KEY_NAME = 60;
@@ -159,6 +159,8 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
         />
       </SettingsGroup>
 
+      <TradingGroup settings={settings} onChange={(trading) => change({ trading })} />
+
       <RecordingGroup timeShown={settings.timeShown} />
 
       <ApiKeysGroup timeShown={settings.timeShown} />
@@ -196,6 +198,90 @@ export function SettingsView({ managedTerminals, onSaved }: { managedTerminals: 
 
       <About />
     </section>
+  );
+}
+
+/**
+ * Settings › Trading: Demo trading on or off, the app's lot cap for new orders and the slippage. Only the app window
+ * may change them (a remote browser sees them read-only); any change discards open previews.
+ */
+function TradingGroup({ settings, onChange }: { settings: Settings; onChange: (trading: Settings["trading"]) => Promise<void> }) {
+  const trading = settings.trading;
+  const manage = settings.manage === true;
+  return (
+    <SettingsGroup
+      title="Trading"
+      after={
+        <div class="notice warn" role="note">
+          {trading.enabled
+            ? "Switching Demo trading off blocks every new order, change, close and cancel at once, but cannot recall a request already sent. For an emergency, act in MetaTrader."
+            : "Off: nothing can be previewed or sent. Requests already sent are still followed and can be reviewed on the Trading page."}
+        </div>
+      }
+    >
+      <Toggle
+        label="Demo trading"
+        hint={manage
+          ? "Lets the Trading page, chart orders and trader API keys preview and send orders on demo accounts. Real accounts are always read-only."
+          : "Only the app window can change trading settings."}
+        checked={trading.enabled}
+        disabled={!manage}
+        onChange={(enabled) => onChange({ ...trading, enabled }).catch(() => {})}
+      />
+      <TradingValue
+        label="Lot cap for new orders"
+        hint="New orders are limited to the smallest of this, the EA's MaxDemoOrderLots and the broker's maximum. Closing, changing or cancelling a larger trade is not."
+        field="maxLots"
+        unit="lots"
+        settings={settings}
+        disabled={!manage}
+        onChange={onChange}
+      />
+      <TradingValue
+        label="Slippage"
+        hint="How far a market order's price may move from the previewed price, in points."
+        field="slippage"
+        unit="points"
+        settings={settings}
+        disabled={!manage}
+        onChange={onChange}
+      />
+    </SettingsGroup>
+  );
+}
+
+function TradingValue(props: { label: string; hint: string; field: "maxLots" | "slippage"; unit: string; settings: Settings; disabled: boolean; onChange: (trading: Settings["trading"]) => Promise<void> }) {
+  const { label, hint, field, unit, settings, disabled, onChange } = props;
+  const saved = String(settings.trading[field]);
+  const [text, setText] = useState(saved);
+  const [problem, setProblem] = useState("");
+  useEffect(() => setText(saved), [saved]);
+  const save = (e: Event) => {
+    e.preventDefault();
+    const change = tradingChange(settings.trading, field, text);
+    if ("error" in change) return setProblem(change.error);
+    setProblem("");
+    if (String(change.trading[field]) !== saved) onChange(change.trading).catch(() => {});
+  };
+  const id = `trading-${field}`;
+  return (
+    <form class={`setting-row${disabled ? " disabled" : ""}`} onSubmit={save}>
+      <span class="setting-text">
+        <label class="setting-label" for={id}>
+          {label}
+        </label>
+        <span class="setting-hint">{hint}</span>
+        {problem && (
+          <span class="bad-text" role="alert">
+            {problem}
+          </span>
+        )}
+      </span>
+      <span class="trading-value">
+        <input id={id} class="input number" inputMode={field === "maxLots" ? "decimal" : "numeric"} value={text} disabled={disabled} onInput={(e) => setText(e.currentTarget.value)} onBlur={save} />
+        <span class="muted">{unit}</span>
+      </span>
+    </form>
   );
 }
 

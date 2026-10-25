@@ -2,7 +2,7 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apiKeyRows, deleteRecording, parsePort, portChange, portsNote, recordingRows, revokeApiKey } from "../src/dashboard/settings/settings-model.js";
+import { apiKeyRows, deleteRecording, parsePort, portChange, portsNote, recordingRows, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
@@ -115,4 +115,12 @@ test("Revoke asks first: the key stops working at once", () => {
     body: "Anything using it is refused from now on. This cannot be undone: make a new key to give access again.",
     confirm: "Revoke key",
   });
+});
+
+test("the app's lot cap is a positive decimal and slippage whole points; either change keeps the rest", () => {
+  const trading = { enabled: true, maxLots: "1.0", slippage: 20 };
+  assert.deepEqual(tradingChange(trading, "maxLots", " 0.5 "), { trading: { enabled: true, maxLots: "0.5", slippage: 20 } });
+  for (const text of ["0", "-1", "1e2", "abc", ""]) assert.match((tradingChange(trading, "maxLots", text) as { error: string }).error, /positive/, text);
+  assert.deepEqual(tradingChange(trading, "slippage", "0"), { trading: { enabled: true, maxLots: "1.0", slippage: 0 } });
+  for (const text of ["1.5", "-2", "x", "1000001"]) assert.match((tradingChange(trading, "slippage", text) as { error: string }).error, /whole/, text);
 });

@@ -14,6 +14,8 @@ export type AppSettingsOptions = {
 export type SettingsView = Pick<Settings, "startWithWindows" | "openWindowAtStartup" | "theme" | "flashPrices" | "chartColours" | "timeShown" | "ports" | "trading"> & {
   /** The ports this server is bound to. They differ from `ports` after a change until main restarts the server, or in a dev run with port overrides. */
   portsInUse: Settings["ports"];
+  /** Set by the HTTP server: whether this session (the app window) may change settings; a remote browser may not. */
+  manage?: boolean;
 };
 
 export class SettingsRequestError extends Error {

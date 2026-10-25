@@ -11,6 +11,7 @@ import { IndicatorsView } from "./indicators/indicators-view.js";
 import { SettingsView } from "./settings/settings-view.js";
 import { SetupView } from "./terminals/setup-view.js";
 import { TerminalsView } from "./terminals/terminals-view.js";
+import { TradingView } from "./trading/trading-view.js";
 import { useTerminals } from "./terminals/use-terminals.js";
 import { applyTheme } from "./theme.js";
 import { useLive, type Live } from "./use-live.js";
@@ -42,6 +43,12 @@ const ICONS = {
       <path d="M10 5.5V10l3 2" />
     </>
   ),
+  trading: (
+    <>
+      <path d="M3 6.5h11.5M11.5 3.5l3 3-3 3" />
+      <path d="M17 13.5H5.5M8.5 10.5l-3 3 3 3" />
+    </>
+  ),
   indicators: (
     <>
       <path d="M2.5 13.5c2.5 0 3-7 5.5-7s2.5 5 5 5 2.5-6 4.5-6" />
@@ -60,6 +67,7 @@ const VIEWS = [
   { id: "feeds", label: "Feeds" },
   { id: "terminals", label: "Terminals" },
   { id: "charts", label: "Charts" },
+  { id: "trading", label: "Trading" },
   { id: "history", label: "History" },
   { id: "indicators", label: "Indicators" },
   { id: "settings", label: "Settings" },
@@ -132,6 +140,8 @@ export function App() {
           <FeedsView live={live} terminalNames={terminalNames(terminals.state)} flashPrices={settings?.flashPrices ?? true} timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "charts" ? (
           <ChartsView live={live} terminalNames={terminalNames(terminals.state)} chartColours={settings?.chartColours ?? "default"} timeShown={settings?.timeShown ?? "broker"} />
+        ) : view === "trading" ? (
+          <TradingView timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "history" ? (
           <HistoryView timeShown={settings?.timeShown ?? "broker"} />
         ) : view === "indicators" ? (
