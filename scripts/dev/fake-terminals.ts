@@ -25,6 +25,17 @@ export async function fakeFeedIdentity(root: string) {
   return { terminal: terminalIdFor(dataFolder), installationFolder, dataFolder };
 }
 
+/** Two more catalog-backed installations for the dev run's simulated trading accounts: another demo account and a real one. */
+export async function fakeAccountIdentities(root: string) {
+  const machine = await MachineFixture.at(join(root, "machine"));
+  const identity = async (name: string) => {
+    const installationFolder = await machine.installationFolder(name, "mt4");
+    const dataFolder = await machine.dataFolder(installationFolder, { mql: "MQL4" });
+    return { terminal: terminalIdFor(dataFolder), installationFolder, dataFolder };
+  };
+  return { secondDemo: await identity("Second Demo MetaTrader 4"), real: await identity("Real Broker MetaTrader 4") };
+}
+
 /** The terminal manager's options with fake terminals under `root` in place of this machine's. */
 export async function fakeTerminalOptions(root: string, options: TerminalManagerOptions): Promise<TerminalManagerOptions> {
   const machine = await MachineFixture.at(join(root, "machine"));

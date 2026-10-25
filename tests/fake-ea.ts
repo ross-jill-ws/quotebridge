@@ -28,6 +28,8 @@ export type FakeEAOptions = {
    * `receive` hands out the other messages.
    */
   bars?: BarAnswer;
+  /** With `bars`: handles account commands (`V`, `P`, `X`) itself instead of leaving them for `receive`. */
+  commands?: (message: string) => void;
 };
 
 /** A closed bar as the fake EA sends it; `time` in broker seconds. */
@@ -53,6 +55,7 @@ export class FakeEA {
   private socket: Dealer;
   private sending: Promise<unknown> = Promise.resolve();
   private readonly bars?: BarAnswer;
+  private readonly commands?: (message: string) => void;
   /** Bar requests received, as [timeframe, count, shift]. */
   readonly barRequests: [number, number, number][] = [];
   private readonly inbox: string[] = [];
@@ -71,6 +74,7 @@ export class FakeEA {
       : options.identity;
     if (this.identity) fixtureTerminals.set(pathsKey(this.identity), this.terminal);
     this.bars = options.bars;
+    this.commands = options.commands;
     this.socket = new Dealer({ routingId: this.session, receiveTimeout: this.bars ? -1 : 2000, linger: 0 });
   }
 
@@ -90,6 +94,7 @@ export class FakeEA {
         continue;
       }
       if (message.startsWith("G|")) void this.answer(message.split("|")).catch(() => {});
+      else if (this.commands && /^[VPX]\|/.test(message)) this.commands(message);
       else if (this.waiting.length) this.waiting.shift()!(message);
       // Unread replies are kept up to a point: a chart that never reads them (the dev run's) must not pile them up.
       else if (this.inbox.push(message) > MAX_UNREAD) this.inbox.shift();
