@@ -945,11 +945,18 @@ Candles, indicator values, history and exports show a timeframe's bars from thes
    no file, or a stale one, the bars are rolled up from the M1 file (D1 for W1 and MN1).
 3. **The EA's bars**: MetaTrader writes a timeframe's file only when its chart closes or the terminal shuts down, so
    an open chart's recent bars are often not on disk. When a timeframe has no bars, or a gap before the live candles,
-   the app asks the QuoteBridge EA (1.10 or later) for the last 900 closed bars of that timeframe. It asks once when a
-   feed connects, for its chart's timeframe, and when the Charts view opens a timeframe. The bars are kept in saved
-   history, so they survive a restart and the History page lists them.
+   the app asks the QuoteBridge EA (1.10 or later) for the last 900 closed bars of that timeframe; so it does when an
+   intraday timeframe has only bars rolled up from the M1 file. It asks once when a feed connects, for its chart's
+   timeframe, and when the Charts view opens a timeframe. The bars are kept in saved history, so they survive a
+   restart and the History page lists them.
 4. **The live candles** the app builds from the EA's quotes since it started (candles and indicator values only).
    The bar still forming takes the live high, low and close.
 
 While the EA is still loading a timeframe's history, the app asks again a little later. An older EA, or an offline
 feed, leaves the bars as they are.
+
+Bars start where MetaTrader's own bars of the timeframe do. Some brokers label intraday bars from a session's start
+rather than from midnight; CMC's GOLD H4 bars, for example, start at 01:00, 05:00, 09:00 and so on. The live
+candles and bars rolled up from the M1 file follow the same times, so the forming bar is never a second bar beside
+MetaTrader's. Without a history file or saved bars of the timeframe, bars start at the usual times (H4 at 00:00,
+04:00 and so on).

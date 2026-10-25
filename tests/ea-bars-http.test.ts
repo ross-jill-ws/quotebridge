@@ -33,9 +33,11 @@ const EURUSD = JSON.stringify([BROKER, "EURUSD"]);
 type Candle = { time: number; open: number; high: number; low: number; close: number };
 type Page = { candles: Candle[]; source: string; complete: boolean; filling: boolean; clockRule: ClockRule | null; ask: number | null };
 
-/** `count` closed intraday bars of `timeframe` minutes, the newest one closed by 10:00. */
-const closedBars = (timeframe: number, count: number, price = 1.2): FakeBar[] =>
-  bars(TEN - count * timeframe * MINUTE, timeframe * MINUTE, count, price).map((b) => ({ ...b, ...round(b) }));
+/** `count` closed bars of `timeframe` minutes, the newest one closed by 10:00 (intraday: by the start of 10:00's bucket). */
+const closedBars = (timeframe: number, count: number, price = 1.2): FakeBar[] => {
+  const end = timeframe < 1440 ? TEN - (TEN % (timeframe * MINUTE)) : TEN;
+  return bars(end - count * timeframe * MINUTE, timeframe * MINUTE, count, price).map((b) => ({ ...b, ...round(b) }));
+};
 /** Prices as the EA sends them: five digits. */
 const round = ({ open, high, low, close }: Candle) => ({ open: +open.toFixed(5), high: +high.toFixed(5), low: +low.toFixed(5), close: +close.toFixed(5) });
 /** An EA with every period's last bars at hand: 900, or 200 weeks or months (fewer than asked for, as MetaTrader may hold). */
@@ -155,6 +157,58 @@ test("every period from M1 to MN1 the chart opens without an HST file is asked o
     assert.deepEqual(p.candles, [...closedBars(MINUTES[period], count).map(shown), live(period)], period);
   }
   assert.deepEqual(ea.barRequests.map(([timeframe]) => timeframe).sort((a, b) => a - b), Object.values(MINUTES));
+});
+
+/** H4 bars as CMC labels GOLD's: from 01:00 broker time (01:00, 05:00, 09:00…), the newest one closed by 09:00. */
+const h4From1 = (count: number, price = 1.2): FakeBar[] => bars(TEN - HOUR - count * 4 * HOUR, 4 * HOUR, count, price).map((b) => ({ ...b, ...round(b) }));
+
+test("H4 bars the broker starts at 01:00 set the live candle's bucket: the quote at 10:00:30 forms the 09:00 bar, not an 08:00 one", { timeout: 20000 }, async (t) => {
+  const { connect, settled } = await start(t, await tempFolder(t, "db"), await tempFolder(t, "hst"));
+  await connect((timeframe, count) => (timeframe === 240 ? h4From1(count) : closedBars(timeframe, count)));
+
+  const h4 = await settled("H4");
+  assert.deepEqual(h4.candles, [...h4From1(900).map(shown), { ...LIVE, time: utc(TEN - HOUR) }]);
+});
+
+test("a period with only the M1 file to roll up asks the EA, and rolls the file up into the buckets its bars start", { timeout: 20000 }, async (t) => {
+  const dataFolder = await tempFolder(t, "hst");
+  // M1 from 13:00 the day before to 08:59, reaching the live candle: rolled up from midnight, it would leave no gap.
+  const m1 = bars(TEN - 21 * HOUR, MINUTE, 20 * 60, 1.1);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
+  const { connect, settled } = await start(t, await tempFolder(t, "db"), dataFolder);
+  const ea = await connect((timeframe, count) => (timeframe === 240 ? h4From1(3) : closedBars(timeframe, count)));
+
+  const h4 = await settled("H4");
+  assert.deepEqual(
+    h4.candles.map((c) => c.time),
+    [-21, -17, -13, -9, -5, -1].map((h) => utc(TEN + h * HOUR)),
+  );
+  assert.ok(ea.barRequests.some(([timeframe]) => timeframe === 240));
+});
+
+test("an odd newest bar (EasyForex labels its Sunday-evening H4 bar 21:10) does not move the buckets: most recent bars decide", { timeout: 20000 }, async (t) => {
+  const dataFolder = await tempFolder(t, "hst");
+  // H4 bars from midnight up to Friday 20:00, then the Sunday-evening bar at 21:10 (10 January 2027).
+  const sunday = Date.UTC(2027, 0, 10, 21, 10) / 1000;
+  const h4 = [...bars(sunday - 2 * 86400 - 70 * MINUTE - 30 * 4 * HOUR, 4 * HOUR, 30, 1.1), ...bars(sunday, 4 * HOUR, 1, 1.1)];
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 240, digits: 5, bars: h4 });
+  const { connect, page } = await start(t, await tempFolder(t, "db"), dataFolder);
+  await connect(undefined);
+
+  const p = await page("H4");
+  assert.equal(p.candles.at(-1)!.time, utc(TEN - 2 * HOUR), "the quote at 10:00:30 forms the 08:00 bar");
+});
+
+test("W1 rolled up from a D1 file that reaches the live candle is not asked of the EA: its bars always start on Sunday", { timeout: 20000 }, async (t) => {
+  const dataFolder = await tempFolder(t, "hst");
+  const d1 = bars(Date.UTC(2026, 9, 1) / 1000, 86400, 106, 1.1);
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: d1 });
+  const { connect, settled } = await start(t, await tempFolder(t, "db"), dataFolder);
+  const ea = await connect(ready);
+
+  const w1 = await settled("W1");
+  assert.equal(w1.candles.at(-1)!.time, live("W1").time);
+  assert.deepEqual(ea.barRequests.map(([timeframe]) => timeframe), [60]);
 });
 
 /** Every candle of a period, paging back from the latest `limit` at a time. */

@@ -63,12 +63,12 @@ export class CandleBuilder {
     }
   }
 
-  /** A feed's candles of one period in broker seconds, oldest first. */
-  candles(feed: string, period: Period): Candle[] {
+  /** A feed's candles of one period in broker seconds, oldest first, in buckets `offset` seconds late. */
+  candles(feed: string, period: Period, offset = 0): Candle[] {
     const candles = this.feeds.get(feed);
     const out: Candle[] = [];
     for (const m1 of candles?.m1 ?? []) {
-      const time = bucketStart(m1.time, period);
+      const time = bucketStart(m1.time, period, offset);
       const last = out.at(-1);
       if (last?.time === time) extend(last, m1.high, m1.low, m1.close);
       else out.push({ time, open: m1.open, high: m1.high, low: m1.low, close: m1.close });

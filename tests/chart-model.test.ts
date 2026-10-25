@@ -333,6 +333,16 @@ test("a quote in a later bucket opens a new candle and asks for the list again; 
   assert.equal(followQuote([], "M1", { bid: 1, quoteTime: 120 }).newBucket, true);
 });
 
+test("with H4 buckets from 01:00 (offset 3600), a quote at 12:59 moves the 09:00 candle and one at 13:00 opens the next", () => {
+  const candles = [{ time: 9 * H, open: 1.1, high: 1.2, low: 1.05, close: 1.15 }];
+  const same = followQuote(candles, "H4", { bid: 1.25, quoteTime: 13 * H - 1 }, null, 3600);
+  assert.equal(same.newBucket, false);
+  assert.deepEqual(same.candles, [{ time: 9 * H, open: 1.1, high: 1.25, low: 1.05, close: 1.25 }]);
+  const next = followQuote(candles, "H4", { bid: 1.3, quoteTime: 13 * H }, null, 3600);
+  assert.equal(next.newBucket, true);
+  assert.equal(next.candles.at(-1)!.time, 13 * H);
+});
+
 test("intraday periods get a separator at the first bar of each new day; daily and longer periods none", () => {
   const candles = [22 * H, 23 * H, DAY + 1 * H, DAY + 2 * H, 3 * DAY].map((time) => ({ time, open: 1, high: 1, low: 1, close: 1 }));
   assert.deepEqual(daySeparators(candles, "H1"), [DAY + H, 3 * DAY]);

@@ -84,15 +84,17 @@ export function chartLegend({ symbol, period, digits, candles, indicators, time 
 /**
  * The candles (UTC times) after a live quote (broker time): it moves the forming candle, or opens a new one when it
  * falls in a later bucket of the broker clock (`newBucket`: the view fetches the list again, which also settles the
- * candle just closed). An older quote leaves the same list. `rule` is the broker server's, null while unknown.
+ * candle just closed). An older quote leaves the same list. `rule` is the broker server's, null while unknown;
+ * `offset` is the page's, as bucketStart's (CMC's GOLD H4 buckets start at 01:00).
  */
 export function followQuote(
   candles: readonly Candle[],
   period: Period,
   quote: { bid: number; quoteTime: number },
   rule: ClockRule | null = null,
+  offset = 0,
 ): { candles: readonly Candle[]; newBucket: boolean } {
-  const time = brokerToUtc(rule ?? UNKNOWN_RULE, bucketStart(quote.quoteTime, period) * 1000) / 1000;
+  const time = brokerToUtc(rule ?? UNKNOWN_RULE, bucketStart(quote.quoteTime, period, offset) * 1000) / 1000;
   const last = candles.at(-1);
   const { bid } = quote;
   if (last && time < last.time) return { candles, newBucket: false };

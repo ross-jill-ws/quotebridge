@@ -58,7 +58,8 @@ const MEMORY_KEY = "quotebridge.chart";
 
 /**
  * Candle times are UTC seconds; `clockRule` is the broker server's, null while unknown; `complete`: no older bars exist;
- * `filling`: the server is getting the period's bars from the EA, and the latest page grows once they are in.
+ * `filling`: the server is getting the period's bars from the EA, and the latest page grows once they are in;
+ * `offset`: how far after the usual bucket start the period's buckets start, in seconds (bucketStart's).
  */
 type CandlesAnswer = {
   feed: string;
@@ -70,6 +71,7 @@ type CandlesAnswer = {
   candles: Candle[];
   complete: boolean;
   filling: boolean;
+  offset: number;
 };
 
 /** While the server is getting the EA's bars, the latest page is fetched again this often. */
@@ -840,13 +842,13 @@ function useCandles(feed: FeedSnapshot | undefined, period: Period, live: Live):
   // Every snapshot is a new object: follow the quote only when it moved.
   useEffect(() => {
     if (!latest || !data || data.feed !== id || data.period !== period) return;
-    const next = followQuote(data.candles, period, latest, feed?.clockRule ?? data.clockRule);
+    const next = followQuote(data.candles, period, latest, feed?.clockRule ?? data.clockRule, data.offset);
     // From the candles as they are now: an answer may have come in since this render (the EA's bars filling the chart),
     // and effects run after the next paint.
     if (next.candles !== data.candles || data.ask !== latest.ask) {
       setData((d) => {
         if (!d || d.feed !== id || d.period !== period) return d;
-        const now = d === data ? next : followQuote(d.candles, period, latest, feed?.clockRule ?? d.clockRule);
+        const now = d === data ? next : followQuote(d.candles, period, latest, feed?.clockRule ?? d.clockRule, d.offset);
         return { ...d, candles: now.candles as Candle[], ask: latest.ask };
       });
     }

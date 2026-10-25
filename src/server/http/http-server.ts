@@ -105,7 +105,6 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   const live = new LiveSnapshots(bridge, options.indicators?.values, options.indicators?.packages);
   const rest = new RestV1({
     bridge,
-    candles: options.candles,
     catalog: options.catalog,
     history: options.history,
     clockRule: (brokerServer) => options.clockRules.rule(brokerServer),

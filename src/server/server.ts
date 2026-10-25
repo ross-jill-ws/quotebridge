@@ -129,7 +129,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     }
     const history = new ChartHistory({
       dataFolder,
-      liveCandles: (feed, period) => candles.candles(feed, period),
+      liveCandles: (feed, period, offset) => candles.candles(feed, period, offset),
       clockRule: (brokerServer) => rules.rule(brokerServer),
       savedBars: saved && ((market, period, before, limit) => saved.before(market, period, before, limit)),
       eaBars,

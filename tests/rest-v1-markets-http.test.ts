@@ -106,6 +106,24 @@ test("candles join HST and the live candles oldest first, with UTC and broker ti
   assert.equal((await app.read(`/api/v1/markets/${marketId(DEMO, "GBPUSD")}/candles`, { timeframe: "H1" }, 404)).error.code, "no-candles");
 });
 
+test("candles follow the broker's H4 buckets: with the file's bars from 01:00, the quote at 10:00 forms the 09:00 bar", { timeout: 20000 }, async (t) => {
+  const data = await tempFolder(t, "rest-data");
+  const h4 = bars(MIDNIGHT - 15 * HOUR, 4 * HOUR, 6);
+  await writeHst(data, DEMO, { version: 401, symbol: "EURUSD", minutes: 240, digits: 5, bars: h4 });
+  const app = await startRest(t, await tempFolder(t, "rest-db"), { dataFolders: { [TERMINAL]: data } });
+  const ea = await app.connect();
+  await app.quote(ea, [{ seq: 1, bid: 1.2, ask: 1.2002, quoteTime: MIDNIGHT + 10 * HOUR }]);
+
+  const page = await app.read(`/api/v1/markets/${EURUSD}/candles`, { timeframe: "H4", limit: 2 });
+  assert.deepEqual(
+    page.data.map((b: Json) => [b.brokerTime, b.complete]),
+    [
+      [brokerIso(MIDNIGHT + 5 * HOUR), true],
+      [brokerIso(MIDNIGHT + 9 * HOUR), false],
+    ],
+  );
+});
+
 test("candles: 900 by default and 5000 at most; from/to bound the newest bars and next pages back without gaps", { timeout: 20000 }, async (t) => {
   const data = await tempFolder(t, "rest-data");
   const m1 = bars(MIDNIGHT - 6000 * 60, 60, 6000);

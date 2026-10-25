@@ -11,7 +11,7 @@ import { ONLINE_WINDOW_MS } from "../bridge/bridge.js";
 import { AccountReadError, type AccountSnapshot } from "../bridge/accounts.js";
 import type { AccountOrder } from "../bridge/account-protocol.js";
 import { selectMarketSource } from "../bridge/market-source.js";
-import type { Candle, CandleBuilder } from "../candles/index.js";
+import type { Candle } from "../candles/index.js";
 import { CSV_HEADER, csvRows, hstHeaderBytes, hstRecordBytes, PERIOD_MINUTES, PERIOD_OF, type ChartHistory, type HistoryCatalog, type HistoryPage } from "../history/index.js";
 import { marketId } from "../identity/index.js";
 import { ManifestError, parametersFromQuery } from "../../shared/indicator-manifest.js";
@@ -35,7 +35,6 @@ export type RestCredential = { apiKey: string } | { headers: IncomingMessage["he
 
 export type RestV1Options = {
   bridge: BridgeServer;
-  candles: CandleBuilder;
   catalog: HistoryCatalog;
   history: ChartHistory;
   clockRule: (brokerServer: string) => ClockRule | null;
@@ -807,7 +806,7 @@ export class RestV1 {
       const broker = await this.options.history.brokerPage(feed, window.period, window.limit, window.before);
       bars = broker.candles;
       page = broker;
-      forming = this.options.candles.candles(feed.feed, window.period).at(-1)?.time;
+      forming = broker.forming;
     } else {
       const series = await this.options.catalog.series(market, window.period);
       bars = series ? await series.latest(window.limit, window.before) : [];
