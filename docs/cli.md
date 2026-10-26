@@ -134,7 +134,9 @@ initiative.
   prints one envelope with every item and `meta: { count, pages, nextCursor: null }`.
 - Errors and hints go to **stderr** only. With `--json`, an error is `{ "error": { "code", "message", "details" } }` on
   stderr: the app's [error code](rest-api.md#error-codes), or the CLI's own `usage`, `ambiguous-market`,
-  `ambiguous-account`, `unknown-market`, `unknown-account`, `output-exists`, `not-signed-in` or `unreachable`.
+  `ambiguous-account`, `unknown-market`, `unknown-account`, `output-exists`, `not-signed-in`, `invalid-key` (not a
+  `qbk_` key, exit 3), `unreachable`, `redirect` (the server redirects elsewhere) or `cli-error` (anything else, such
+  as a server that is not QuoteBridge).
 - Prices, lots and money are decimal strings, as the API gives them. Pass decimals as plain digits (`0.10`, `1.08500`).
 - Times are UTC ISO-8601 with a `brokerTime` sibling. `--from`/`--to` take `YYYY-MM-DDTHH:MM:SS[.sss]Z`, or a date
   `YYYY-MM-DD` (that UTC day's start for `--from`, its last second for `--to`). `--expiry` takes UTC whole seconds.

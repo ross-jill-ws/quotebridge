@@ -339,6 +339,11 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
       setBusy(false);
     }
   };
+  // A change answers the last refusal, so its message goes until Save is pressed again.
+  const edited = (change: () => void) => {
+    change();
+    setProblem("");
+  };
   const submit = (e: Event) => {
     e.preventDefault();
     if (!market) return setProblem("Choose the market.");
@@ -352,10 +357,7 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
       {editing === ADDING && (
         <label>
           <span>Market</span>
-          <select class="input" value={market ? marketKey(market) : ""} onChange={(e) => {
-              setMarket((markets ?? []).find((m) => marketKey(m) === e.currentTarget.value));
-              setProblem("");
-            }}>
+          <select class="input" value={market ? marketKey(market) : ""} onChange={(e) => edited(() => setMarket((markets ?? []).find((m) => marketKey(m) === e.currentTarget.value)))}>
             <option value="">{markets ? "Choose a market…" : "Loading…"}</option>
             {(markets ?? []).filter((m) => !list.some((d) => marketKey(d) === marketKey(m))).map((m) => (
               <option key={marketKey(m)} value={marketKey(m)}>
@@ -368,11 +370,7 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
       {([["lots", "Lots"], ["stopLossPoints", "Stop loss, points"], ["takeProfitPoints", "Take profit, points"]] as const).map(([field, label]) => (
         <label key={field}>
           <span>{label}</span>
-          <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => {
-              setText({ ...text, [field]: e.currentTarget.value });
-              setProblem("");
-            }}
-          />
+          <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => edited(() => setText({ ...text, [field]: e.currentTarget.value }))} />
           {facts?.notes[field] && (
             <small>
               {facts.notes[field].meaning} {facts.notes[field].refused && <span class="warn-text">{facts.notes[field].refused}</span>}
