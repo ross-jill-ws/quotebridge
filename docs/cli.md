@@ -87,6 +87,7 @@ metadata, never its bytes:
 | `orders show TICKET --account A` | `GET /accounts/{accountId}/orders/{ticket}` |
 | `orders preview --account A --symbol S --side buy\|sell --type market\|limit\|stop --lots L [--price] [--expiry] [--sl] [--tp]` | `POST /requests/preview` (`place`) |
 | `orders preview … --risk-amount\|--risk-percent\|--risk-points X --reward-ratio R` | `POST /requests/preview` (`place` with `risk`) |
+| `orders preview … [--sl-points N] [--tp-points N]` | `POST /requests/preview` (`place` with `distance`) |
 | `orders modify TICKET --account A [--price] [--expiry T\|none] [--sl P\|none] [--tp P\|none]` | `POST /requests/preview` (`modify`) |
 | `orders cancel TICKET --account A` | `POST /requests/preview` (`cancel`) |
 
