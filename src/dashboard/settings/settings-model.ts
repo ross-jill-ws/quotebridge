@@ -3,6 +3,7 @@
 import type { ApiKeyView } from "../../server/auth/index.js";
 import type { RecordingView } from "../../server/recording/index.js";
 import type { SettingsView } from "../../server/settings/index.js";
+import type { AccountView } from "../trading/trading-model.js";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { browserOffsetMinutes, displaySeconds } from "../display-clock.js";
 import { count, minuteStamp } from "../format.js";
@@ -194,4 +195,104 @@ export function orderDefaultsChange(list: readonly OrderDefaults[], market: Mark
 /** The list without `market`'s row. */
 export function removeOrderDefaults(list: readonly OrderDefaults[], market: Market): OrderDefaults[] {
   return list.filter((d) => marketKey(d) !== marketKey(market));
+}
+
+/** The part of a market's conditions (`GET …/markets/{market}/conditions`) the order defaults form explains. */
+export type MarketConditions = {
+  bid: string;
+  ask: string;
+  digits: number;
+  point: string;
+  tickSize: string;
+  tickValue: string;
+  minLots: string;
+  maxLots: string;
+  lotStep: string;
+  stopLevel: number;
+};
+
+/** A typed value's note: what a stop distance means, or (`refused`) why Preview refuses the value. */
+export type FieldNote = { text: string; refused: boolean };
+/** What the market defines, in sentences, and a note per typed value. */
+export type OrderDefaultsFacts = { facts: string[]; notes: Partial<Record<keyof OrderDefaultsText, FieldNote>> };
+
+const SCALE = 10n ** 10n;
+/** A positive decimal as an exact count of 1e-10s. */
+const units = (value: string): bigint => {
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(whole!) * SCALE + BigInt(fraction.padEnd(10, "0").slice(0, 10));
+};
+const fromUnits = (n: bigint): string => `${n / SCALE}.${(n % SCALE).toString().padStart(10, "0")}`.replace(/\.?0+$/, "");
+/** About-money: three significant digits, without trailing zeros. */
+const about = (n: number): string => Number(n.toPrecision(3)).toLocaleString("en-US", { maximumFractionDigits: 10 });
+const typed = (value: string): string | undefined => {
+  const v = value.trim();
+  return POSITIVE_DECIMAL.test(v) && /[1-9]/.test(v) ? v : undefined;
+};
+
+/**
+ * Settings › Trading › Order defaults: the market's own figures (from a terminal's conditions read) for choosing its
+ * defaults. Money is in the account's `currency`, from MetaTrader's tick value; notes never stop a save, as Preview
+ * checks again against the figures of that moment.
+ */
+export function orderDefaultsFacts(c: MarketConditions, currency: string | null, lotCap: string, text: OrderDefaultsText): OrderDefaultsFacts {
+  const pointMoney = (Number(c.tickValue) * Number(c.point)) / Number(c.tickSize);
+  // ", about 10 USD at 0.05 lots", or a lot when none are typed; nothing without the account's currency.
+  const money = (points: number, lots?: string) =>
+    currency === null ? "" : `, about ${about(points * pointMoney * Number(lots ?? 1))} ${currency} ${lots ? `at ${lots} lots` : "a lot"}`;
+  const spread = Number((units(c.ask) - units(c.bid)) / units(c.point));
+  const facts = [
+    `1 point is ${fromUnits(units(c.point))} in price${money(1)}.`,
+    `Lots: ${c.minLots} to ${c.maxLots}, in steps of ${c.lotStep}. The app's lot cap is ${lotCap}.`,
+    c.stopLevel > 0
+      ? `Stops: at least ${count(c.stopLevel)} points from the closing price (Bid for a buy, Ask for a sell), no maximum.`
+      : "Stops: the broker sets no minimum distance, and there is no maximum.",
+    `Spread now: ${count(spread)} points. A market order's stop loss also spans it.`,
+  ];
+
+  const notes: OrderDefaultsFacts["notes"] = {};
+  const lots = typed(text.lots);
+  if (lots !== undefined) {
+    const n = units(lots);
+    const refused =
+      n < units(c.minLots) ? `Below the market's minimum of ${c.minLots} lots`
+      : n > units(c.maxLots) ? `Above the market's maximum of ${c.maxLots} lots`
+      : n > units(lotCap) ? `Above the app's lot cap of ${lotCap}`
+      : n % units(c.lotStep) ? `Not a whole number of lot steps of ${c.lotStep}`
+      : undefined;
+    if (refused) notes.lots = { text: `${refused}: Preview refuses it.`, refused: true };
+  }
+  for (const field of ["stopLossPoints", "takeProfitPoints"] as const) {
+    const points = typed(text[field]);
+    if (points === undefined) continue;
+    const d = Number(points);
+    const why = field === "stopLossPoints" ? stopLossTooClose(d, c.stopLevel, spread) : takeProfitTooClose(d, c.stopLevel, spread);
+    notes[field] = { text: `${fromUnits((units(points) * units(c.point)) / SCALE)} in price${money(d, lots)}.${why ? ` ${why}` : ""}`, refused: why !== undefined };
+  }
+  return { facts, notes };
+}
+
+/*
+ * Stops are measured from the closing price (Bid for a buy, Ask for a sell), and a pending order's from its entry; a
+ * distance is from the entry, which for a market order is the opening price, a spread away from the closing one. So a
+ * market order's stop loss needs the stop level plus the spread, and its take profit the stop level less the spread.
+ */
+function stopLossTooClose(points: number, stopLevel: number, spread: number): string | undefined {
+  if (points >= stopLevel + spread && points > spread) return undefined;
+  return stopLevel > 0
+    ? `Too close: a market order's stop loss needs at least ${count(stopLevel + spread)} points now (the broker's minimum of ${count(stopLevel)} plus the spread of ${count(spread)}), so Preview refuses it.`
+    : `Too close: a market order's stop loss needs more than the spread of ${count(spread)} points now, so Preview refuses it.`;
+}
+function takeProfitTooClose(points: number, stopLevel: number, spread: number): string | undefined {
+  if (points < stopLevel - spread) return `Too close: the broker's minimum is ${count(stopLevel)} points and the spread now ${count(spread)}, so Preview refuses it.`;
+  if (points < stopLevel) return `Under the broker's minimum of ${count(stopLevel)} points, so Preview refuses it for a pending order.`;
+  return undefined;
+}
+
+type FactsAccount = Pick<AccountView, "id" | "brokerServer" | "connected" | "demo">;
+
+/** The account whose terminal the market's figures are read through: a connected one on its broker server, demo first. */
+export function factsAccount<A extends FactsAccount>(accounts: readonly A[], market: Market): A | undefined {
+  const here = accounts.filter((a) => a.connected && a.brokerServer === market.brokerServer);
+  return here.find((a) => a.demo === true) ?? here[0];
 }

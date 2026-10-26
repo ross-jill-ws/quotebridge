@@ -99,3 +99,12 @@ Only the app window changes these; a remote browser sees them read-only.
   with; each is optional. Stop loss and take profit are points from the entry, so they follow the price and the side.
   **Add market…** lists the markets the app knows. A default above the lot cap is refused at Preview, like a typed
   value. Changing defaults never discards a preview.
+
+  While you add or edit a market, the form shows what the market itself defines, read from a connected account's
+  terminal on its broker server: what 1 point is in price and about what it is worth per lot, the broker's lot
+  minimum, maximum and step, the minimum stop distance (stop level; there is no maximum) and the spread now. Under each
+  stop distance you see its price move and about its money at the default lots. Stops are measured from the closing
+  price, so a market order's stop loss needs the stop level plus the spread. A value Preview would refuse (lots off the
+  market's limits, its step or the lot cap; a stop too close) is marked, but can still be saved:
+  Preview checks again with the figures of that moment. Without a connected account on that broker server, the form
+  says so and works as before.

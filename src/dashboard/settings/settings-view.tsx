@@ -8,14 +8,17 @@ import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
 import { BUNDLED_WORKS } from "../../shared/licences.js";
 import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store.js";
-import { get, getAll, post } from "../api.js";
+import { get, getAll, post, type Envelope } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
+import type { AccountView } from "../trading/trading-model.js";
 import {
   apiKeyRows,
   deleteRecording,
+  factsAccount,
   marketKey,
   orderDefaultsChange,
+  orderDefaultsFacts,
   orderDefaultsText,
   parsePort,
   PORT_LABELS,
@@ -25,6 +28,7 @@ import {
   removeOrderDefaults,
   revokeApiKey,
   tradingChange,
+  type MarketConditions,
   type OrderDefaultsText,
   type PortRole,
 } from "./settings-model.js";
@@ -264,12 +268,15 @@ function TradingGroup(props: { settings: Settings; onChange: (trading: Settings[
         disabled={!manage}
         onChange={onChange}
       />
-      <OrderDefaultsRows list={settings.orderDefaults} manage={manage} onChange={onOrderDefaults} />
+      <OrderDefaultsRows list={settings.orderDefaults} lotCap={trading.maxLots} manage={manage} onChange={onOrderDefaults} />
     </SettingsGroup>
   );
 }
 
-type MarketChoice = { brokerServer: string; symbol: string };
+type MarketChoice = { id: string; brokerServer: string; symbol: string };
+type Market = Pick<MarketChoice, "brokerServer" | "symbol">;
+/** The chosen market's figures, read through an account's terminal, or why they cannot be shown. */
+type Figures = { conditions: MarketConditions; currency: string | null } | { reason: string };
 const ADDING = "add";
 const EMPTY_DEFAULTS: OrderDefaultsText = { lots: "", stopLossPoints: "", takeProfitPoints: "" };
 
@@ -282,21 +289,44 @@ function describeDefaults(d: Settings["orderDefaults"][number]): string {
  * Settings › Trading › Order defaults: each market's starting lots and stop distances for a new order, with Edit and
  * Remove, and Add market… for a known market without any.
  */
-function OrderDefaultsRows({ list, manage, onChange }: { list: Settings["orderDefaults"]; manage: boolean; onChange: (list: Settings["orderDefaults"]) => Promise<void> }) {
+function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: string; manage: boolean; onChange: (list: Settings["orderDefaults"]) => Promise<void> }) {
+  const { list, lotCap, manage, onChange } = props;
   // The row being edited (a market's key, or ADDING for Add market…), its market and what is typed.
   const [editing, setEditing] = useState<string>();
-  const [market, setMarket] = useState<MarketChoice>();
+  const [market, setMarket] = useState<Market>();
   const [text, setText] = useState<OrderDefaultsText>(EMPTY_DEFAULTS);
   const [problem, setProblem] = useState("");
   const [markets, setMarkets] = useState<MarketChoice[]>();
   const [busy, setBusy] = useState(false);
+  const [figures, setFigures] = useState<Figures>();
 
-  const open = (key: string, chosen?: MarketChoice, current = EMPTY_DEFAULTS) => {
+  // The market's own figures for choosing its defaults, read again whenever the form's market changes.
+  const chosen = editing && market ? marketKey(market) : "";
+  useEffect(() => {
+    setFigures(undefined);
+    if (!chosen || !markets || !market) return;
+    let gone = false;
+    const read = async (): Promise<Figures> => {
+      const id = markets.find((m) => marketKey(m) === chosen)?.id;
+      const account = factsAccount(await getAll<AccountView>("/api/v1/accounts"), market);
+      if (!id || !account) return { reason: `Connect a terminal logged in to an account on ${market.brokerServer} to see this market's point value, lot limits and stop level.` };
+      const answer = await get<Envelope<MarketConditions>>(`/api/v1/accounts/${encodeURIComponent(account.id)}/markets/${encodeURIComponent(id)}/conditions`);
+      return { conditions: answer.data, currency: account.currency };
+    };
+    read().then(
+      (f) => !gone && setFigures(f),
+      (e: Error) => !gone && setFigures({ reason: `This market's figures could not be read now: ${e.message}` }),
+    );
+    return () => void (gone = true);
+  }, [chosen, markets]);
+  const facts = figures && "conditions" in figures ? orderDefaultsFacts(figures.conditions, figures.currency, lotCap, text) : undefined;
+
+  const open = (key: string, chosen?: Market, current = EMPTY_DEFAULTS) => {
     setEditing(key);
     setMarket(chosen);
     setText(current);
     setProblem("");
-    if (key === ADDING) getAll<MarketChoice>("/api/v1/markets").then(setMarkets, (e: Error) => setProblem(e.message));
+    if (!markets) getAll<MarketChoice>("/api/v1/markets").then(setMarkets, (e: Error) => setProblem(e.message));
   };
   const save = async (next: Settings["orderDefaults"]) => {
     setBusy(true);
@@ -336,8 +366,14 @@ function OrderDefaultsRows({ list, manage, onChange }: { list: Settings["orderDe
         <label key={field}>
           <span>{label}</span>
           <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => setText({ ...text, [field]: e.currentTarget.value })} />
+          {facts?.notes[field] && <small class={facts.notes[field].refused ? "warn-text" : undefined}>{facts.notes[field].text}</small>}
         </label>
       ))}
+      {figures && (
+        <div class="order-defaults-facts" role="note">
+          {"reason" in figures ? <p>{figures.reason}</p> : <ul>{facts!.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>}
+        </div>
+      )}
       <div class="confirm-actions">
         <button type="submit" class="button primary" disabled={busy}>
           Save

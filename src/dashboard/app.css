@@ -1681,7 +1681,7 @@ label.setting-row {
 .order-defaults-form {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 10px 14px;
   margin-top: 6px;
 }
@@ -1697,7 +1697,30 @@ label.setting-row {
   width: 9em;
 }
 
+/* A typed value's meaning, under its input. */
+.order-defaults-form label small {
+  max-width: 18em;
+  font-size: 12px;
+}
+
+/* The market's own figures, read through a terminal. */
+.order-defaults-facts {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.order-defaults-facts ul,
+.order-defaults-facts p {
+  margin: 0;
+}
+
+.order-defaults-facts ul {
+  padding-left: 18px;
+}
+
 .order-defaults-form .confirm-actions {
+  flex-basis: 100%;
   margin: 0;
 }
 

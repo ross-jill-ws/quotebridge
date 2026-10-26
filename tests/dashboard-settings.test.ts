@@ -2,7 +2,7 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apiKeyRows, deleteRecording, orderDefaultsChange, parsePort, portChange, portsNote, recordingRows, removeOrderDefaults, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
+import { apiKeyRows, deleteRecording, factsAccount, orderDefaultsChange, orderDefaultsFacts, parsePort, portChange, portsNote, recordingRows, removeOrderDefaults, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
@@ -144,4 +144,63 @@ test("saving a market again replaces its row in place; removing it keeps the oth
   const changed = orderDefaultsChange(both, eurusd, { lots: "0.2", stopLossPoints: "", takeProfitPoints: "300" });
   assert.deepEqual("orderDefaults" in changed && changed.orderDefaults.map((d) => [d.symbol, d.lots, d.takeProfitPoints]), [["EURUSD", "0.2", "300"], ["BTCUSD", "0.05", null]]);
   assert.deepEqual(removeOrderDefaults(both, BTC), [eurusd]);
+});
+
+const EURUSD_CONDITIONS = { bid: "1.1", ask: "1.10002", digits: 5, point: "0.00001", tickSize: "0.00001", tickValue: "1", minLots: "0.01", maxLots: "100", lotStep: "0.01", stopLevel: 10 };
+const BTC_CONDITIONS = { bid: "67000", ask: "67015", digits: 2, point: "0.01", tickSize: "0.01", tickValue: "0.01", minLots: "0.01", maxLots: "10", lotStep: "0.01", stopLevel: 0 };
+
+test("the order defaults form shows what the market defines: a point's price and money, the lot limits, the stop level and the spread", () => {
+  assert.deepEqual(orderDefaultsFacts(EURUSD_CONDITIONS, "USD", "1.0", { lots: "", stopLossPoints: "", takeProfitPoints: "" }).facts, [
+    "1 point is 0.00001 in price, about 1 USD a lot.",
+    "Lots: 0.01 to 100, in steps of 0.01. The app's lot cap is 1.0.",
+    "Stops: at least 10 points from the closing price (Bid for a buy, Ask for a sell), no maximum.",
+    "Spread now: 2 points. A market order's stop loss also spans it.",
+  ]);
+  assert.deepEqual(orderDefaultsFacts(BTC_CONDITIONS, null, "1.0", { lots: "", stopLossPoints: "", takeProfitPoints: "" }).facts, [
+    "1 point is 0.01 in price.",
+    "Lots: 0.01 to 10, in steps of 0.01. The app's lot cap is 1.0.",
+    "Stops: the broker sets no minimum distance, and there is no maximum.",
+    "Spread now: 1,500 points. A market order's stop loss also spans it.",
+  ]);
+});
+
+test("each typed stop distance reads as a price move and about its money at the default lots, or one lot", () => {
+  const notes = orderDefaultsFacts(EURUSD_CONDITIONS, "USD", "1.0", { lots: "0.05", stopLossPoints: "200", takeProfitPoints: "400" }).notes;
+  assert.deepEqual(notes, {
+    stopLossPoints: { text: "0.002 in price, about 10 USD at 0.05 lots.", refused: false },
+    takeProfitPoints: { text: "0.004 in price, about 20 USD at 0.05 lots.", refused: false },
+  });
+  assert.deepEqual(orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: "", stopLossPoints: "2000", takeProfitPoints: "" }).notes, { stopLossPoints: { text: "20 in price, about 20 USD a lot.", refused: false } });
+});
+
+test("a typed value Preview would refuse is noted: lots off the market's limits, step or the lot cap, a stop inside the stop level", () => {
+  const lots = (text: string) => orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: text, stopLossPoints: "", takeProfitPoints: "" }).notes.lots?.text;
+  assert.equal(lots("0.005"), "Below the market's minimum of 0.01 lots: Preview refuses it.");
+  assert.equal(lots("20"), "Above the market's maximum of 10 lots: Preview refuses it.");
+  assert.equal(lots("2"), "Above the app's lot cap of 1.0: Preview refuses it.");
+  assert.equal(lots("0.015"), "Not a whole number of lot steps of 0.01: Preview refuses it.");
+  assert.equal(lots("0.5"), undefined);
+});
+
+test("a stop too close says why, after what it means: a market order's stop loss needs the stop level plus the spread", () => {
+  const stops = (c: typeof EURUSD_CONDITIONS, stopLossPoints: string, takeProfitPoints: string) => orderDefaultsFacts(c, "USD", "1.0", { lots: "", stopLossPoints, takeProfitPoints }).notes;
+  assert.deepEqual(stops(EURUSD_CONDITIONS, "11", "9"), {
+    stopLossPoints: { refused: true, text: "0.00011 in price, about 11 USD a lot. Too close: a market order's stop loss needs at least 12 points now (the broker's minimum of 10 plus the spread of 2), so Preview refuses it." },
+    takeProfitPoints: { refused: true, text: "0.00009 in price, about 9 USD a lot. Under the broker's minimum of 10 points, so Preview refuses it for a pending order." },
+  });
+  assert.equal(stops(EURUSD_CONDITIONS, "", "7").takeProfitPoints?.text, "0.00007 in price, about 7 USD a lot. Too close: the broker's minimum is 10 points and the spread now 2, so Preview refuses it.");
+  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").stopLossPoints?.refused, false);
+  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").takeProfitPoints?.refused, false);
+  assert.deepEqual(stops(BTC_CONDITIONS, "1500", "").stopLossPoints, {
+    refused: true,
+    text: "15 in price, about 15 USD a lot. Too close: a market order's stop loss needs more than the spread of 1,500 points now, so Preview refuses it.",
+  });
+});
+
+test("the market's figures are read through a connected account on its broker server, a demo account first", () => {
+  const account = (id: string, brokerServer: string, connected: boolean, demo: boolean | null) => ({ id, brokerServer, connected, demo });
+  const accounts = [account("a", "Other", true, true), account("b", "EasyForex-Demo", false, true), account("c", "EasyForex-Demo", true, false), account("d", "EasyForex-Demo", true, true)];
+  assert.equal(factsAccount(accounts, BTC)?.id, "d");
+  assert.equal(factsAccount(accounts.slice(0, 3), BTC)?.id, "c");
+  assert.equal(factsAccount(accounts.slice(0, 2), BTC), undefined);
 });
