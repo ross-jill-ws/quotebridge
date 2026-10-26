@@ -167,14 +167,14 @@ test("the order defaults form shows what the market defines: a point's price and
 test("each typed stop distance reads as a price move and about its money at the default lots, or one lot", () => {
   const notes = orderDefaultsFacts(EURUSD_CONDITIONS, "USD", "1.0", { lots: "0.05", stopLossPoints: "200", takeProfitPoints: "400" }).notes;
   assert.deepEqual(notes, {
-    stopLossPoints: { text: "0.002 in price, about 10 USD at 0.05 lots.", refused: false },
-    takeProfitPoints: { text: "0.004 in price, about 20 USD at 0.05 lots.", refused: false },
+    stopLossPoints: { meaning: "0.002 in price, about 10 USD at 0.05 lots." },
+    takeProfitPoints: { meaning: "0.004 in price, about 20 USD at 0.05 lots." },
   });
-  assert.deepEqual(orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: "", stopLossPoints: "2000", takeProfitPoints: "" }).notes, { stopLossPoints: { text: "20 in price, about 20 USD a lot.", refused: false } });
+  assert.deepEqual(orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: "", stopLossPoints: "2000", takeProfitPoints: "" }).notes, { stopLossPoints: { meaning: "20 in price, about 20 USD a lot." } });
 });
 
 test("a typed value Preview would refuse is noted: lots off the market's limits, step or the lot cap, a stop inside the stop level", () => {
-  const lots = (text: string) => orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: text, stopLossPoints: "", takeProfitPoints: "" }).notes.lots?.text;
+  const lots = (text: string) => orderDefaultsFacts(BTC_CONDITIONS, "USD", "1.0", { lots: text, stopLossPoints: "", takeProfitPoints: "" }).notes.lots?.refused;
   assert.equal(lots("0.005"), "Below the market's minimum of 0.01 lots: Preview refuses it.");
   assert.equal(lots("20"), "Above the market's maximum of 10 lots: Preview refuses it.");
   assert.equal(lots("2"), "Above the app's lot cap of 1.0: Preview refuses it.");
@@ -185,15 +185,15 @@ test("a typed value Preview would refuse is noted: lots off the market's limits,
 test("a stop too close says why, after what it means: a market order's stop loss needs the stop level plus the spread", () => {
   const stops = (c: typeof EURUSD_CONDITIONS, stopLossPoints: string, takeProfitPoints: string) => orderDefaultsFacts(c, "USD", "1.0", { lots: "", stopLossPoints, takeProfitPoints }).notes;
   assert.deepEqual(stops(EURUSD_CONDITIONS, "11", "9"), {
-    stopLossPoints: { refused: true, text: "0.00011 in price, about 11 USD a lot. Too close: a market order's stop loss needs at least 12 points now (the broker's minimum of 10 plus the spread of 2), so Preview refuses it." },
-    takeProfitPoints: { refused: true, text: "0.00009 in price, about 9 USD a lot. Under the broker's minimum of 10 points, so Preview refuses it for a pending order." },
+    stopLossPoints: { meaning: "0.00011 in price, about 11 USD a lot.", refused: "Too close: a market order's stop loss needs at least 12 points now (the broker's minimum of 10 plus the spread of 2), so Preview refuses it." },
+    takeProfitPoints: { meaning: "0.00009 in price, about 9 USD a lot.", refused: "Under the broker's minimum of 10 points, so Preview refuses it for a pending order." },
   });
-  assert.equal(stops(EURUSD_CONDITIONS, "", "7").takeProfitPoints?.text, "0.00007 in price, about 7 USD a lot. Too close: the broker's minimum is 10 points and the spread now 2, so Preview refuses it.");
-  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").stopLossPoints?.refused, false);
-  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").takeProfitPoints?.refused, false);
+  assert.equal(stops(EURUSD_CONDITIONS, "", "7").takeProfitPoints?.refused, "Too close: the broker's minimum is 10 points and the spread now 2, so Preview refuses it.");
+  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").stopLossPoints?.refused, undefined);
+  assert.equal(stops(EURUSD_CONDITIONS, "12", "10").takeProfitPoints?.refused, undefined);
   assert.deepEqual(stops(BTC_CONDITIONS, "1500", "").stopLossPoints, {
-    refused: true,
-    text: "15 in price, about 15 USD a lot. Too close: a market order's stop loss needs more than the spread of 1,500 points now, so Preview refuses it.",
+    meaning: "15 in price, about 15 USD a lot.",
+    refused: "Too close: a market order's stop loss needs more than the spread of 1,500 points now, so Preview refuses it.",
   });
 });
 

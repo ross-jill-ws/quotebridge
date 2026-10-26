@@ -366,7 +366,11 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
         <label key={field}>
           <span>{label}</span>
           <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => setText({ ...text, [field]: e.currentTarget.value })} />
-          {facts?.notes[field] && <small class={facts.notes[field].refused ? "warn-text" : undefined}>{facts.notes[field].text}</small>}
+          {facts?.notes[field] && (
+            <small>
+              {facts.notes[field].meaning} {facts.notes[field].refused && <span class="warn-text">{facts.notes[field].refused}</span>}
+            </small>
+          )}
         </label>
       ))}
       {figures && (

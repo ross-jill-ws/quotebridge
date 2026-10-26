@@ -211,8 +211,8 @@ export type MarketConditions = {
   stopLevel: number;
 };
 
-/** A typed value's note: what a stop distance means, or (`refused`) why Preview refuses the value. */
-export type FieldNote = { text: string; refused: boolean };
+/** A typed value's note: what a stop distance means, and why Preview refuses the value. */
+export type FieldNote = { meaning?: string; refused?: string };
 /** What the market defines, in sentences, and a note per typed value. */
 export type OrderDefaultsFacts = { facts: string[]; notes: Partial<Record<keyof OrderDefaultsText, FieldNote>> };
 
@@ -260,14 +260,14 @@ export function orderDefaultsFacts(c: MarketConditions, currency: string | null,
       : n > units(lotCap) ? `Above the app's lot cap of ${lotCap}`
       : n % units(c.lotStep) ? `Not a whole number of lot steps of ${c.lotStep}`
       : undefined;
-    if (refused) notes.lots = { text: `${refused}: Preview refuses it.`, refused: true };
+    if (refused) notes.lots = { refused: `${refused}: Preview refuses it.` };
   }
   for (const field of ["stopLossPoints", "takeProfitPoints"] as const) {
     const points = typed(text[field]);
     if (points === undefined) continue;
     const d = Number(points);
     const why = field === "stopLossPoints" ? stopLossTooClose(d, c.stopLevel, spread) : takeProfitTooClose(d, c.stopLevel, spread);
-    notes[field] = { text: `${fromUnits((units(points) * units(c.point)) / SCALE)} in price${money(d, lots)}.${why ? ` ${why}` : ""}`, refused: why !== undefined };
+    notes[field] = { meaning: `${fromUnits((units(points) * units(c.point)) / SCALE)} in price${money(d, lots)}.`, ...(why && { refused: why }) };
   }
   return { facts, notes };
 }
