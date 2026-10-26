@@ -352,7 +352,10 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
       {editing === ADDING && (
         <label>
           <span>Market</span>
-          <select class="input" value={market ? marketKey(market) : ""} onChange={(e) => setMarket((markets ?? []).find((m) => marketKey(m) === e.currentTarget.value))}>
+          <select class="input" value={market ? marketKey(market) : ""} onChange={(e) => {
+              setMarket((markets ?? []).find((m) => marketKey(m) === e.currentTarget.value));
+              setProblem("");
+            }}>
             <option value="">{markets ? "Choose a market…" : "Loading…"}</option>
             {(markets ?? []).filter((m) => !list.some((d) => marketKey(d) === marketKey(m))).map((m) => (
               <option key={marketKey(m)} value={marketKey(m)}>
@@ -365,7 +368,11 @@ function OrderDefaultsRows(props: { list: Settings["orderDefaults"]; lotCap: str
       {([["lots", "Lots"], ["stopLossPoints", "Stop loss, points"], ["takeProfitPoints", "Take profit, points"]] as const).map(([field, label]) => (
         <label key={field}>
           <span>{label}</span>
-          <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => setText({ ...text, [field]: e.currentTarget.value })} />
+          <input class="input number" inputMode="decimal" value={text[field]} placeholder="None" onInput={(e) => {
+              setText({ ...text, [field]: e.currentTarget.value });
+              setProblem("");
+            }}
+          />
           {facts?.notes[field] && (
             <small>
               {facts.notes[field].meaning} {facts.notes[field].refused && <span class="warn-text">{facts.notes[field].refused}</span>}
