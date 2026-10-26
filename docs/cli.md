@@ -91,8 +91,8 @@ metadata, never its bytes:
 | `orders modify TICKET --account A [--price] [--expiry T\|none] [--sl P\|none] [--tp P\|none]` | `POST /requests/preview` (`modify`) |
 | `orders cancel TICKET --account A` | `POST /requests/preview` (`cancel`) |
 
-While an account's terminal is offline, its positions and orders are its last snapshot (`meta.state` `stale`); the
-table output says so on stderr.
+While an account's terminal is offline, its positions and orders are its last snapshot (`meta.state` `stale`), or
+none when no terminal of it has answered since the app started (`unavailable`); the table output says so on stderr.
 
 Options left out of a modify stay as they are; `none` clears a stop or an expiry (sent as `null`; zero is not a
 clear). There are no lot changes or partial closes.
@@ -134,8 +134,8 @@ initiative.
 ## Output, numbers and times
 
 - Tables for people. `--json` prints the API's envelope exactly: `{ "data": …, "meta": … }`. `--all` on a collection
-  prints one envelope with every item and the last page's `meta` (an account's `currency` and `state`, say) with
-  `count`, `pages` and `nextCursor: null`.
+  prints one envelope with every item and the last page's `meta` (such as an account's `currency` and `state`), its
+  `count` and `limit` replaced by `count`, `pages` and `nextCursor: null`.
 - Errors and hints go to **stderr** only; the table output prints an error's `details.reason` (an indicator's or the
   EA's) on the line below its message. With `--json`, an error is `{ "error": { "code", "message", "details" } }` on
   stderr: the app's [error code](rest-api.md#error-codes), or the CLI's own `usage`, `ambiguous-market`,
