@@ -936,7 +936,8 @@ HTTP/1.1 409 Conflict
 | `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `invalid-distance`, `unsatisfiable-distance`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |
 | `body-too-large`, `unsupported-media-type` | 413, 415 | Send JSON bodies of at most 16 KiB. |
-| `quote-unavailable`, `feed-required`, `unavailable-source`, `read-failed`, `account-unavailable`, `journal-unavailable`, `trading-unavailable`, `trading-stopped` | 503 | The source, journal or engine is unavailable now. |
+| `quote-unavailable`, `feed-required`, `unavailable-source`, `account-unavailable`, `journal-unavailable`, `trading-unavailable`, `trading-stopped` | 503 | The source, journal or engine is unavailable now. |
+| `read-failed` | 503 | The terminal refused an account or conditions read (an unknown symbol, say); `details.reason` gives the EA's reason. |
 | `read-timeout` | 504 | The terminal did not answer within five seconds. Not an order failure. |
 | `internal-error` | 500 | Check the app's logs. |
 

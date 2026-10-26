@@ -386,7 +386,7 @@ export class RestV1 {
     if (market.brokerServer !== account.brokerServer) {
       throw new ApiError(409, "cross-broker-market", "This market is on another broker server than the account. Use the account's own broker server's market.", { accountBrokerServer: account.brokerServer, marketBrokerServer: market.brokerServer });
     }
-    const snapshot = await accountRead(() => this.options.bridge.accounts.conditions(account.id, market));
+    const snapshot = await accountRead(() => this.options.bridge.accounts.conditions(account.id, market), "this market's conditions");
     const k = snapshot.conditions;
     const quote = this.times(market.brokerServer, k.quoteTime);
     return {
@@ -934,8 +934,11 @@ function canonical<T extends string | null>(value: T): T {
   return (trimmed === "-0" ? "0" : trimmed) as T;
 }
 
-/** An account or conditions read; its failures (no source, timeout, a changed account) answer with their code. */
-async function accountRead<T>(read: () => Promise<T>): Promise<T> {
+/**
+ * An account or conditions read (`what` it reads, for a refusal); its failures (no source, timeout, a changed account,
+ * the EA's refusal with its reason) answer with their code.
+ */
+async function accountRead<T>(read: () => Promise<T>, what = "its account"): Promise<T> {
   try {
     return await read();
   } catch (e) {
@@ -945,12 +948,12 @@ async function accountRead<T>(read: () => Promise<T>): Promise<T> {
       "read-timeout": "The account's terminal did not answer within five seconds.",
       "account-changed": "The terminal's account changed while it was answering. Ask again.",
       "invalid-response": "The terminal's answer was not valid.",
-      "read-failed": "The terminal could not read its account.",
+      "read-failed": `The terminal could not read ${what}.`,
       "executor-unavailable": "The account's trading chart is not available.",
       "cross-broker-market": "This market is on another broker server than the account.",
     };
     // One stable status per code: the request engine answers executor-unavailable with 409 too.
-    throw new ApiError(e.code === "executor-unavailable" ? 409 : e.status, e.code, messages[e.code]);
+    throw new ApiError(e.code === "executor-unavailable" ? 409 : e.status, e.code, messages[e.code], e.reason === undefined ? undefined : { reason: e.reason });
   }
 }
 

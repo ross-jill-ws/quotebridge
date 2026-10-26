@@ -132,7 +132,8 @@ initiative.
 
 - Tables for people. `--json` prints the API's envelope exactly: `{ "data": …, "meta": … }`. `--all` on a collection
   prints one envelope with every item and `meta: { count, pages, nextCursor: null }`.
-- Errors and hints go to **stderr** only. With `--json`, an error is `{ "error": { "code", "message", "details" } }` on
+- Errors and hints go to **stderr** only; the table output prints an error's `details.reason` (an indicator's or the
+  EA's) on the line below its message. With `--json`, an error is `{ "error": { "code", "message", "details" } }` on
   stderr: the app's [error code](rest-api.md#error-codes), or the CLI's own `usage`, `ambiguous-market`,
   `ambiguous-account`, `unknown-market`, `unknown-account`, `output-exists`, `not-signed-in`, `invalid-key` (not a
   `qbk_` key, exit 3), `unreachable`, `redirect` (the server redirects elsewhere) or `cli-error` (anything else, such

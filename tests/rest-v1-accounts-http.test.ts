@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { accountId, marketId } from "../src/server/identity/index.js";
-import { LOGIN, OTHER_LOGIN, orderRow } from "./account-fixtures.js";
+import { deliver, LOGIN, OTHER_LOGIN, orderRow } from "./account-fixtures.js";
 import { DEMO, HOUR, NOW, OTHER_TERMINAL, REAL, startRest, tempFolder, TERMINAL, type Json } from "./rest-fixtures.js";
 
 const ACCOUNT = accountId(DEMO, LOGIN);
@@ -164,6 +164,23 @@ test("conditions are read from the account's source; a market on another broker 
   const cross = await app.read(`/api/v1/accounts/${ACCOUNT}/markets/${marketId(REAL, "EURUSD")}/conditions`, {}, 409);
   assert.equal(cross.error.code, "cross-broker-market");
   assert.equal((await app.read(`/api/v1/accounts/${ACCOUNT}/markets/${marketId(DEMO, "USDJPY")}/conditions`, {}, 404)).error.code, "unknown-market");
+});
+
+test("a read the EA cannot answer says which read failed and gives the EA's reason", { timeout: 20000 }, async (t) => {
+  const app = await startRest(t, await tempFolder(t, "rest-db"));
+  const ea = await app.connect();
+  await app.announce(ea);
+  const refuse = async () => {
+    let wire = await ea.receive();
+    while (wire.startsWith("G|")) wire = await ea.receive();
+    await deliver(app.server.bridge, ea, `E|1|${ea.session}|${wire.split("|")[3]}|${LOGIN}|Unknown symbol`);
+  };
+  const conditions = app.read(`/api/v1/accounts/${ACCOUNT}/markets/${EURUSD}/conditions`, {}, 503);
+  await refuse();
+  assert.deepEqual((await conditions).error, { code: "read-failed", message: "The terminal could not read this market's conditions.", details: { reason: "Unknown symbol" } });
+  const funds = app.read(`/api/v1/accounts/${ACCOUNT}/funds`, {}, 503);
+  await refuse();
+  assert.deepEqual((await funds).error, { code: "read-failed", message: "The terminal could not read its account.", details: { reason: "Unknown symbol" } });
 });
 
 test("after a restart a known account is offline with null Funds, never zero; a silent source times out with 504", { timeout: 30000 }, async (t) => {

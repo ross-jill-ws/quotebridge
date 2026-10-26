@@ -8,7 +8,7 @@ export const ACCOUNT_READ_MS = 5000;
 const MAX_READS = 1000;
 
 export class AccountReadError extends Error {
-  constructor(readonly code: "unavailable-source" | "read-timeout" | "account-changed" | "invalid-response" | "read-failed" | "executor-unavailable" | "cross-broker-market", readonly status: number) {
+  constructor(readonly code: "unavailable-source" | "read-timeout" | "account-changed" | "invalid-response" | "read-failed" | "executor-unavailable" | "cross-broker-market", readonly status: number, readonly reason?: string) {
     super(code);
   }
 }
@@ -72,7 +72,7 @@ export class AccountState {
       this.fail(pending, "account-changed", 409);
       throw new AccountReadError("account-changed", 409);
     }
-    if (message.type === "read-error") { this.fail(pending, "read-failed", 503); return; }
+    if (message.type === "read-error") { this.fail(pending, "read-failed", 503, message.message); return; }
     try {
       if (pending.kind === "conditions" && message.type === "conditions") {
         if (message.symbol !== pending.market!.symbol) throw new AccountReadError("invalid-response", 409);
@@ -250,9 +250,9 @@ export class AccountState {
   private finish(p: Pending, value: AccountSnapshot | ConditionSnapshot) {
     this.pending.delete(p.request); clearTimeout(p.timer); p.resolve(structuredClone(value));
   }
-  private fail(p: Pending, code: AccountReadError["code"], status: number) {
+  private fail(p: Pending, code: AccountReadError["code"], status: number, reason?: string) {
     if (!this.pending.delete(p.request)) return;
-    clearTimeout(p.timer); p.pages.clear(); p.reject(new AccountReadError(code, status));
+    clearTimeout(p.timer); p.pages.clear(); p.reject(new AccountReadError(code, status, reason));
   }
   close() { for (const p of this.pending.values()) this.fail(p, "unavailable-source", 503); }
 }
