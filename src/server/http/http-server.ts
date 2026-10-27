@@ -22,8 +22,9 @@ import { SettingsRequestError, type AppSettings } from "../settings/index.js";
 import { TerminalRequestError, type TerminalManager } from "../terminals/index.js";
 import { LiveSnapshots } from "./live.js";
 import { json, write } from "./respond.js";
-import { apiError, info, RestV1, type RestCredential } from "./rest-v1.js";
+import { apiError, info, RestV1, type RestAccess, type RestCredential } from "./rest-v1.js";
 import type { RequestEngine } from "../trading/index.js";
+import type { Screenshots } from "../screenshots/index.js";
 import { sessionCookie, type SessionKind, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
@@ -53,6 +54,8 @@ export type HttpServerOptions = {
   indicators?: { packages: IndicatorPackages; values: IndicatorValues };
   /** The shared trading request engine, when the server has a durable database. */
   trading?: () => RequestEngine<RestCredential> | undefined;
+  /** Screenshots of the app window, taken by main. */
+  screenshots?: Screenshots;
 };
 
 /** The most values one chart request asks for: a run's bars, less the most warm-up a package may declare. */
@@ -112,6 +115,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     indicators: options.indicators,
     terminalName: (terminalId) => options.terminals?.()?.name(terminalId),
     trading: options.trading,
+    screenshots: options.screenshots,
   });
   server.on("upgrade", (req, socket: Socket, head: Buffer) => {
     if (req.headers.host !== host || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
@@ -171,7 +175,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       const apiKey = authorization.slice(scheme.length).trim();
       const check = options.apiKeys?.check(apiKey, writes) ?? { ok: false, status: 401, error: "This app keeps no API keys." };
       if (!check.ok) return refuse(check.status, check.status === 401 ? "unauthenticated" : "insufficient-scope", check.error);
-      return handleApi(url, req, res, check.key, { apiKey });
+      return handleApi(url, req, res, check.key, { apiKey }, check.key.scope);
     }
 
     const session = sessions.kind(req.headers, cookie);
@@ -182,7 +186,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return refuse(403, "forbidden-origin", "Forbidden origin");
 
-    if (api) return handleApi(url, req, res, null, { headers: req.headers });
+    if (api) return handleApi(url, req, res, null, { headers: req.headers }, session);
     if (session !== "window" && req.method !== "GET" && req.method !== "HEAD" &&
       (["/api/settings", "/api/setup", "/api/clock-rules", "/api/recordings/delete", "/api/markets/recording", "/api/history/save", "/api/feeds/remove"].includes(url.pathname) || url.pathname.startsWith("/api/terminals/"))) {
       return json(res, 403, { error: "Only the app window can change administrative settings, recordings or terminal setup." });
@@ -225,8 +229,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   }
 
   /** The REST API, past the key or window session check: GET /api/auth/session tells the CLI whose key it holds. */
-  function handleApi(url: URL, req: IncomingMessage, res: ServerResponse, key: ApiKeyView | null, credential: RestCredential) {
-    if (url.pathname !== "/api/auth/session") return rest.handle(url, req, res, credential);
+  function handleApi(url: URL, req: IncomingMessage, res: ServerResponse, key: ApiKeyView | null, credential: RestCredential, access: RestAccess) {
+    if (url.pathname !== "/api/auth/session") return rest.handle(url, req, res, credential, access);
     if (!key) return json(res, 401, { error: SEND_A_KEY });
     json(res, 200, { username: windowsUser(), key: { name: key.name, prefix: key.prefix, scope: key.scope }, expires: null });
   }

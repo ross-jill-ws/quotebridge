@@ -1,10 +1,11 @@
 // The server side of the server host protocol (ADR 10): runs the bridge server and the database
 // on the host's `start`, and takes them down through the one stop path on `stop`.
 import type { HostTransport } from "../shared/host-transport.js";
-import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type TerminalAttentionStatus } from "../shared/server-host-protocol.js";
+import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ScreenshotView, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type TerminalAttentionStatus, type WindowCapture } from "../shared/server-host-protocol.js";
 import { SettingsStore } from "../shared/settings-store.js";
 import type { BridgeSnapshot } from "./bridge/index.js";
 import { openDatabase, type AppDatabase } from "./database.js";
+import { ScreenshotError } from "./screenshots/index.js";
 import { startServer, type RunningServer } from "./server.js";
 import type { TerminalManagerOptions } from "./terminals/index.js";
 
@@ -31,6 +32,23 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   /** Serialises start and stop so a stop that arrives mid-start waits for it. */
   let work: Promise<void> = Promise.resolve();
   const send = (message: ServerMessage) => transport.send(message);
+  /** `capture-window` requests awaiting main's answer, by the server's own request id. */
+  const captures = new Map<number, { resolve: (capture: WindowCapture) => void; reject: (error: Error) => void }>();
+  let nextCaptureId = 1;
+  /** Main captures the app window; a dev run in a browser tab has none. */
+  const captureWindow = options.openDashboard
+    ? undefined
+    : (view: ScreenshotView) =>
+        new Promise<WindowCapture>((resolve, reject) => {
+          const requestId = nextCaptureId++;
+          captures.set(requestId, { resolve, reject });
+          send({ type: "capture-window", view, requestId });
+        });
+  const settleCapture = (requestId: unknown) => {
+    const capture = typeof requestId === "number" ? captures.get(requestId) : undefined;
+    if (capture) captures.delete(requestId as number);
+    return capture;
+  };
 
   /** Leaves the phase alone when a stop arrived meanwhile; that stop runs next. */
   const settle = (next: "idle" | "running") => {
@@ -65,6 +83,7 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
         ...(terminals ? { terminals } : {}),
         // The Settings view saves here too; main applies what was saved (Start with Windows, theme, new ports).
         settings: { store: settings, onSaved: (saved) => send({ type: "settings", settings: saved }) },
+        captureWindow,
       });
       running = { server, database, settings, stopStatus: () => {}, stopHook: options.onRunning?.(server, config) ?? (() => {}) };
       settle("running");
@@ -88,6 +107,8 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   async function stop() {
     phase = "stopping";
     let checkpoint = false;
+    for (const capture of captures.values()) capture.reject(new ScreenshotError("window-unavailable", "The QuoteBridge server is stopping."));
+    captures.clear();
     if (running) {
       const { server, database, stopStatus, stopHook } = running;
       running = undefined;
@@ -184,6 +205,11 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
             ),
         );
       }
+      // An answer to a request that timed out or was never sent is dropped.
+      case "window-captured":
+        return settleCapture(message.requestId)?.resolve(message.capture);
+      case "window-capture-failed":
+        return settleCapture(message.requestId)?.reject(ScreenshotError.from(message.error));
       case "stop":
         if (phase === "stopping" || phase === "stopped") return;
         phase = "stopping";

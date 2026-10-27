@@ -15,6 +15,7 @@ import { TradingView } from "./trading/trading-view.js";
 import { useTerminals } from "./terminals/use-terminals.js";
 import { applyTheme } from "./theme.js";
 import { useLive, type Live } from "./use-live.js";
+import { useScreenshots } from "./screenshot.js";
 
 const ICONS = {
   feeds: (
@@ -99,6 +100,7 @@ export function App() {
   useEffect(() => {
     if (firstRun) setSetupOpen(true);
   }, [firstRun]);
+  useScreenshots(live, setupOpen);
   const finishSetup = () => {
     setSetupOpen(false);
     location.hash = "#/terminals";

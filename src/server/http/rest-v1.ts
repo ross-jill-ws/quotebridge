@@ -19,6 +19,10 @@ import type { IndicatorPackage, IndicatorPackages, IndicatorValues } from "../in
 import type { Recorder } from "../recording/index.js";
 import type { TradeResult } from "../bridge/account-protocol.js";
 import { TradingError, tradingMessage, type JournalRecord, type RequestEngine, type TradeInput, type TradingPreview } from "../trading/index.js";
+import { ScreenshotError, type Screenshots } from "../screenshots/index.js";
+import type { CaptureErrorCode, ScreenshotView } from "../../shared/server-host-protocol.js";
+import type { ApiKeyScope } from "../auth/index.js";
+import type { SessionKind } from "./window-session.js";
 import { json, write } from "./respond.js";
 
 /** The REST API version; the CLI checks it at /api/v1/info. */
@@ -33,6 +37,9 @@ const PAGE = { default: 100, max: 500 };
 /** Who is asking, for the request engine: an API key, or the app window's (or a remote browser's) session headers. */
 export type RestCredential = { apiKey: string } | { headers: IncomingMessage["headers"] };
 
+/** What the caller may do: an API key's scope, or the kind of window session. */
+export type RestAccess = ApiKeyScope | SessionKind;
+
 export type RestV1Options = {
   bridge: BridgeServer;
   catalog: HistoryCatalog;
@@ -46,6 +53,8 @@ export type RestV1Options = {
   terminalName: (terminalId: string) => string | undefined;
   /** The shared request engine; absent without a durable database. */
   trading?: () => RequestEngine<RestCredential> | undefined;
+  /** Screenshots of the app window, taken by main. */
+  screenshots?: Screenshots;
 };
 
 /** An answer the client can act on: `status` is the HTTP status, `code` stable, `details` e.g. candidates. */
@@ -65,7 +74,7 @@ export function apiError(res: ServerResponse, status: number, code: string, mess
   json(res, status, { error: { code, message, details } });
 }
 
-type Context = { query: URLSearchParams; req: IncomingMessage; res: ServerResponse; credential: RestCredential; params: string[] };
+type Context = { query: URLSearchParams; req: IncomingMessage; res: ServerResponse; credential: RestCredential; access: RestAccess; params: string[] };
 type Answer = { data: unknown; meta?: Record<string, unknown>; status?: number } | "sent";
 type Route = { method: "GET" | "POST"; pattern: RegExp; run: (c: Context) => Promise<Answer> };
 
@@ -108,11 +117,12 @@ export class RestV1 {
       get(/^\/requests\/(?!preview$)([^/]+)$/, (c) => this.request(c)),
       get(/^\/indicators$/, (c) => this.indicatorList(c)),
       get(/^\/indicators\/([^/]+)$/, (c) => this.indicator(c)),
+      get(/^\/screenshots\/feeds$/, (c) => this.screenshot(c, "feeds")),
     ];
   }
 
   /** Answers a request under /api/v1 (but /api/v1/info, which is public), past the key or window session check. */
-  async handle(url: URL, req: IncomingMessage, res: ServerResponse, credential: RestCredential): Promise<void> {
+  async handle(url: URL, req: IncomingMessage, res: ServerResponse, credential: RestCredential, access: RestAccess): Promise<void> {
     const path = url.pathname.slice("/api/v1".length);
     const method = req.method === "HEAD" ? "GET" : req.method;
     try {
@@ -122,7 +132,7 @@ export class RestV1 {
       if (!found) throw new ApiError(405, "method-not-allowed", `${req.method} is not allowed here; use ${[...new Set(matching.map((r) => r.route.method))].join(" or ")}.`);
       // An optional segment left out stays undefined.
       const params = found.match!.slice(1).map((p) => (p === undefined ? (undefined as never) : segment(p)));
-      const answer = await found.route.run({ query: url.searchParams, req, res, credential, params });
+      const answer = await found.route.run({ query: url.searchParams, req, res, credential, access, params });
       if (answer === "sent") return;
       json(res, answer.status ?? 200, { data: answer.data, meta: answer.meta ?? {} });
     } catch (e) {
@@ -314,6 +324,48 @@ export class RestV1 {
       if (bars.length) await write(res, format === "csv" ? csvRows(bars, digits, clockRule) : hstRecordBytes(bars));
     }
     res.end();
+    return "sent";
+  }
+
+  /**
+   * GET /screenshots/feeds: the app window switched to the view and captured (main does it over the host protocol),
+   * as JSON with base64, or the raw PNG with `format=png` and the health fields in headers. It changes the window, so
+   * a `trader` key (or the app window) only.
+   */
+  private async screenshot(c: Context, view: ScreenshotView): Promise<Answer> {
+    if (c.access !== "trader" && c.access !== "window") {
+      throw new ApiError(403, "insufficient-scope", "A screenshot switches the app window's view: use a key with the trader scope.");
+    }
+    only(c.query, ["format"]);
+    const format = c.query.get("format") ?? "json";
+    if (format !== "json" && format !== "png") throw new ApiError(400, "invalid-format", "format must be json or png.", { parameter: "format", allowed: ["json", "png"] });
+    const screenshots = this.options.screenshots;
+    if (!screenshots) throw new ApiError(503, "window-unavailable", "There is no app window to capture.");
+    let capture;
+    try {
+      capture = await screenshots.take(view);
+    } catch (e) {
+      if (e instanceof ScreenshotError) throw new ApiError(SCREENSHOT_STATUS[e.code], e.code, e.message);
+      throw e;
+    }
+    const { png, capturedAt, ...health } = capture;
+    const fields = { ...health, capturedAt: iso(capturedAt), contentType: "image/png" };
+    if (format === "json") return { data: { ...fields, png } };
+    const bytes = Buffer.from(png, "base64");
+    c.res
+      .writeHead(200, {
+        "content-type": "image/png",
+        "content-length": bytes.length,
+        "cache-control": "no-store",
+        "x-quotebridge-view": fields.view,
+        "x-quotebridge-window": fields.window,
+        "x-quotebridge-width": fields.width,
+        "x-quotebridge-height": fields.height,
+        "x-quotebridge-scale": fields.scale,
+        "x-quotebridge-live": fields.live,
+        "x-quotebridge-captured-at": fields.capturedAt,
+      })
+      .end(bytes);
     return "sent";
   }
 
@@ -857,6 +909,8 @@ export function info() {
 }
 
 /** UTC milliseconds as ISO-8601, null as null. */
+const SCREENSHOT_STATUS: Record<CaptureErrorCode, number> = { "window-busy": 409, "window-unavailable": 503, "screenshot-timeout": 504 };
+
 const iso = <T extends number | null>(ms: T): T extends number ? string : string | null => (ms === null ? null : new Date(ms).toISOString()) as never;
 
 /** Broker seconds as ISO-8601 without an offset: the broker server's wall clock. */

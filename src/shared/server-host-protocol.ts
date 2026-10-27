@@ -29,6 +29,41 @@ export type ServerStartConfig = {
   bridgeBundle?: { sourceFolder: string; dllFolder: string };
 };
 
+/** The view a screenshot shows; the window is switched to it and left there. */
+export type ScreenshotView = "feeds";
+
+/** The app window as the user left it; a capture leaves it so. */
+export type WindowState = "visible" | "hidden" | "minimised";
+
+/** The page's live link to the server, as the rail's bridge status shows it. */
+export type LiveLinkState = "connecting" | "live" | "reconnecting" | "session-ended";
+
+/** A screenshot of the app window, taken by main. */
+export type WindowCapture = {
+  view: ScreenshotView;
+  window: WindowState;
+  /** The PNG's size in physical pixels, at the window's display scale. */
+  width: number;
+  height: number;
+  scale: number;
+  live: LiveLinkState;
+  /** Epoch milliseconds. */
+  capturedAt: number;
+  /** Base64. */
+  png: string;
+};
+
+export type CaptureErrorCode =
+  /** A dialog is open in the window; nothing was switched or taken. */
+  | "window-busy"
+  /** No window to capture: main still starting, the renderer being recreated, or no app window at all. */
+  | "window-unavailable"
+  /** The capture took longer than its deadline. */
+  | "screenshot-timeout";
+
+/** Why a capture failed, in plain words. */
+export type CaptureError = { code: CaptureErrorCode; message: string };
+
 /** Host → server. */
 export type HostMessage =
   | { type: "start"; config: ServerStartConfig }
@@ -41,6 +76,9 @@ export type HostMessage =
   | { type: "issue-window-token"; token: string; requestId: number }
   /** Main's setting changes (Start with Windows, first-close notification shown); answered with `settings`. Needs a started server. */
   | { type: "update-settings"; change: HostSettingsChange }
+  /** Answers the server's `capture-window` with the same `requestId`. */
+  | { type: "window-captured"; requestId: number; capture: WindowCapture }
+  | { type: "window-capture-failed"; requestId: number; error: CaptureError }
   | { type: "stop" };
 
 export type ServerErrorCode =
@@ -85,6 +123,11 @@ export type ServerMessage =
   | { type: "window-token-issued"; requestId: number }
   /** The settings after the server saved a change (main applies Start with Windows from here). */
   | { type: "settings"; settings: Settings }
+  /**
+   * A screenshot asked through the REST API: main switches the app window to `view`, captures it and answers with
+   * `window-captured` or `window-capture-failed` carrying the same `requestId` (the server's own numbering).
+   */
+  | { type: "capture-window"; view: ScreenshotView; requestId: number }
   /** `during: "start"` means the start failed and nothing is left bound or open; the host may send `start` again. */
   | {
       type: "error";

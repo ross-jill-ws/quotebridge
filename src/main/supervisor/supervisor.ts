@@ -4,7 +4,7 @@
 // It talks to the server only through the server host protocol; processes and time come in as ports.
 import { randomBytes } from "node:crypto";
 import type { HostTransport } from "../../shared/host-transport.js";
-import type { HostMessage, HostSettingsChange, ServerError, ServerMessage, ServerStartConfig, ServerStatus } from "../../shared/server-host-protocol.js";
+import type { CaptureError, CaptureErrorCode, HostMessage, HostSettingsChange, ScreenshotView, ServerError, ServerMessage, ServerStartConfig, ServerStatus, WindowCapture } from "../../shared/server-host-protocol.js";
 import type { Settings } from "../../shared/settings-store.js";
 
 /** One launched server process (an Electron utility process in the app). */
@@ -122,6 +122,11 @@ export type SupervisorOptions = {
   clock?: SupervisorClock;
   createToken?: () => string;
   thresholds?: Partial<SupervisorThresholds>;
+  /**
+   * Switches the app window to `view` and captures it, for the server's `capture-window`. Rejects with an error whose
+   * `code` is a CaptureErrorCode when it refuses; any other failure answers `window-unavailable`.
+   */
+  captureWindow?: (view: ScreenshotView) => Promise<WindowCapture>;
 };
 
 /** A 256-bit random one-time window token (ADR 5). */
@@ -132,6 +137,8 @@ export function createWindowToken() {
 export function windowUrl(httpOrigin: string, token: string) {
   return `${httpOrigin}/session?token=${encodeURIComponent(token)}`;
 }
+
+const CAPTURE_ERROR_CODES = ["window-busy", "window-unavailable", "screenshot-timeout"] as const satisfies readonly CaptureErrorCode[];
 
 type Current = { process: ServerProcess; unsubscribe: () => void };
 
@@ -371,6 +378,8 @@ export class Supervisor {
       case "settings":
         this.emit({ type: "settings", settings: message.settings });
         return;
+      case "capture-window":
+        return this.captureWindow(message.view, message.requestId);
       case "status":
         this.status_.serverStatus = message.status;
         this.emit({ type: "server-status", status: message.status });
@@ -383,6 +392,25 @@ export class Supervisor {
         else this.fail(message.error, { kill: true });
         return;
     }
+  }
+
+  /** Answers the server that asked, if it is still the current one. */
+  private captureWindow(view: ScreenshotView, requestId: number) {
+    const current = this.current;
+    const answer = (message: HostMessage) => {
+      if (this.current === current) current?.process.transport.send(message);
+    };
+    const fail = (error: CaptureError) => answer({ type: "window-capture-failed", requestId, error });
+    if (!this.options.captureWindow) return fail({ code: "window-unavailable", message: "The app window is still starting." });
+    this.options.captureWindow(view).then(
+      (capture) => answer({ type: "window-captured", requestId, capture }),
+      (e: { code?: unknown; message?: unknown }) =>
+        fail(
+          typeof e?.code === "string" && (CAPTURE_ERROR_CODES as readonly string[]).includes(e.code)
+            ? { code: e.code as CaptureErrorCode, message: String(e.message) }
+            : { code: "window-unavailable", message: `The app window could not be captured: ${String(e?.message ?? e)}` },
+        ),
+    );
   }
 
   private settleTokenRequest(requestId: number) {

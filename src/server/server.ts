@@ -14,6 +14,7 @@ import { Recorder } from "./recording/index.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
 import { TerminalManager, type TerminalManagerOptions } from "./terminals/index.js";
 import { RequestEngine } from "./trading/engine.js";
+import { Screenshots, type CaptureWindow } from "./screenshots/index.js";
 
 export type ServerConfig = {
   /** ZeroMQ port QuoteBridge EAs connect to (default setting 5555). */
@@ -45,6 +46,10 @@ export type ServerConfig = {
   extraIndicatorPackages?: string;
   /** Catalog boundary for standalone/test hosts; the desktop app uses its detected terminal manager. */
   resolveTerminal?: BridgeServerOptions["resolveTerminal"];
+  /** Asks main to capture the app window (the host protocol); omitted, screenshots answer window-unavailable. */
+  captureWindow?: CaptureWindow;
+  /** A screenshot's deadline (default 10 s); for tests. */
+  screenshotDeadlineMs?: number;
 };
 
 export type TradingCredential = { apiKey: string } | { headers: IncomingHttpHeaders };
@@ -207,7 +212,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     startupCleanup.shift();
     startupCleanup.push(() => bridge.close());
     await bridge.start(`tcp://127.0.0.1:${config.eaPort}`);
-    const http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues }, trading: () => trading });
+    const http = await startHttpServer({ port: config.httpPort, bridge, candles, history, catalog, saver, clockRules: rules, recorder, apiKeys, sessions, dashboardFolder: config.dashboardFolder, terminals: () => terminals, settings, indicators: { packages, values: indicatorValues }, trading: () => trading, screenshots: new Screenshots(config.captureWindow, config.screenshotDeadlineMs) });
     startupCleanup.push(() => http.close());
     // Only after both ports are bound and journal recovery completed: no install/detection on a failed bind.
     terminals = config.terminals ? new TerminalManager(config.terminals, {

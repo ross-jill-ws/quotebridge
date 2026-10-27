@@ -15,8 +15,9 @@ running server. `<any>` stands for any value; `<$name>` for a value kept as `{na
 
 - Create a key in the **app window › Settings › API keys** with scope `readonly` or `trader`. The app shows the key
   once. Send it as `Authorization: Bearer qbk_…`.
-- `readonly` reads everything below. `trader` reads too, and may preview, execute and review trading requests.
-  A `readonly` key on anything but `GET` or `HEAD` answers `403 insufficient-scope`.
+- `readonly` reads everything below but [screenshots](#screenshots). `trader` reads too, takes screenshots, and may
+  preview, execute and review trading requests. A `readonly` key on anything but `GET` or `HEAD`, or on a screenshot,
+  answers `403 insufficient-scope`.
 - A missing, unknown or revoked key answers `401 unauthenticated`. The key and its current scope are checked on
   every request, including a repeated execute.
 - No key administers the app. Installation and setup, API keys, network settings, recording and trading enablement,
@@ -70,9 +71,9 @@ share a time. Candles and indicator values are time-paged: the newest `limit` ba
 `meta.next.to` is the `to` of the page before, null once `from` or the oldest bar is reached.
 
 **Status codes.** `400` malformed request, `401` unauthenticated, `403` forbidden (scope, demo-only, trading off),
-`404` unknown resource or route, `405` wrong method, `409` ambiguity, conflict or an expired or invalidated preview,
-`413`/`415` body too large or not JSON, `422` invalid trading or indicator values, `503` source unavailable,
-`504` the terminal did not answer within five seconds.
+`404` unknown resource or route, `405` wrong method, `409` ambiguity, conflict, an expired or invalidated preview, or a busy app window,
+`413`/`415` body too large or not JSON, `422` invalid trading or indicator values, `503` source or app window unavailable,
+`504` the terminal did not answer within five seconds, or a screenshot took more than ten.
 
 ## Markets
 
@@ -916,6 +917,58 @@ HTTP/1.1 409 Conflict
 { "error": { "code": "request-not-unknown", "message": "Only a request whose outcome is unknown can be reviewed.", "details": null } }
 ```
 
+## Screenshots
+
+`GET /screenshots/feeds` shows that the app is running normally: it switches **your own app window** to the Feeds
+view, captures it and answers the image with the window's health. The window is left on Feeds. It is captured
+whether it is shown, minimised or hidden in the tray, without being shown or focused, and is left that way. It needs
+a `trader` key, because it changes the window; a `readonly` key answers `403 insufficient-scope`.
+
+| Field | Value |
+| --- | --- |
+| `view` | `feeds` |
+| `window` | How the window was: `visible`, `minimised` or `hidden` (in the tray). |
+| `width`, `height`, `scale` | The image's size in the window's own physical pixels, at its display's scale. |
+| `live` | The page's link to the app: `live`, `connecting`, `reconnecting` or `session-ended`. |
+| `capturedAt` | When the image was taken. |
+| `contentType`, `png` | `image/png`, and the image in base64. |
+
+```http
+GET /api/v1/screenshots/feeds
+Authorization: Bearer <trader key>
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "data": { "view": "feeds", "window": "hidden", "width": 1800, "height": 1200, "scale": 1.5, "live": "live", "capturedAt": "2027-01-15T08:00:00.000Z", "contentType": "image/png", "png": "<any>" },
+  "meta": {}
+}
+```
+
+With `?format=png` the answer is the image itself (`Content-Type: image/png`) and the fields are headers:
+`X-QuoteBridge-View`, `-Window`, `-Width`, `-Height`, `-Scale`, `-Live` and `-Captured-At`.
+
+One screenshot is taken at a time; others wait their turn. Each has ten seconds.
+
+| Refusal | When |
+| --- | --- |
+| `409 window-busy` | A dialog is open in the window (an order, close, modify or review dialog, or the setup screen). The message names it. Nothing is switched and no image is taken. |
+| `503 window-unavailable` | There is no window to capture: the app is still starting, the window is being recreated after a crash, or the server runs without the app (a development run in a browser tab). |
+| `504 screenshot-timeout` | The window was not captured within ten seconds. A hidden window is hidden again. |
+
+```http
+GET /api/v1/screenshots/feeds
+Authorization: Bearer <readonly key>
+```
+
+```http
+HTTP/1.1 403 Forbidden
+
+{ "error": { "code": "insufficient-scope", "message": "A screenshot switches the app window's view: use a key with the trader scope.", "details": null } }
+```
+
 ## Error codes
 
 | Code | Status | Meaning |
@@ -932,13 +985,16 @@ HTTP/1.1 409 Conflict
 | `preview-unavailable`, `preview-expired`, `preview-invalidated`, `settings-changed`, `executor-changed`, `identity-changed`, `limits-changed`, `target-changed`, `price-changed`, `estimates-changed`, `expiry-conversion-changed`, `stale-snapshot`, `stale-quote` | 409 | The preview no longer holds: preview again. |
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
 | `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart, or is a real account (`executor-real-account`), which never trades. |
+| `window-busy` | 409 | A dialog is open in the app window; no screenshot was taken. |
 | `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |
 | `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `invalid-distance`, `unsatisfiable-distance`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |
 | `body-too-large`, `unsupported-media-type` | 413, 415 | Send JSON bodies of at most 16 KiB. |
 | `quote-unavailable`, `feed-required`, `unavailable-source`, `account-unavailable`, `journal-unavailable`, `trading-unavailable`, `trading-stopped` | 503 | The source, journal or engine is unavailable now. |
+| `window-unavailable` | 503 | There is no app window to capture now. |
 | `read-failed` | 503 | The terminal refused an account or conditions read, such as for an unknown symbol; `details.reason` gives the EA's reason. |
 | `read-timeout` | 504 | The terminal did not answer within five seconds. Not an order failure. |
+| `screenshot-timeout` | 504 | The app window was not captured within ten seconds. |
 | `internal-error` | 500 | Check the app's logs. |
 
 ## Chart history

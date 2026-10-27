@@ -468,3 +468,62 @@ test("update-settings is refused before start, and for settings main does not ow
   }
   assert.equal(existsSync(join(config.dataFolder, "settings.json")), false);
 });
+
+/** A trader key made in the app window, for REST calls as the CLI makes them. */
+async function traderKey(origin: string) {
+  const cookie = (await openWindow(origin, TOKEN)).cookie!.split(";")[0];
+  const res = await fetch(`${origin}/api/api-keys`, { method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: JSON.stringify({ name: "Trader", scope: "trader" }) });
+  return ((await res.json()) as { key: string }).key;
+}
+
+const screenshot = (origin: string, key: string) => fetch(`${origin}/api/v1/screenshots/feeds`, { headers: { authorization: `Bearer ${key}` } }).then(async (res) => ({ status: res.status, body: (await res.json()) as any }));
+
+test("capture-window: a REST screenshot asks main for the window and answers what main captured or why it could not", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t);
+  host.send({ type: "start", config });
+  const { httpOrigin } = await host.next("ready");
+  const key = await traderKey(httpOrigin);
+
+  const first = screenshot(httpOrigin, key);
+  const asked = await host.next("capture-window");
+  assert.equal(asked.view, "feeds");
+  host.send({ type: "window-captured", requestId: asked.requestId, capture: { view: "feeds", window: "minimised", width: 800, height: 600, scale: 1, live: "live", capturedAt: Date.UTC(2027, 0, 15), png: "AAEC" } });
+  const answer = await first;
+  assert.equal(answer.status, 200);
+  assert.deepEqual(answer.body.data, { view: "feeds", window: "minimised", width: 800, height: 600, scale: 1, live: "live", capturedAt: "2027-01-15T00:00:00.000Z", contentType: "image/png", png: "AAEC" });
+
+  const second = screenshot(httpOrigin, key);
+  const again = await host.next("capture-window");
+  assert.notEqual(again.requestId, asked.requestId, "each request has its own id");
+  host.send({ type: "window-captured", requestId: asked.requestId, capture: { view: "feeds", window: "visible", width: 1, height: 1, scale: 1, live: "live", capturedAt: 0, png: "" } });
+  host.send({ type: "window-capture-failed", requestId: again.requestId, error: { code: "window-busy", message: 'The app window has a dialog open ("Close position 12345").' } });
+  const busy = await second;
+  assert.equal(busy.status, 409, "an answer to an earlier request is ignored");
+  assert.deepEqual(busy.body.error, { code: "window-busy", message: 'The app window has a dialog open ("Close position 12345").', details: null });
+});
+
+test("a screenshot pending when the server stops is answered window-unavailable", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t);
+  host.send({ type: "start", config });
+  const { httpOrigin } = await host.next("ready");
+  const pending = screenshot(httpOrigin, await traderKey(httpOrigin));
+  await host.next("capture-window");
+  host.send({ type: "stop" });
+  const answer = await pending;
+  assert.equal(answer.status, 503);
+  assert.equal(answer.body.error.code, "window-unavailable");
+  await host.next("stopped", undefined, 10000);
+});
+
+test("a dev run in a browser tab has no app window: a screenshot answers window-unavailable without asking the host", { timeout: 30000 }, async (t) => {
+  const config = await startConfig(t);
+  const host = hostInProcess(t, { openDashboard: true });
+  host.send({ type: "start", config });
+  const { httpOrigin } = await host.next("ready");
+  const answer = await screenshot(httpOrigin, await traderKey(httpOrigin));
+  assert.equal(answer.status, 503);
+  assert.equal(answer.body.error.code, "window-unavailable");
+  await assert.rejects(host.next("capture-window", undefined, 200));
+});
