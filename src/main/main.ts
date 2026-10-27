@@ -146,7 +146,8 @@ async function boot() {
       if (!origin || !window.webContents.getURL().startsWith(origin)) return "The app window is still starting.";
       return null;
     },
-    state: () => (!window.isVisible() ? "hidden" : window.isMinimized() ? "minimised" : "visible"),
+    // Minimised first: Windows reports a minimised window as not visible.
+    state: () => (window.isMinimized() ? "minimised" : window.isVisible() ? "visible" : "hidden"),
     getOpacity: () => window.getOpacity(),
     setOpacity: (value) => window.setOpacity(value),
     showInactive: () => window.showInactive(),
