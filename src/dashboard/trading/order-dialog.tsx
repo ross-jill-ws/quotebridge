@@ -153,7 +153,8 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
     const built = requestBody(form);
     if ("error" in built) return setError(built.error);
     if (!account) return setError("Choose the account to trade on.");
-    if (block) return setError(block.text);
+    // The account's notice above already says why it cannot trade; repeating it as an error showed it twice.
+    if (block) return;
     setBusy(true);
     try {
       const answer = await post<Envelope<PreviewView>>("/api/v1/requests/preview", built.body);
