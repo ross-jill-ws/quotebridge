@@ -90,6 +90,48 @@ test("an HTTP port already in use is reported as port-in-use and releases the EA
   await server.close();
 });
 
+test("another program on the HTTP port's IPv6 loopback is port-in-use: localhost would reach it", { timeout: 10000 }, async (t) => {
+  const cfg = await config();
+  const holder = createServer();
+  const bound = await new Promise<boolean>((resolve) => {
+    holder.once("error", () => resolve(false));
+    holder.listen(cfg.httpPort, "::1", () => resolve(true));
+  });
+  if (!bound) return t.skip("no IPv6 loopback on this computer");
+  t.after(() => new Promise<void>((resolve) => holder.close(() => resolve())));
+
+  const error = await startServer(cfg).then(
+    () => assert.fail("started with ::1 taken"),
+    (e: unknown) => e,
+  );
+
+  assert.ok(error instanceof PortInUseError);
+  assert.equal(error.which, "http");
+  // Nothing stays bound on 127.0.0.1 either.
+  const server = await startServer({ ...cfg, httpPort: await freePort() });
+  await server.close();
+});
+
+test("the server answers as localhost and [::1] too, and pages opened under those names may change things", { timeout: 10000 }, async (t) => {
+  const { origin } = await start(t, { openDashboard: true });
+  const port = new URL(origin).port;
+
+  for (const name of ["localhost", "[::1]"]) {
+    const local = `http://${name}:${port}`;
+    assert.equal((await fetch(local + "/api/v1/info")).status, 200, name);
+    assert.equal((await fetch(local + "/api/state")).status, 200, name);
+    const { ws } = await openLive(local);
+    ws.close();
+    const change = (pageOrigin: string) =>
+      fetch(local + "/api/feeds/remove", { method: "POST", headers: { origin: pageOrigin, "content-type": "application/json" }, body: JSON.stringify({ feed: "x" }) });
+    assert.equal((await change(local)).status, 409, name); // past the origin check: an unknown feed
+    // A page of another loopback name, or of the same name on another port, is not this server's.
+    assert.equal((await change(origin)).status, 403, name);
+    assert.equal((await change(`http://${name}:1`)).status, 403, name);
+    await assert.rejects(openLive(local, { origin }), { status: 403 });
+  }
+});
+
 test("requests without a session are rejected: dashboard, state endpoint and live WebSocket", { timeout: 10000 }, async (t) => {
   const { origin } = await start(t);
 

@@ -94,7 +94,7 @@ export class AppSettings {
     for (const role of ["ea", "http"] as const) {
       // A port this server holds is free for it; any other must be free now.
       if (ports[role] === current[role] || ports[role] === this.portsInUse[role]) continue;
-      if (!(await isFree(ports[role]))) {
+      if (!(await isFree(ports[role], role === "http" ? ["127.0.0.1", "::1"] : ["127.0.0.1"]))) {
         throw new SettingsRequestError(400, `Port ${ports[role]} is in use by another program. Choose another ${PORT_NAMES[role]}.`);
       }
     }
@@ -107,11 +107,18 @@ export class AppSettings {
   }
 }
 
-/** Whether a TCP port on 127.0.0.1 (where the app binds both its ports) can be bound now. */
-function isFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = createServer();
-    probe.once("error", () => resolve(false));
-    probe.listen({ port, host: "127.0.0.1", exclusive: true }, () => probe.close(() => resolve(true)));
-  });
+/**
+ * Whether a TCP port can be bound now on each of `hosts`, where the app binds it: 127.0.0.1 for the EA port, also ::1
+ * for the HTTP port. A computer without IPv6 has no ::1 to hold.
+ */
+async function isFree(port: number, hosts: string[]): Promise<boolean> {
+  for (const host of hosts) {
+    const free = await new Promise<boolean>((resolve) => {
+      const probe = createServer();
+      probe.once("error", (e: NodeJS.ErrnoException) => resolve(host === "::1" && (e.code === "EADDRNOTAVAIL" || e.code === "EAFNOSUPPORT")));
+      probe.listen({ port, host, exclusive: true }, () => probe.close(() => resolve(true)));
+    });
+    if (!free) return false;
+  }
+  return true;
 }

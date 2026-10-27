@@ -8,6 +8,17 @@ import type { IncomingHttpHeaders } from "node:http";
  */
 export const sessionCookie = (port: number) => `qb_session_${port}`;
 
+/** The Host headers the HTTP server on this port answers: its loopback names. Any other is a DNS-rebinding host. */
+export const loopbackHosts = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+
+/**
+ * The request comes from a page of this server itself, under whichever loopback name it was opened. The cookie also
+ * reaches the same name from pages on other local ports (same site), so a change needs this as well as a session.
+ */
+export function sameOrigin(headers: IncomingHttpHeaders, port: number): boolean {
+  return loopbackHosts(port).includes(headers.host ?? "") && headers.origin === `http://${headers.host}`;
+}
+
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
 /** Who a session is: the app window (trusted, ADR 5), or a remote browser, which may not manage what only the window owns. */

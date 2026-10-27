@@ -79,10 +79,15 @@ function claim(port: number): Promise<boolean> {
   });
 }
 
-function canListen(port: number): Promise<boolean> {
-  const probe = createServer();
-  return new Promise((resolve) => {
-    probe.once("error", () => resolve(false));
-    probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-  });
+/** Free on 127.0.0.1 and on ::1, where the HTTP server binds too (a computer without IPv6 has no ::1 to hold). */
+async function canListen(port: number): Promise<boolean> {
+  for (const host of ["127.0.0.1", "::1"]) {
+    const probe = createServer();
+    const free = await new Promise<boolean>((resolve) => {
+      probe.once("error", (e: NodeJS.ErrnoException) => resolve(host === "::1" && (e.code === "EADDRNOTAVAIL" || e.code === "EAFNOSUPPORT")));
+      probe.listen(port, host, () => probe.close(() => resolve(true)));
+    });
+    if (!free) return false;
+  }
+  return true;
 }

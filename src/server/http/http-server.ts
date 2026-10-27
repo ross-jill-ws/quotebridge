@@ -1,9 +1,10 @@
-// HTTP server for the app window: dashboard, state endpoint and live WebSocket, on 127.0.0.1 only.
+// HTTP server for the app window: dashboard, state endpoint and live WebSocket, on loopback only (127.0.0.1 and ::1,
+// so `localhost` reaches it whichever address it resolves to first, and never another program on the same port).
 // Every request needs the window session (ADR 5) except the one-time token exchange at /session, and /api/v1 and
 // /api/auth/session, which also take an API key (`Authorization: Bearer qbk_…`). A key reaches nothing else.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { userInfo } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
@@ -25,7 +26,7 @@ import { json, write } from "./respond.js";
 import { apiError, info, RestV1, type RestAccess, type RestCredential } from "./rest-v1.js";
 import type { RequestEngine } from "../trading/index.js";
 import type { Screenshots } from "../screenshots/index.js";
-import { sessionCookie, type SessionKind, type WindowSessions } from "./window-session.js";
+import { loopbackHosts, sameOrigin, sessionCookie, type SessionKind, type WindowSessions } from "./window-session.js";
 
 /** Where the dashboard bundle is served from: `src/dashboard/` (or `dist/dashboard/` once built). */
 export const DEFAULT_DASHBOARD_FOLDER = fileURLToPath(new URL("../../dashboard/", import.meta.url));
@@ -83,6 +84,9 @@ const CONTENT_TYPES: Record<string, string> = {
 
 const SEND_A_KEY = "Send an API key: Authorization: Bearer qbk_….";
 
+/** IPv6 loopback cannot be bound on a computer without IPv6: the server then listens on 127.0.0.1 alone. */
+const NO_IPV6 = ["EADDRNOTAVAIL", "EAFNOSUPPORT"];
+
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
@@ -93,18 +97,18 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
   const { bridge, sessions } = options;
   const dashboardFolder = resolve(options.dashboardFolder ?? DEFAULT_DASHBOARD_FOLDER);
   const origin = `http://127.0.0.1:${options.port}`;
-  const host = `127.0.0.1:${options.port}`;
+  const hosts = loopbackHosts(options.port);
   const cookie = sessionCookie(options.port);
   const connections = new Set<Socket>();
 
-  const server = createServer((req, res) => {
+  const onRequest = (req: IncomingMessage, res: ServerResponse) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     handle(req, res).catch(() => {
       if (res.headersSent) res.destroy();
       else if (req.url?.startsWith("/api/v1")) apiError(res, 500, "internal-error", "Request failed. Check the app's logs.");
       else json(res, 500, { error: "Request failed. Check the app's logs." });
     });
-  });
+  };
   const live = new LiveSnapshots(bridge, options.indicators?.values, options.indicators?.packages);
   const rest = new RestV1({
     bridge,
@@ -117,31 +121,40 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     trading: options.trading,
     screenshots: options.screenshots,
   });
-  server.on("upgrade", (req, socket: Socket, head: Buffer) => {
-    if (req.headers.host !== host || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
+  const onUpgrade = (req: IncomingMessage, socket: Socket, head: Buffer) => {
+    if (!hosts.includes(req.headers.host ?? "") || !sessions.authenticated(req.headers, cookie)) return refuse(socket, 401, "Unauthorized");
     if (new URL(req.url ?? "/", origin).pathname !== "/live") return refuse(socket, 404, "Not Found");
-    // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): only the app window's origin may connect.
-    if (req.headers.origin !== origin) return refuse(socket, 403, "Forbidden");
+    // Only pages of this server may connect.
+    if (!sameOrigin(req.headers, options.port)) return refuse(socket, 403, "Forbidden");
     if (live.full) return refuse(socket, 503, "Service Unavailable");
     live.accept(req, socket, head);
-  });
-  server.on("connection", (socket) => {
-    connections.add(socket);
-    socket.once("close", () => connections.delete(socket));
-  });
+  };
+  const servers: Server[] = [];
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", (e) => reject(asPortInUse(e, "http", options.port)));
-      server.listen(options.port, "127.0.0.1", resolve);
-    });
+    for (const address of ["127.0.0.1", "::1"]) {
+      const server = createServer(onRequest);
+      server.on("upgrade", onUpgrade);
+      server.on("connection", (socket) => {
+        connections.add(socket);
+        socket.once("close", () => connections.delete(socket));
+      });
+      const listening = await new Promise<boolean>((resolve, reject) => {
+        server.once("error", (e: NodeJS.ErrnoException) =>
+          address === "::1" && NO_IPV6.includes(e.code ?? "") ? resolve(false) : reject(asPortInUse(e, "http", options.port)),
+        );
+        server.listen(options.port, address, () => resolve(true));
+      });
+      if (listening) servers.push(server);
+    }
   } catch (e) {
     live.close();
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
     throw e;
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
-    // Only the app window's own origin: refuses DNS-rebinding hosts.
-    if (req.headers.host !== host) return json(res, 400, { error: "Unexpected host" });
+    // Only this server's own loopback names: refuses DNS-rebinding hosts.
+    if (!hosts.includes(req.headers.host ?? "")) return json(res, 400, { error: "Unexpected host" });
     const url = new URL(req.url ?? "/", origin);
 
     if (url.pathname === "/session" && req.method === "GET") {
@@ -183,8 +196,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
       return refuse(401, "unauthenticated", api ? `${SEND_A_KEY} Create one in Settings › API keys.` : "Open the dashboard from the app window.");
     }
 
-    // The cookie also reaches 127.0.0.1 from pages on other local ports (same site): changes only from the app window's origin.
-    if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== origin) return refuse(403, "forbidden-origin", "Forbidden origin");
+    // The cookie also reaches this host from pages on other local ports (same site): changes only from this server's pages.
+    if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req.headers, options.port)) return refuse(403, "forbidden-origin", "Forbidden origin");
 
     if (api) return handleApi(url, req, res, null, { headers: req.headers }, session);
     if (session !== "window" && req.method !== "GET" && req.method !== "HEAD" &&
@@ -561,7 +574,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<HttpS
     close: () =>
       new Promise<void>((resolve) => {
         live.close();
-        server.close(() => resolve());
+        Promise.all(servers.map((server) => new Promise((closed) => server.close(closed)))).then(() => resolve());
         for (const socket of connections) socket.destroy();
       }),
   };

@@ -10,7 +10,7 @@ export class PortInUseError extends Error {
     readonly which: PortRole,
     readonly port: number,
   ) {
-    super(`The ${which === "ea" ? "EA" : "HTTP"} port ${port} on 127.0.0.1 is already in use by another program.`);
+    super(`The ${which === "ea" ? "EA port" : "HTTP port"} ${port} on ${which === "ea" ? "127.0.0.1" : "127.0.0.1 or ::1"} is already in use by another program.`);
     this.name = "PortInUseError";
   }
 }

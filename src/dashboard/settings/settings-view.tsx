@@ -770,7 +770,7 @@ function Toggle({ label, hint, checked, disabled, onChange }: { label: string; h
 
 const PORT_HINTS: Record<PortRole, string> = {
   ea: "QuoteBridge EAs in MetaTrader send their quotes to this port.",
-  http: "This window and the dashboard use this port on 127.0.0.1.",
+  http: "This window and the dashboard use this port on this computer (127.0.0.1 or localhost).",
 };
 
 function PortRow({ role, settings, managedTerminals, disabled, onChange }: { role: PortRole; settings: Settings; managedTerminals: number; disabled: boolean; onChange: (port: number) => Promise<void> }) {

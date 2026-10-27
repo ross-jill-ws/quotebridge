@@ -19,7 +19,7 @@ Every command has `--help` with its options, output and exit codes.
 | `auth logout` | Forgets the saved key locally (revoke it in the app to disable it) | — |
 | `config show` | Shows the effective server, config file and whether a key is saved (never the key) | — |
 
-- The app answers on `127.0.0.1` only, on the HTTP port in Settings › Connection. Use `127.0.0.1`, not `localhost`.
+- The app answers on this computer only (`127.0.0.1`, `localhost` or `[::1]`), on the HTTP port in Settings › Connection.
 - Create keys in the **app window › Settings › API keys**. `readonly` reads everything but screenshots; `trader` also
   takes screenshots and previews, executes and reviews requests. A `readonly` key's screenshot, preview, execute or
   review answers exit 4 (`insufficient-scope`).

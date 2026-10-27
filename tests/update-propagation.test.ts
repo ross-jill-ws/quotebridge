@@ -295,7 +295,7 @@ async function dashboard(server: { httpOrigin: string }) {
     }
     assert.fail("the install never finished");
   };
-  return { post, state, idle, credential: { headers: { cookie, origin } } };
+  return { post, state, idle, credential: { headers: { cookie, origin, host: new URL(origin).host } } };
 }
 
 test("a terminal unticked on the setup screen is never installed: not by setup, not by a rescan, not by updates on later starts", { timeout: 30000 }, async (t) => {

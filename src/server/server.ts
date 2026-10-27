@@ -1,4 +1,4 @@
-// Starts the bridge server: the EA endpoint and the HTTP server, both on 127.0.0.1 only.
+// Starts the bridge server: the EA endpoint on 127.0.0.1 and the HTTP server on loopback (127.0.0.1 and ::1) only.
 import type { IncomingHttpHeaders } from "node:http";
 import { DEFAULT_SETTINGS } from "../shared/settings-store.js";
 import { ApiKeys } from "./auth/index.js";
@@ -8,7 +8,7 @@ import { ClockRules, memoryClockRuleStore } from "./clock/index.js";
 import type { AppDatabase } from "./database.js";
 import { ChartHistory, EaBarFetcher, HistoryCatalog, HistorySaver, PERIOD_OF } from "./history/index.js";
 import { startHttpServer } from "./http/http-server.js";
-import { WindowSessions, sessionCookie } from "./http/window-session.js";
+import { WindowSessions, sameOrigin, sessionCookie } from "./http/window-session.js";
 import { IndicatorEngine, IndicatorPackages, IndicatorValues } from "./indicators/index.js";
 import { Recorder } from "./recording/index.js";
 import { AppSettings, type AppSettingsOptions } from "./settings/index.js";
@@ -201,7 +201,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       authorize: (credential, write) => {
         if ("apiKey" in credential) return apiKeys?.check(credential.apiKey, write).ok ? "api-key" : undefined;
         const { headers } = credential;
-        if (write && headers.origin !== `http://127.0.0.1:${config.httpPort}`) return undefined;
+        if (write && !sameOrigin(headers, config.httpPort)) return undefined;
         const kind = sessions.kind(headers, sessionCookie(config.httpPort));
         return kind === "window" ? "app-window" : kind === "remote" ? "remote-browser" : undefined;
       },

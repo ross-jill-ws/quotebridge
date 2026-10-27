@@ -60,7 +60,7 @@ export interface Settings {
   ports: {
     /** ZeroMQ port QuoteBridge EAs connect to; changing it means reinstalling every template. */
     ea: number;
-    /** Dashboard HTTP port on 127.0.0.1. */
+    /** Dashboard HTTP port on loopback (127.0.0.1 and ::1). */
     http: number;
   };
   startWithWindows: boolean;

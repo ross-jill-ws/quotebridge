@@ -15,3 +15,6 @@ CLAUDE.local.md
 # Indicator packages converted or written in this working copy, and their ZIPs (npm run indicator-package)
 /indicators/
 /build/
+
+# Local secrets
+.env
