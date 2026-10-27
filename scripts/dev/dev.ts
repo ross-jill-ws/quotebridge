@@ -92,10 +92,19 @@ let dashboardBuilt!: () => void;
 const dashboardReady = new Promise<void>((resolve) => (dashboardBuilt = resolve));
 const dashboard = await context(dashboardBuildOptions({ reloadUrl: reload.url, plugins: [onBuilt("dashboard", () => dashboardBuilt(), () => pageReload.changed())] }));
 await dashboard.watch();
-// esbuild watches only what the bundle imports; the static files are copied again when they change.
+// esbuild watches only what the bundle imports; the static files are copied again when they change. A dev run beside
+// this one copies the same files into the same dist folder, so a copy can meet a file held open: retry, never crash.
+const copyStaticRetrying = (attempt = 1) => {
+  try {
+    copyStatic();
+  } catch (e) {
+    if (attempt < 5) setTimeout(() => copyStaticRetrying(attempt + 1), 200 * attempt);
+    else log(`dashboard static files not copied (${(e as Error).message}); they are copied again on the next change`);
+  }
+};
 const staticWatchers = STATIC_FILES.map((file) =>
   watch(DASHBOARD_SOURCE + file, () => {
-    copyStatic();
+    copyStaticRetrying();
     pageReload.changed();
   }),
 );
