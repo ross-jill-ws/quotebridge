@@ -20,8 +20,9 @@ Every command has `--help` with its options, output and exit codes.
 | `config show` | Shows the effective server, config file and whether a key is saved (never the key) | — |
 
 - The app answers on `127.0.0.1` only, on the HTTP port in Settings › Connection. Use `127.0.0.1`, not `localhost`.
-- Create keys in the **app window › Settings › API keys**. `readonly` reads everything; `trader` also previews,
-  executes and reviews requests. A `readonly` key's preview, execute or review answers exit 4 (`insufficient-scope`).
+- Create keys in the **app window › Settings › API keys**. `readonly` reads everything but screenshots; `trader` also
+  takes screenshots and previews, executes and reviews requests. A `readonly` key's screenshot, preview, execute or
+  review answers exit 4 (`insufficient-scope`).
 - Installation and setup, API keys, network settings, recording, Demo trading, the lot cap and slippage are the app
   window's alone. No command changes them.
 - The key is saved in `~/.mt4-quote-bridge/config.json` (owner-only). `MT4QB_SERVER`, `MT4QB_API_KEY` and
@@ -116,6 +117,42 @@ clear). There are no lot changes or partial closes.
 
 Terminals are diagnostics only; they never route trading.
 
+### Screenshots
+
+| Command | API |
+| --- | --- |
+| `screenshot feeds [--output FILE [--force]] [--json]` | `GET /screenshots/feeds` |
+| `screenshot chart SYMBOL [--broker S \| --market-id ID] [--output FILE [--force]] [--json]` | `GET /screenshots/charts/{marketId}` |
+
+A [screenshot](rest-api.md#screenshots) checks that the app looks healthy. It switches **your own app window** to
+Feeds, or to the market's chart from its best source feed, and leaves it there; a minimised or hidden window is
+captured without being shown. It needs a `trader` key. `SYMBOL` is named as for every market command.
+
+The CLI always asks for JSON. By default it prints the window's health, never the image:
+
+```text
+View:    chart
+Market:  EURUSD · EasyForex-Demo
+Window:  hidden
+Live:    live
+Size:    1800 × 1200
+Scale:   1.5
+Time:    2027-01-15T08:00:00.000Z
+```
+
+`--json` prints the app's answer, the PNG in base64 included. `--output FILE` writes the PNG on the CLI's own computer
+under the export rules: an existing file is never replaced without `--force` (exit 13, and the window is not
+touched), and a refused screenshot leaves no file. With `--json`, stdout then gets the health fields plus `path` and
+`bytes`, without the base64.
+
+| Refusal | Exit |
+| --- | --- |
+| `insufficient-scope`: a `readonly` key | 4 |
+| `window-busy`: a dialog is open in the app window; nothing was switched or taken | 7 |
+| `no-feed`: no terminal streams the market (chart only) | 7 |
+| `window-unavailable`: no window to capture (the app is starting, or its window is being recreated) | 9 |
+| `screenshot-timeout`: the window was not captured within ten seconds | 9 |
+
 ## Trading from the command line
 
 1. Every mutation command previews: `orders preview|modify|cancel`, `positions modify|close`. Nothing is sent; the
@@ -160,10 +197,10 @@ initiative.
 | 4 | Forbidden (403): `readonly` key, Demo trading off, symbol not tradable |
 | 5 | Not found (404) |
 | 6 | Ambiguous symbol or login |
-| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, a real account (`executor-real-account`), no single ready executor |
+| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, a real account (`executor-real-account`), no single ready executor, a dialog open in the app window (`window-busy`), no feed for a chart (`no-feed`) |
 | 8 | Invalid trading or indicator values (422) |
-| 9 | Source unavailable or the terminal did not answer in five seconds (503, 504); not an order failure |
+| 9 | Source or app window unavailable, the terminal did not answer in five seconds, or a screenshot in ten (503, 504); not an order failure |
 | 10 | The request's outcome is unknown and not reviewed: never retry |
 | 11 | The request failed definitively |
 | 12 | The request was sent and has no definitive result yet |
-| 13 | The export's output file exists (no `--force`) |
+| 13 | The output file of an export or screenshot exists (no `--force`) |
