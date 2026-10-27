@@ -124,7 +124,8 @@ Terminals are diagnostics only; they never route trading.
    no confirmation by default. `--confirm` states that the account holder approved that exact preview.
 3. Execute posts once and never retries. It then only reads the request until a definitive result or `--wait`
    seconds (25 by default, 0–60). A lost answer, a timeout or an unknown outcome is answered with
-   `requests show ID`, never with another execute or preview.
+   `requests show ID`, never with another execute or preview. When the app cannot be reached at all (the connection is
+   refused) or no key is saved, execute says so and that nothing was sent.
 4. An unknown outcome blocks its account, previews included, until a result arrives or you review it after checking
    MetaTrader.
 
@@ -156,10 +157,10 @@ initiative.
 | 1 | Other error: the app is unreachable or answered unexpectedly (500) |
 | 2 | Usage error, or a malformed value (400) |
 | 3 | Not signed in, or the key is invalid or revoked (401) |
-| 4 | Forbidden (403): `readonly` key, Demo trading off, real account, symbol not tradable |
+| 4 | Forbidden (403): `readonly` key, Demo trading off, symbol not tradable |
 | 5 | Not found (404) |
 | 6 | Ambiguous symbol or login |
-| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, no single ready executor |
+| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, a real account (`executor-real-account`), no single ready executor |
 | 8 | Invalid trading or indicator values (422) |
 | 9 | Source unavailable or the terminal did not answer in five seconds (503, 504); not an order failure |
 | 10 | The request's outcome is unknown and not reviewed: never retry |
