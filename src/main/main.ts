@@ -152,6 +152,7 @@ async function boot() {
     setOpacity: (value) => window.setOpacity(value),
     getBackgroundThrottling: () => window.webContents.getBackgroundThrottling(),
     setBackgroundThrottling: (allowed) => window.webContents.setBackgroundThrottling(allowed),
+    setSkipTaskbar: (skip) => window.setSkipTaskbar(skip),
     showInactive: () => window.showInactive(),
     hide: () => window.hide(),
     minimize: () => window.minimize(),

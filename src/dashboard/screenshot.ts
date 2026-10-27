@@ -51,7 +51,7 @@ export function useScreenshots(live: Live, setupOpen: boolean) {
       // The hashchange re-renders the view.
       await new Promise((r) => setTimeout(r, 0));
       if (target.view === "chart") await untilChartShown(target.feed, () => state.current.live.status);
-      // Two frames later it has been painted.
+      // Two frames later it has been drawn; main gives Chromium time to paint it all (SETTLE_MS) before capturing.
       await frame();
       await frame();
       return { ready: true, live: state.current.live.status };

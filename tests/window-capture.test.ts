@@ -52,6 +52,9 @@ class FakeWindow implements CaptureTarget {
     this.calls.push(`throttling ${allowed}`);
     this.throttling = allowed;
   }
+  setSkipTaskbar(skip: boolean) {
+    this.calls.push(`skip taskbar ${skip}`);
+  }
   /** Shows a hidden window and restores a minimised one, as Windows does. */
   showInactive() {
     this.calls.push("showInactive");
@@ -81,19 +84,21 @@ class FakeWindow implements CaptureTarget {
 
 const FEEDS: ScreenshotTarget = { view: "feeds" };
 
-const capturer = (window: FakeWindow, deadlineMs = 1000) => new WindowCapturer(window, { now: () => NOW, deadlineMs, retryMs: 5 });
+const capturer = (window: FakeWindow, deadlineMs = 1000) => new WindowCapturer(window, { now: () => NOW, deadlineMs, retryMs: 5, settleMs: 0 });
 
-test("a visible window is switched to Feeds and captured as it is, with its size from the image", async () => {
+// Seen on the real app: a shown window that other windows covered was captured one view behind, because Chromium
+// stops rendering a covered window as it does a hidden one, unless its background throttling is off.
+test("a visible window is switched to Feeds and captured as it is, rendering even if covered, with its size from the image", async () => {
   const window = new FakeWindow("visible");
   const capture = await capturer(window).capture(FEEDS);
-  assert.deepEqual(window.calls, ["prepare feeds", "capture at opacity 1"]);
+  assert.deepEqual(window.calls, ["throttling false", "prepare feeds", "capture at opacity 1", "throttling true"]);
   assert.deepEqual(capture, { view: "feeds", window: "visible", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: NOW, png: Buffer.from(png(1800, 1200)).toString("base64") });
 });
 
 test("a chart target asks the page for that feed's chart and is answered as the chart view", async () => {
   const window = new FakeWindow("visible");
   const capture = await capturer(window).capture({ view: "chart", feed: "feed-1" });
-  assert.deepEqual(window.calls, ["prepare chart feed-1", "capture at opacity 1"]);
+  assert.deepEqual(window.calls, ["throttling false", "prepare chart feed-1", "capture at opacity 1", "throttling true"]);
   assert.deepEqual([capture.view, capture.window], ["chart", "visible"]);
 });
 
@@ -106,12 +111,40 @@ test("a minimised window is restored transparent without focus and rendering, ca
   assert.equal(window.state(), "minimised");
 });
 
-test("a window hidden in the tray is shown transparent without focus and rendering, captured, hidden again and put back", async () => {
+// Seen on the real app: shown for the capture, a window in the tray had a taskbar button for half a second each time.
+test("a window hidden in the tray is shown transparent, off the taskbar, without focus and rendering, captured, hidden again and put back", async () => {
   const window = new FakeWindow("hidden");
   window.opacity = 0.9;
   const capture = await capturer(window).capture(FEEDS);
-  assert.deepEqual(window.calls, ["opacity 0", "throttling false", "showInactive", "prepare feeds", "capture at opacity 0", "hide", "opacity 0.9", "throttling true"]);
+  assert.deepEqual(window.calls, ["opacity 0", "throttling false", "skip taskbar true", "showInactive", "prepare feeds", "capture at opacity 0", "hide", "skip taskbar false", "opacity 0.9", "throttling true"]);
   assert.equal(capture.window, "hidden");
+  assert.equal(window.state(), "hidden");
+});
+
+// Seen on the real app: a Feeds capture straight after a chart, of a window in the tray, showed Charts still current in
+// the sidebar in half the captures. The page's frames are in before Chromium has painted all of them.
+test("the window is captured a settle time after the page says it has drawn, not at once", async () => {
+  const window = new FakeWindow("hidden");
+  let answered = 0;
+  window.ready = async () => {
+    answered = performance.now();
+    return { ready: true, live: "live" };
+  };
+  let capturedAt = 0;
+  const capture = window.capture.bind(window);
+  window.capture = () => {
+    capturedAt = performance.now();
+    return capture();
+  };
+  await new WindowCapturer(window, { deadlineMs: 1000, settleMs: 40 }).capture(FEEDS);
+  assert.ok(capturedAt - answered >= 35, `captured ${capturedAt - answered} ms after the page answered`);
+});
+
+test("a capture whose deadline passes while it settles takes no image, and the window is put back", async () => {
+  const window = new FakeWindow("hidden");
+  await assert.rejects(new WindowCapturer(window, { deadlineMs: 20, settleMs: 60 }).capture(FEEDS), { code: "screenshot-timeout" });
+  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(!window.calls.some((c) => c.startsWith("capture")));
   assert.equal(window.state(), "hidden");
 });
 
@@ -195,7 +228,7 @@ test("a window that fails while being put back still settles the capture, and th
   }
 });
 
-test("a window that cannot be shown is refused as window-unavailable and its opacity given back", async () => {
+test("a window that cannot be shown is refused as window-unavailable and its taskbar button and opacity given back", async () => {
   const window = new FakeWindow("hidden");
   window.showInactive = () => {
     throw Error("Object has been destroyed");
@@ -203,5 +236,6 @@ test("a window that cannot be shown is refused as window-unavailable and its opa
   await assert.rejects(capturer(window).capture(FEEDS), { code: "window-unavailable" });
   assert.equal(window.opacity, 1);
   assert.equal(window.throttling, true);
+  assert.deepEqual(window.calls.filter((c) => c.startsWith("skip taskbar")), ["skip taskbar true", "skip taskbar false"], "back on the taskbar");
   assert.equal(window.state(), "hidden");
 });
