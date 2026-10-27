@@ -240,7 +240,7 @@ export function orderDefaultsFacts(c: MarketConditions, currency: string | null,
   // ", about 10 USD at 0.05 lots", or a lot when none are typed; nothing without the account's currency or a tick value
   // (a terminal can report 0 until it has the rate to convert it).
   const money = (points: number, lots?: string) =>
-    currency === null || !(pointMoney > 0) ? "" : `, about ${about(points * pointMoney * Number(lots ?? 1))} ${currency} ${lots ? `at ${lots} lots` : "a lot"}`;
+    currency === null || !(pointMoney > 0 && Number.isFinite(pointMoney)) ? "" : `, about ${about(points * pointMoney * Number(lots ?? 1))} ${currency} ${lots ? `at ${lots} lots` : "a lot"}`;
   const spread = Number((units(c.ask) - units(c.bid)) / units(c.point));
   const facts = [
     `1 point is ${fromUnits(units(c.point))} in price${money(1)}.`,

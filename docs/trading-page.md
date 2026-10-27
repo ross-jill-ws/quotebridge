@@ -101,7 +101,8 @@ Only the app window changes these; a remote browser sees them read-only.
   value. Changing defaults never discards a preview.
 
   While you add or edit a market, the form shows what the market itself defines, read from a connected account's
-  terminal on its broker server: what 1 point is in price and about what it is worth per lot, the broker's lot
+  terminal on its broker server: what 1 point is in price and about what it is worth per lot (when the terminal reports
+  a tick value), the broker's lot
   minimum, maximum and step, the minimum stop distance (stop level; there is no maximum) and the spread now. Under each
   stop distance you see its price move and about its money at the default lots. Stops are measured from the closing
   price, so a market order's stop loss needs the stop level plus the spread. A value Preview would refuse (lots off the
