@@ -298,6 +298,21 @@ test("one bar, one value: D1 rolled up from M1 beside the EA's saved D1 bars is 
   assert.deepEqual(await allPages(page, "D1", 40), latest, "a walk back gives one large page's bars");
 });
 
+test("one bar, one value: W1 and MN1 rolled up from a D1 file are the same bars whichever page they are cut on", { timeout: 30000 }, async (t) => {
+  const dataFolder = await tempFolder(t, "hst");
+  // D1 up to today: a week dated Sunday holds Monday to the next Sunday, so a cut on its Sunday still shows it.
+  await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 1440, digits: 5, bars: bars(TEN - 10 * HOUR - 199 * 86400, 86400, 200, 1.1) });
+  const { connect, settled, page } = await start(t, await tempFolder(t, "db"), dataFolder);
+  await connect(ready);
+
+  for (const period of ["W1", "MN1"]) {
+    const latest = (await settled(period)).candles;
+    assert.equal(latest.at(-1)!.time, live(period as Period).time);
+    await sameOnEveryCut(page, period, latest, latest.length);
+    assert.deepEqual(await allPages(page, period, 2), latest, `${period}: a walk back gives one large page's bars`);
+  }
+});
+
 test("the EA's bars are kept in saved history: after a restart the chart shows them without asking again, and the History page lists them", { timeout: 20000 }, async (t) => {
   const dbFolder = await tempFolder(t, "db");
   const dataFolder = await tempFolder(t, "hst");

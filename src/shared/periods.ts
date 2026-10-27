@@ -32,10 +32,14 @@ export function bucketStart(time: number, period: Period, offset = 0): number {
   return time - ((time - (isIntraday(period) ? offset : 0)) % PERIOD_SECONDS[period]);
 }
 
-/** The start of the bucket after the one holding `time`. */
-export function bucketEnd(time: number, period: Period, offset = 0): number {
+/**
+ * Where the buckets that start before `time` end: the first moment of a bucket that starts at `time` or later. A W1
+ * bucket dated Sunday begins on its Monday, so the week dated a Sunday from `time` on ends the Monday after it.
+ */
+export function bucketsEnd(time: number, period: Period, offset = 0): number {
+  if (period === "W1") return bucketStart(time + DAY - 1, period) + 8 * DAY;
   const start = bucketStart(time, period, offset);
-  if (period === "W1") return start + 7 * DAY;
+  if (start === time) return time;
   if (period !== "MN1") return start + PERIOD_SECONDS[period];
   const date = new Date(start * 1000);
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) / 1000;
