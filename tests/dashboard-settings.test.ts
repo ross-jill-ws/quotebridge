@@ -164,6 +164,14 @@ test("the order defaults form shows what the market defines: a point's price and
   ]);
 });
 
+test("a market whose terminal reports no tick value (0) shows no money, not about 0 a lot", () => {
+  // Seen on a real CMC terminal: CORN's tick value read 0 until the terminal had the rate to convert it.
+  const corn = { ...BTC_CONDITIONS, tickValue: "0" };
+  const { facts, notes } = orderDefaultsFacts(corn, "AUD", "1.0", { lots: "0.05", stopLossPoints: "200", takeProfitPoints: "" });
+  assert.equal(facts[0], "1 point is 0.01 in price.");
+  assert.equal(notes.stopLossPoints?.meaning, "2 in price.");
+});
+
 test("each typed stop distance reads as a price move and about its money at the default lots, or one lot", () => {
   const notes = orderDefaultsFacts(EURUSD_CONDITIONS, "USD", "1.0", { lots: "0.05", stopLossPoints: "200", takeProfitPoints: "400" }).notes;
   assert.deepEqual(notes, {
