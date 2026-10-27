@@ -53,13 +53,22 @@ export type WindowCapture = {
   png: string;
 };
 
-export type CaptureErrorCode =
+export const CAPTURE_ERROR_CODES = [
   /** A dialog is open in the window; nothing was switched or taken. */
-  | "window-busy"
+  "window-busy",
   /** No window to capture: main still starting, the renderer being recreated, or no app window at all. */
-  | "window-unavailable"
+  "window-unavailable",
   /** The capture took longer than its deadline. */
-  | "screenshot-timeout";
+  "screenshot-timeout",
+] as const;
+
+export type CaptureErrorCode = (typeof CAPTURE_ERROR_CODES)[number];
+
+/** Main's deadline for one capture; the server waits a little longer, so main's own answer arrives first. */
+export const CAPTURE_DEADLINE_MS = 10_000;
+
+/** The app window's page, asked by main to switch to a view: drawn (with its live link), or why not. */
+export type PageReady = { ready: true; live: LiveLinkState } | { busy: string } | { unavailable: string };
 
 /** Why a capture failed, in plain words. */
 export type CaptureError = { code: CaptureErrorCode; message: string };

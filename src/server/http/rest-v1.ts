@@ -20,7 +20,7 @@ import type { Recorder } from "../recording/index.js";
 import type { TradeResult } from "../bridge/account-protocol.js";
 import { TradingError, tradingMessage, type JournalRecord, type RequestEngine, type TradeInput, type TradingPreview } from "../trading/index.js";
 import { ScreenshotError, type Screenshots } from "../screenshots/index.js";
-import type { CaptureErrorCode, ScreenshotView } from "../../shared/server-host-protocol.js";
+import type { CaptureErrorCode, ScreenshotView, WindowCapture } from "../../shared/server-host-protocol.js";
 import type { ApiKeyScope } from "../auth/index.js";
 import type { SessionKind } from "./window-session.js";
 import { json, write } from "./respond.js";
@@ -341,7 +341,7 @@ export class RestV1 {
     if (format !== "json" && format !== "png") throw new ApiError(400, "invalid-format", "format must be json or png.", { parameter: "format", allowed: ["json", "png"] });
     const screenshots = this.options.screenshots;
     if (!screenshots) throw new ApiError(503, "window-unavailable", "There is no app window to capture.");
-    let capture;
+    let capture: WindowCapture;
     try {
       capture = await screenshots.take(view);
     } catch (e) {
@@ -908,9 +908,10 @@ export function info() {
   return { data: { service: "mt4-quote-bridge", apiVersion: API_VERSION }, meta: {} };
 }
 
-/** UTC milliseconds as ISO-8601, null as null. */
+/** The HTTP status of each way a screenshot can fail. */
 const SCREENSHOT_STATUS: Record<CaptureErrorCode, number> = { "window-busy": 409, "window-unavailable": 503, "screenshot-timeout": 504 };
 
+/** UTC milliseconds as ISO-8601, null as null. */
 const iso = <T extends number | null>(ms: T): T extends number ? string : string | null => (ms === null ? null : new Date(ms).toISOString()) as never;
 
 /** Broker seconds as ISO-8601 without an offset: the broker server's wall clock. */

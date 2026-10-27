@@ -1,10 +1,9 @@
 // Screenshots of the app window for the REST API: switch the window to a view and capture it whether it is visible,
 // minimised or hidden in the tray, without showing or focusing it, and leave it as it was. Electron comes in as a port.
 // `capturePage` fails on a hidden window, so a hidden one is made transparent and shown without focus for the capture.
-import type { CaptureErrorCode, LiveLinkState, ScreenshotView, WindowCapture, WindowState } from "../../shared/server-host-protocol.js";
+import { CAPTURE_DEADLINE_MS, type CaptureErrorCode, type PageReady, type ScreenshotView, type WindowCapture, type WindowState } from "../../shared/server-host-protocol.js";
 
-/** The page's answer to "switch to this view and say when it has drawn". */
-export type PageReady = { ready: true; live: LiveLinkState } | { busy: string } | { unavailable: string };
+export type { PageReady };
 
 /** The app window, as the capture needs it. */
 export interface CaptureTarget {
@@ -58,25 +57,37 @@ export class WindowCapturer {
     const { window } = this;
     const why = window.unavailable();
     if (why) return Promise.reject(new CaptureFailure("window-unavailable", why));
-    const deadlineMs = this.options.deadlineMs ?? 10_000;
+    const deadlineMs = this.options.deadlineMs ?? CAPTURE_DEADLINE_MS;
     const state = window.state();
     let done = false;
     let restore = () => {};
     if (state === "hidden") {
       const opacity = window.getOpacity();
-      window.setOpacity(0);
-      window.showInactive();
+      // Set before showing, so a failure part-way still hides the window and gives its opacity back.
       restore = () => {
         restore = () => {};
-        window.hide();
-        window.setOpacity(opacity);
+        for (const step of [() => window.hide(), () => window.setOpacity(opacity)]) {
+          try {
+            step();
+          } catch (e) {
+            console.error(`[QuoteBridge] screenshot: the app window could not be put back: ${(e as Error)?.message ?? e}`);
+          }
+        }
       };
+      try {
+        window.setOpacity(0);
+        window.showInactive();
+      } catch (e) {
+        restore();
+        return Promise.reject(new CaptureFailure("window-unavailable", `The app window could not be prepared for capture: ${(e as Error)?.message ?? e}`));
+      }
     }
     return new Promise<WindowCapture>((resolve, reject) => {
       const finish = (error: CaptureFailure | null, capture?: WindowCapture) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        // Never throws, so the capture always settles and the queue moves on.
         restore();
         if (error) reject(error);
         else resolve(capture!);

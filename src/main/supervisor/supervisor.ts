@@ -4,7 +4,7 @@
 // It talks to the server only through the server host protocol; processes and time come in as ports.
 import { randomBytes } from "node:crypto";
 import type { HostTransport } from "../../shared/host-transport.js";
-import type { CaptureError, CaptureErrorCode, HostMessage, HostSettingsChange, ScreenshotView, ServerError, ServerMessage, ServerStartConfig, ServerStatus, WindowCapture } from "../../shared/server-host-protocol.js";
+import { CAPTURE_ERROR_CODES, type CaptureError, type CaptureErrorCode, type HostMessage, type HostSettingsChange, type ScreenshotView, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type WindowCapture } from "../../shared/server-host-protocol.js";
 import type { Settings } from "../../shared/settings-store.js";
 
 /** One launched server process (an Electron utility process in the app). */
@@ -137,8 +137,6 @@ export function createWindowToken() {
 export function windowUrl(httpOrigin: string, token: string) {
   return `${httpOrigin}/session?token=${encodeURIComponent(token)}`;
 }
-
-const CAPTURE_ERROR_CODES = ["window-busy", "window-unavailable", "screenshot-timeout"] as const satisfies readonly CaptureErrorCode[];
 
 type Current = { process: ServerProcess; unsubscribe: () => void };
 

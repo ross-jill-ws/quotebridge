@@ -137,6 +137,7 @@ async function boot() {
     pageAnswers.get(reply.id)?.(reply.ready);
     pageAnswers.delete(reply.id);
   });
+  const displayScale = () => screen.getDisplayMatching(window.getBounds()).scaleFactor;
   capturer = new WindowCapturer({
     unavailable: () => {
       if (window.isDestroyed()) return "The app window is closed.";
@@ -150,7 +151,7 @@ async function boot() {
     setOpacity: (value) => window.setOpacity(value),
     showInactive: () => window.showInactive(),
     hide: () => window.hide(),
-    scale: () => screen.getDisplayMatching(window.getBounds()).scaleFactor,
+    scale: displayScale,
     prepare: (view: ScreenshotView) =>
       new Promise<PageReady>((resolve) => {
         const id = nextPageRequest++;
@@ -160,7 +161,7 @@ async function boot() {
     capture: async () => {
       const image = await window.webContents.capturePage();
       // The bitmap at the window's display scale: its own physical pixels.
-      return image.isEmpty() ? new Uint8Array() : image.toPNG({ scaleFactor: screen.getDisplayMatching(window.getBounds()).scaleFactor });
+      return image.isEmpty() ? new Uint8Array() : image.toPNG({ scaleFactor: displayScale() });
     },
   });
   // A crashed page never answers: those captures fail at once instead of at their deadline.

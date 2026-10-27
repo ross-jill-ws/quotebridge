@@ -1,11 +1,12 @@
 // Screenshots of the app window for the REST API. Only main owns the window, so the server asks it over the host
 // protocol (the `capture` port); here captures are taken one at a time, each within its deadline.
-import type { CaptureError, CaptureErrorCode, ScreenshotView, WindowCapture } from "../../shared/server-host-protocol.js";
+import { CAPTURE_DEADLINE_MS, type CaptureError, type CaptureErrorCode, type ScreenshotView, type WindowCapture } from "../../shared/server-host-protocol.js";
 
 /** Asks main for a capture; rejects with a ScreenshotError when main refuses. */
 export type CaptureWindow = (view: ScreenshotView) => Promise<WindowCapture>;
 
-export const SCREENSHOT_DEADLINE_MS = 10_000;
+/** Main's deadline and a little more: main answers its own timeout (restoring the window) before this one fires. */
+export const SCREENSHOT_DEADLINE_MS = CAPTURE_DEADLINE_MS + 2_000;
 
 export class ScreenshotError extends Error {
   constructor(
@@ -44,7 +45,7 @@ export class Screenshots {
     }
     return new Promise<WindowCapture>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new ScreenshotError("screenshot-timeout", `The app window was not captured within ${this.deadlineMs / 1000} seconds.`)),
+        () => reject(new ScreenshotError("screenshot-timeout", `The app window was not captured within ${Math.round(this.deadlineMs / 1000)} seconds.`)),
         this.deadlineMs,
       );
       capture(view).then(resolve, reject).finally(() => clearTimeout(timer));

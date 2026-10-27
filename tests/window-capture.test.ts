@@ -147,3 +147,32 @@ test("captures run one at a time", async () => {
   assert.equal(most, 1);
   assert.deepEqual(captures.map((c) => c.live), ["reconnecting", "reconnecting", "reconnecting"]);
 });
+
+test("a window that fails while being put back still settles the capture, and the next capture runs", async () => {
+  const window = new FakeWindow("hidden");
+  window.hide = () => {
+    window.calls.push("hide");
+    throw Error("Object has been destroyed");
+  };
+  const shared = capturer(window);
+  const error = console.error;
+  console.error = () => {};
+  try {
+    await shared.capture("feeds");
+    assert.equal(window.opacity, 1, "its opacity is given back even so");
+    window.ready = async () => ({ busy: "Buy EURUSD" });
+    await assert.rejects(shared.capture("feeds"), { code: "window-busy" });
+  } finally {
+    console.error = error;
+  }
+});
+
+test("a window that cannot be shown is refused as window-unavailable and its opacity given back", async () => {
+  const window = new FakeWindow("hidden");
+  window.showInactive = () => {
+    throw Error("Object has been destroyed");
+  };
+  await assert.rejects(capturer(window).capture("feeds"), { code: "window-unavailable" });
+  assert.equal(window.opacity, 1);
+  assert.equal(window.state(), "hidden");
+});

@@ -1,7 +1,8 @@
 // The page's side of a screenshot through the REST API (main captures the window): refuse while a dialog is open,
 // else switch to the view, and answer once it has drawn, with the live link's state.
 import { useEffect, useRef } from "preact/hooks";
-import { native, type ScreenshotReady } from "./terminals/native.js";
+import type { PageReady } from "../shared/server-host-protocol.js";
+import { native } from "./terminals/native.js";
 import type { Live } from "./use-live.js";
 
 /** The open dialog's title (its labelling heading), or null when none is open. */
@@ -17,7 +18,7 @@ export function useScreenshots(live: Live, setupOpen: boolean) {
   const state = useRef({ live, setupOpen });
   state.current = { live, setupOpen };
   useEffect(() => {
-    native()?.onScreenshot?.(async (view): Promise<ScreenshotReady> => {
+    native()?.onScreenshot?.(async (view): Promise<PageReady> => {
       const dialog = openDialog(document);
       if (dialog) return { busy: dialog };
       // The setup screen stands in for every view until the user moves on.

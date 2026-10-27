@@ -956,7 +956,7 @@ One screenshot is taken at a time; others wait their turn. Each has ten seconds.
 | --- | --- |
 | `409 window-busy` | A dialog is open in the window (an order, close, modify or review dialog, or the setup screen). The message names it. Nothing is switched and no image is taken. |
 | `503 window-unavailable` | There is no window to capture: the app is still starting, the window is being recreated after a crash, or the server runs without the app (a development run in a browser tab). |
-| `504 screenshot-timeout` | The window was not captured within ten seconds. A hidden window is hidden again. |
+| `504 screenshot-timeout` | The window was not captured within ten seconds; so too while the Terminals view's Remove confirmation is open, which stops the page answering. A hidden window is hidden again. |
 
 ```http
 GET /api/v1/screenshots/feeds
