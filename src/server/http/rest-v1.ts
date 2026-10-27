@@ -18,7 +18,7 @@ import { ManifestError, parametersFromQuery } from "../../shared/indicator-manif
 import type { IndicatorPackage, IndicatorPackages, IndicatorValues } from "../indicators/index.js";
 import type { Recorder } from "../recording/index.js";
 import type { TradeResult } from "../bridge/account-protocol.js";
-import { TradingError, type JournalRecord, type RequestEngine, type TradeInput, type TradingPreview } from "../trading/index.js";
+import { TradingError, tradingMessage, type JournalRecord, type RequestEngine, type TradeInput, type TradingPreview } from "../trading/index.js";
 import { json, write } from "./respond.js";
 
 /** The REST API version; the CLI checks it at /api/v1/info. */
@@ -892,29 +892,6 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
 function requestId(text: string): string {
   if (!/^[0-9a-f]{32}$/.test(text)) throw new ApiError(400, "invalid-request-id", "A request ID is 32 lowercase hexadecimal characters, as a preview answers it.");
   return text;
-}
-
-/** What a request engine refusal means, for its message; the code is the stable part. */
-function tradingMessage(code: string): string {
-  const messages: Record<string, string> = {
-    "not-authorized": "This credential may not trade.",
-    "trading-disabled": "Demo trading is off in the app window's Settings.",
-    "demo-only": "QuoteBridge trades on demo accounts only.",
-    "preview-unavailable": "No valid preview has this ID: it expired, was invalidated or already ran. Preview again.",
-    "preview-expired": "The preview has expired. Preview again.",
-    "preview-invalidated": "Settings or the account's source changed since the preview. Preview again.",
-    "account-unresolved": "This account has a request without a definitive result. Check it, and review it if its outcome is unknown.",
-    "request-not-found": "No request has this ID.",
-    "request-not-unknown": "Only a request whose outcome is unknown can be reviewed.",
-    "invalid-review": "A review needs a note of 8–500 characters and acknowledged: true, after checking MetaTrader's open orders and account history.",
-    "read-timeout": "The account's terminal did not answer within five seconds.",
-    "journal-unavailable": "The trading journal could not be written; nothing was sent.",
-    "trading-stopped": "The app is stopping; no request is accepted.",
-    "terminal-updating": "The account's terminal is being updated.",
-  };
-  if (messages[code]) return messages[code];
-  if (code.startsWith("executor-")) return `The account's trading chart is not ready (${code.slice("executor-".length)}). Exactly one chart per account must have demo trading enabled.`;
-  return `The request was refused: ${code}. See the REST API manual's error codes.`;
 }
 
 /** Whether text is MetaTrader's ticket: a positive 32-bit integer, in decimal, as the request engine takes it. */
