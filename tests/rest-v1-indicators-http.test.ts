@@ -38,13 +38,15 @@ const FUSSY = {
   LICENSE: "MIT",
 };
 
-async function start(t: TestContext) {
+/** A server with the H1 file `HST`, and an M1 file of `m1` bars beside it when given. */
+async function start(t: TestContext, m1?: FixtureBar[]) {
   const folder = await tempFolder(t, "rest-ind");
   const packages = join(folder, "packages");
   await mkdir(join(packages, "fussy"), { recursive: true });
   for (const [name, text] of Object.entries(FUSSY)) await writeFile(join(packages, "fussy", name), text);
   const dataFolder = join(folder, "data");
   await writeHst(dataFolder, DEMO, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: HST });
+  if (m1) await writeHst(dataFolder, DEMO, { version: 400, symbol: "EURUSD", minutes: 1, digits: 5, bars: m1 });
   const app = await startRest(t, join(folder, "db"), { dataFolders: { [TERMINAL]: dataFolder }, overrides: { extraIndicatorPackages: packages } });
   const connect = async (options: { symbol?: string } = {}) => {
     const ea = await app.connect(options);
@@ -135,6 +137,21 @@ test("values are the chart cache's over the market's candles, warmed up before t
   // The chart's values for the same key: the very same numbers.
   const chart = await app.chart({ feed: ea.feedKey(), period: "H1", package: "quotebridge.ma", "p.period": 20, "p.type": "simple", limit: 30 });
   assert.deepEqual(answer.data.map((row: Json) => Number(row.values.ma)), chart.outputs.ma.map((p: Json) => p.value));
+});
+
+test("values up to `to` are the same as the page without it, where the M1 file continues the H1 file", { timeout: 20000 }, async (t) => {
+  // M1 from 05:01 to the 10:00 bar: its rolled-up 09:00 and 10:00 buckets continue the H1 file.
+  const app = await start(t, bars(TEN - 5 * HOUR + 60, 60, 300, 1.2));
+  const { send } = await app.connect();
+  await send(TEN + 60, 1.25);
+  const path = `/api/v1/markets/${EURUSD}/indicators/quotebridge.ma`;
+
+  // Up to each bar first, while the cache holds no newer page to take its bars from.
+  const cut = [];
+  for (let h = 5; h >= 0; h--) cut.push(...(await app.read(path, { timeframe: "H1", to: utcIso(TEN - h * HOUR), limit: 1, "p.period": 2 })).data);
+  const latest = (await app.read(path, { timeframe: "H1", limit: 6, "p.period": 2 })).data;
+  assert.equal(latest.at(-1).brokerTime, brokerIso(TEN));
+  assert.deepEqual(cut, latest);
 });
 
 test("values: 900 by default and 5000 at most with warm-up on top; parameters and timeframes are checked", { timeout: 30000 }, async (t) => {

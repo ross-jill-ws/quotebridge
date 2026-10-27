@@ -11,7 +11,7 @@
 // bars of the period do (CMC's GOLD H4 bars start at 01:00), at the usual times without them: the live candles and the
 // fill file's roll-up take that offset. Times are handed out in UTC from the broker server's clock rule (ADR 11).
 import { brokerToUtc, UNKNOWN_RULE, utcToBroker, type ClockRule } from "../../shared/clock.js";
-import { barOffset, bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
+import { barOffset, bucketEnd, bucketStart, isIntraday, PERIODS, type Period } from "../../shared/periods.js";
 import type { FeedSnapshot, Market } from "../bridge/index.js";
 import type { Candle } from "../candles/index.js";
 import { HstFile, hstPath, type HstBar } from "./hst-file.js";
@@ -194,12 +194,16 @@ function fileSource(file: HstFile): HstSource {
   };
 }
 
-/** A period built from a finer file's bars (M1 or D1): each bucket of the broker clock, as the live candles are. */
+/**
+ * A period built from a finer file's bars (M1 or D1): each bucket of the broker clock, as the live candles are. A
+ * bucket is rolled up from all its fill bars wherever a page is cut: the one holding the second before `until`
+ * (exclusive) is read through to its end.
+ */
 function rollupSource(fillFile: HstFile, period: Period, offset: number): RollupSource {
   const before: RollupSource["before"] = async (until, limit, since) => {
     // Buckets read so far, oldest first; the oldest may still be missing earlier fill bars until one older is seen.
     let buckets: Candle[] = [];
-    let cursor = until;
+    let cursor = until === undefined ? undefined : bucketEnd(until - 1, period, offset);
     for (;;) {
       const page = await fillFile.before(cursor, ROLLUP_PAGE);
       const rolled = rollUp(page.bars, period, offset);

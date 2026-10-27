@@ -250,6 +250,54 @@ test("a file staler than the EA's 900 bars keeps its last bar, then the EA's bar
   assert.deepEqual(await allPages(page, "M15", 64), expected);
 });
 
+/**
+ * Asserts that each of the latest page's newest `count` bars is the newest bar of every page cut after its start and
+ * before the next bar: just after it, halfway, and just before the next.
+ */
+async function sameOnEveryCut(page: (period: string, limit?: number, before?: number) => Promise<Page>, period: string, latest: Candle[], count: number) {
+  for (let i = latest.length - count; i < latest.length; i++) {
+    const bar = latest[i], next = latest[i + 1]?.time ?? bar.time + 2;
+    for (const before of new Set([bar.time + 1, Math.floor((bar.time + next) / 2), next - 1])) {
+      assert.deepEqual((await page(period, 3, before)).candles.at(-1), bar, `${period} at ${new Date(bar.time * 1000).toISOString()}, cut at ${before}`);
+    }
+  }
+}
+
+for (const [shape, fileEnd] of [
+  ["continued by its M1 file", TEN - HOUR],
+  ["whose file and saved copy end on the bar the live candle forms", TEN],
+] as const) {
+  test(`one bar, one value: H1 ${shape} is the same bar whichever page it is cut on`, { timeout: 40000 }, async (t) => {
+    const dataFolder = await tempFolder(t, "hst");
+    // The H1 file ends at `fileEnd`, its saved copy too; the M1 file runs on to the 10:00 bar, where the live candle forms.
+    await writeHst(dataFolder, BROKER, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: bars(fileEnd + HOUR - 300 * HOUR, HOUR, 300, 1.1) });
+    await writeHst(dataFolder, BROKER, { version: 400, symbol: "EURUSD", minutes: 1, digits: 5, bars: bars(TEN + MINUTE - 3 * 1440 * MINUTE, MINUTE, 3 * 1440, 1.2) });
+    const { connect, settled, page, save } = await start(t, await tempFolder(t, "db"), dataFolder);
+    await connect(ready);
+    await save();
+
+    const latest = (await settled("H1")).candles;
+    assert.equal(latest.at(-1)!.time, LIVE.time);
+    await sameOnEveryCut(page, "H1", latest, 80);
+    assert.deepEqual(await allPages(page, "H1", 7), latest, "a walk back gives one large page's bars");
+  });
+}
+
+test("one bar, one value: D1 rolled up from M1 beside the EA's saved D1 bars is the same bar whichever page it is cut on", { timeout: 30000 }, async (t) => {
+  const dataFolder = await tempFolder(t, "hst");
+  // Three days of M1 up to 10:00 two days ago, with no D1 file: the EA is asked for its D1 bars, from midnight.
+  await writeHst(dataFolder, BROKER, { version: 400, symbol: "EURUSD", minutes: 1, digits: 5, bars: bars(TEN + MINUTE - 5 * 1440 * MINUTE, MINUTE, 3 * 1440, 1.2) });
+  const midnight = TEN - 10 * HOUR;
+  const daily = (count: number) => bars(midnight - count * 1440 * MINUTE, 1440 * MINUTE, count, 1.3).map((b) => ({ ...b, ...round(b) }));
+  const { connect, settled, page } = await start(t, await tempFolder(t, "db"), dataFolder);
+  await connect((timeframe, count) => (timeframe === 1440 ? daily(count) : closedBars(timeframe, count)));
+
+  const latest = (await settled("D1")).candles;
+  assert.equal(latest.at(-1)!.time, live("D1").time);
+  await sameOnEveryCut(page, "D1", latest, 10);
+  assert.deepEqual(await allPages(page, "D1", 40), latest, "a walk back gives one large page's bars");
+});
+
 test("the EA's bars are kept in saved history: after a restart the chart shows them without asking again, and the History page lists them", { timeout: 20000 }, async (t) => {
   const dbFolder = await tempFolder(t, "db");
   const dataFolder = await tempFolder(t, "hst");

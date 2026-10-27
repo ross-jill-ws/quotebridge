@@ -155,6 +155,22 @@ test("candles: 900 by default and 5000 at most; from/to bound the newest bars an
   assert.equal((await app.read(path, { timeframe: "M1", from: to, to: from }, 400)).error.code, "invalid-time", "from after to");
 });
 
+test("candles up to `to` are the same bars as the page without it, where the M1 file continues the H1 file", { timeout: 20000 }, async (t) => {
+  const data = await tempFolder(t, "rest-data");
+  const ten = MIDNIGHT + 10 * HOUR;
+  // H1 up to 09:00; M1 from 05:01 to the 10:00 bar, whose rolled-up 09:00 and 10:00 buckets continue it.
+  await writeHst(data, DEMO, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: bars(ten - 50 * HOUR, HOUR, 50) });
+  await writeHst(data, DEMO, { version: 400, symbol: "EURUSD", minutes: 1, digits: 5, bars: bars(ten - 5 * HOUR + 60, 60, 300, 1.2) });
+  const app = await startRest(t, await tempFolder(t, "rest-db"), { dataFolders: { [TERMINAL]: data } });
+  const ea = await app.connect();
+  await app.quote(ea, [{ seq: 1, bid: 1.25, ask: 1.2502, quoteTime: ten + 30 }]);
+  const path = `/api/v1/markets/${EURUSD}/candles`;
+
+  const latest = (await app.read(path, { timeframe: "H1", limit: 8 })).data;
+  assert.equal(latest.at(-1).brokerTime, brokerIso(ten));
+  for (const bar of latest) assert.deepEqual((await app.read(path, { timeframe: "H1", to: bar.time, limit: 2 })).data.at(-1), bar, bar.brokerTime);
+});
+
 test("candle pages back across the broker clock's spring-forward gap without repeating or skipping a bar", { timeout: 20000 }, async (t) => {
   const data = await tempFolder(t, "rest-data");
   // 14 March 2027: the GMT+2 broker moves to GMT+3 at 07:00 UTC, so broker 09:00–09:59 does not exist.
