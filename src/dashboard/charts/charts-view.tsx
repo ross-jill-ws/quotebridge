@@ -32,6 +32,8 @@ import {
   wantsOlder,
   readChartMemory,
   chartPackages,
+  chartDrawn,
+  chartHash,
   type ChartMemory,
   type ChartType,
   type Legend,
@@ -105,7 +107,8 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   );
   const mode = useColourMode();
   const scheme = chartScheme(chartColours, mode);
-  const packages = usePackages(live).byId;
+  const packageList = usePackages(live);
+  const packages = packageList.byId;
   // The Indicators page counts the charts using each package.
   const used = chartPackages(memory).join("\n");
   useEffect(() => live.reportCharts(used ? used.split("\n") : []), [used]);
@@ -146,7 +149,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
 
   if (!snapshot || groups.length === 0) {
     return (
-      <section class="view charts">
+      <section class="view charts" data-chart={snapshot ? "empty" : "loading"}>
         <h1>Charts</h1>
         <p class="lead">Candles drawn from the quotes the app receives.</p>
         <div class="empty">
@@ -156,6 +159,14 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
     );
   }
 
+  // For a REST screenshot (screenshot.ts): whether the chart has drawn all it will.
+  const drawnAll = chartDrawn({
+    candles: !!fetched && fetched.feed === feed?.feed && fetched.period === memory.period,
+    indicators,
+    packages: packageList.list && packages,
+    values,
+    trades: !tradesShown || trading.loaded,
+  });
   const legend = data && feed ? chartLegend({ symbol: feed.symbol, period: memory.period, digits: data.digits, candles: data.candles, indicators: drawn.lines, time: crosshair }) : undefined;
   const latest = feed?.latest;
   const spread = latest && feed ? Math.round((latest.ask - latest.bid) * 10 ** feed.digits) : undefined;
@@ -168,7 +179,7 @@ export function ChartsView({ live, terminalNames, chartColours, timeShown }: Pro
   };
 
   return (
-    <section class="view charts" aria-label="Charts">
+    <section class="view charts" aria-label="Charts" data-chart={drawnAll ? "drawn" : "loading"} data-chart-feed={feed?.feed}>
       <div class="chart-head">
         <SymbolPicker groups={groups} feed={feed} groupName={group?.name} onPick={(f) => setMemory({ feed: f })} />
         {feed && (
@@ -771,7 +782,7 @@ function useChartMemory(): [ChartMemory, (change: Partial<ChartMemory>) => void]
   const change = (part: Partial<ChartMemory>) => {
     setMemory((m) => ({ ...m, ...part }));
     // A reload stays on the chosen feed.
-    if (part.feed) history.replaceState(null, "", `#/charts?feed=${encodeURIComponent(part.feed)}`);
+    if (part.feed) history.replaceState(null, "", chartHash(part.feed));
   };
   return [memory, change];
 }

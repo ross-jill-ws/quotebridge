@@ -1,5 +1,5 @@
 // The Electron-only bridge (ADR 2) the app window's preload exposes; absent in a normal browser.
-import type { PageReady, ScreenshotView } from "../../shared/server-host-protocol.js";
+import type { PageReady, ScreenshotTarget } from "../../shared/server-host-protocol.js";
 
 export type AboutApp = { version: string; installFolder: string | null; dataFolder: string };
 
@@ -8,7 +8,7 @@ type QuoteBridgeNative = {
   about(): Promise<AboutApp | null>;
   openDataFolder(): Promise<void>;
   /** Absent in an app built before screenshots. */
-  onScreenshot?(handler: (view: ScreenshotView) => Promise<PageReady>): void;
+  onScreenshot?(handler: (target: ScreenshotTarget) => Promise<PageReady>): void;
 };
 
 

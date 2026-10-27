@@ -74,7 +74,7 @@ test("every request and response the REST API manual prints is what the server d
   assert.ok(cases.length >= 20, "the manual prints its fixtures");
   const data = await tempFolder(t, "rest-doc-data");
   await writeHst(data, DEMO, { version: 401, symbol: "EURUSD", minutes: 60, digits: 5, bars: bars(MIDNIGHT + 7 * HOUR, HOUR, 3) });
-  const app = await startRest(t, await tempFolder(t, "rest-doc-db"), { dataFolders: { [TERMINAL]: data }, trading: true, overrides: { captureWindow: async (view) => ({ view, window: "hidden", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: NOW, png: "iVBORw0KGgo=" }) } });
+  const app = await startRest(t, await tempFolder(t, "rest-doc-db"), { dataFolders: { [TERMINAL]: data }, trading: true, overrides: { captureWindow: async ({ view }) => ({ view, window: "hidden", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: NOW, png: "iVBORw0KGgo=" }) } });
   const ea = await app.connect();
   await app.connect({ terminal: "mt4-bbbbbbbbbbbb", broker: REAL });
   await app.post("/api/markets/recording", { brokerServer: DEMO, symbol: "EURUSD", on: true });

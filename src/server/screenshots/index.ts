@@ -1,9 +1,9 @@
 // Screenshots of the app window for the REST API. Only main owns the window, so the server asks it over the host
 // protocol (the `capture` port); here captures are taken one at a time, each within its deadline.
-import { CAPTURE_DEADLINE_MS, type CaptureError, type CaptureErrorCode, type ScreenshotView, type WindowCapture } from "../../shared/server-host-protocol.js";
+import { CAPTURE_DEADLINE_MS, type CaptureError, type CaptureErrorCode, type ScreenshotTarget, type WindowCapture } from "../../shared/server-host-protocol.js";
 
 /** Asks main for a capture; rejects with a ScreenshotError when main refuses. */
-export type CaptureWindow = (view: ScreenshotView) => Promise<WindowCapture>;
+export type CaptureWindow = (target: ScreenshotTarget) => Promise<WindowCapture>;
 
 /** Main's deadline and a little more: main answers its own timeout (restoring the window) before this one fires. */
 export const SCREENSHOT_DEADLINE_MS = CAPTURE_DEADLINE_MS + 2_000;
@@ -31,14 +31,14 @@ export class Screenshots {
     private readonly deadlineMs = SCREENSHOT_DEADLINE_MS,
   ) {}
 
-  /** The app window switched to `view` and captured, after any capture already asked for. */
-  take(view: ScreenshotView): Promise<WindowCapture> {
-    const turn = this.queue.then(() => this.once(view));
+  /** The app window switched to `target` and captured, after any capture already asked for. */
+  take(target: ScreenshotTarget): Promise<WindowCapture> {
+    const turn = this.queue.then(() => this.once(target));
     this.queue = turn.catch(() => {});
     return turn;
   }
 
-  private once(view: ScreenshotView): Promise<WindowCapture> {
+  private once(target: ScreenshotTarget): Promise<WindowCapture> {
     const capture = this.capture;
     if (!capture) {
       return Promise.reject(new ScreenshotError("window-unavailable", "There is no app window to capture: this server runs without the app (a dev run in a browser tab)."));
@@ -48,7 +48,7 @@ export class Screenshots {
         () => reject(new ScreenshotError("screenshot-timeout", `The app window was not captured within ${Math.round(this.deadlineMs / 1000)} seconds.`)),
         this.deadlineMs,
       );
-      capture(view).then(resolve, reject).finally(() => clearTimeout(timer));
+      capture(target).then(resolve, reject).finally(() => clearTimeout(timer));
     });
   }
 }

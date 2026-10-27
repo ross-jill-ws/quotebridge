@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ipcTransport } from "../src/shared/host-transport.js";
-import type { HostMessage, ServerMessage, WindowCapture } from "../src/shared/server-host-protocol.js";
+import type { HostMessage, ScreenshotTarget, ServerMessage, WindowCapture } from "../src/shared/server-host-protocol.js";
 import { freePort } from "./free-port.js";
 import { FakeLauncher, ManualClock, PORT_IN_USE } from "./fake-server-process.js";
 
@@ -503,25 +503,26 @@ test("Quit during a restart stops the server the restart brought up, and nothing
 });
 
 test("capture-window from the server is passed to main's window capture, and its capture or refusal goes back with the request id", async () => {
-  const views: string[] = [];
+  const targets: ScreenshotTarget[] = [];
   let answer: () => Promise<WindowCapture> = async () => CAPTURE;
   const launcher = new FakeLauncher();
-  const supervisor = new Supervisor({ launch: launcher.launch, config: () => CONFIG, clock: new ManualClock(), captureWindow: (view) => (views.push(view), answer()) });
+  const supervisor = new Supervisor({ launch: launcher.launch, config: () => CONFIG, clock: new ManualClock(), captureWindow: (target) => (targets.push(target), answer()) });
   supervisor.start();
   const server = launcher.last;
   const replies = () => server.received.filter((m) => m.type === "window-captured" || m.type === "window-capture-failed");
 
   server.reply({ type: "capture-window", view: "feeds", requestId: 4 });
+  server.reply({ type: "capture-window", view: "chart", feed: "feed-1", requestId: 7 });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(views, ["feeds"]);
-  assert.deepEqual(replies(), [{ type: "window-captured", requestId: 4, capture: CAPTURE }]);
+  assert.deepEqual(targets, [{ view: "feeds" }, { view: "chart", feed: "feed-1" }]);
+  assert.deepEqual(replies(), [{ type: "window-captured", requestId: 4, capture: CAPTURE }, { type: "window-captured", requestId: 7, capture: CAPTURE }]);
 
   answer = () => Promise.reject(Object.assign(Error('The app window has a dialog open ("Buy EURUSD").'), { code: "window-busy" }));
   server.reply({ type: "capture-window", view: "feeds", requestId: 5 });
   answer = () => Promise.reject(Error("capturePage failed"));
   server.reply({ type: "capture-window", view: "feeds", requestId: 6 });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(replies().slice(1), [
+  assert.deepEqual(replies().slice(2), [
     { type: "window-capture-failed", requestId: 5, error: { code: "window-busy", message: 'The app window has a dialog open ("Buy EURUSD").' } },
     { type: "window-capture-failed", requestId: 6, error: { code: "window-unavailable", message: "The app window could not be captured: capturePage failed" } },
   ]);

@@ -8,6 +8,7 @@ import { clockLabel } from "../display-clock.js";
 import type { Live } from "../use-live.js";
 import { useTicker } from "../use-live.js";
 import { Price } from "../price.js";
+import { chartHash } from "../charts/chart-model.js";
 import { describeFeed, groupFeeds, nextFlash, type Flash, type FeedGroup } from "./feed-row.js";
 
 type Props = {
@@ -174,7 +175,7 @@ function FeedGroupView({
               return (
                 <tr key={feed.feed} class={feed.online ? undefined : "offline"}>
                   <td class="symbol-col">
-                    <a class="symbol-link" href={`#/charts?feed=${encodeURIComponent(feed.feed)}`} title={`Open the ${feed.symbol} chart (${feed.broker})`}>
+                    <a class="symbol-link" href={chartHash(feed.feed)} title={`Open the ${feed.symbol} chart (${feed.broker})`}>
                       <span class="symbol-name">{feed.symbol}</span>
                     </a>
                     <span class="chip" title="Period of the chart the EA runs on">

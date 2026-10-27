@@ -4,7 +4,7 @@
 // It talks to the server only through the server host protocol; processes and time come in as ports.
 import { randomBytes } from "node:crypto";
 import type { HostTransport } from "../../shared/host-transport.js";
-import { CAPTURE_ERROR_CODES, type CaptureError, type CaptureErrorCode, type HostMessage, type HostSettingsChange, type ScreenshotView, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type WindowCapture } from "../../shared/server-host-protocol.js";
+import { CAPTURE_ERROR_CODES, type CaptureError, type CaptureErrorCode, type HostMessage, type HostSettingsChange, type ScreenshotTarget, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type WindowCapture } from "../../shared/server-host-protocol.js";
 import type { Settings } from "../../shared/settings-store.js";
 
 /** One launched server process (an Electron utility process in the app). */
@@ -123,10 +123,10 @@ export type SupervisorOptions = {
   createToken?: () => string;
   thresholds?: Partial<SupervisorThresholds>;
   /**
-   * Switches the app window to `view` and captures it, for the server's `capture-window`. Rejects with an error whose
+   * Switches the app window to the target and captures it, for the server's `capture-window`. Rejects with an error whose
    * `code` is a CaptureErrorCode when it refuses; any other failure answers `window-unavailable`.
    */
-  captureWindow?: (view: ScreenshotView) => Promise<WindowCapture>;
+  captureWindow?: (target: ScreenshotTarget) => Promise<WindowCapture>;
 };
 
 /** A 256-bit random one-time window token (ADR 5). */
@@ -377,7 +377,7 @@ export class Supervisor {
         this.emit({ type: "settings", settings: message.settings });
         return;
       case "capture-window":
-        return this.captureWindow(message.view, message.requestId);
+        return this.captureWindow(message.view === "chart" ? { view: "chart", feed: message.feed } : { view: "feeds" }, message.requestId);
       case "status":
         this.status_.serverStatus = message.status;
         this.emit({ type: "server-status", status: message.status });
@@ -393,14 +393,14 @@ export class Supervisor {
   }
 
   /** Answers the server that asked, if it is still the current one. */
-  private captureWindow(view: ScreenshotView, requestId: number) {
+  private captureWindow(target: ScreenshotTarget, requestId: number) {
     const current = this.current;
     const answer = (message: HostMessage) => {
       if (this.current === current) current?.process.transport.send(message);
     };
     const fail = (error: CaptureError) => answer({ type: "window-capture-failed", requestId, error });
     if (!this.options.captureWindow) return fail({ code: "window-unavailable", message: "The app window is still starting." });
-    this.options.captureWindow(view).then(
+    this.options.captureWindow(target).then(
       (capture) => answer({ type: "window-captured", requestId, capture }),
       (e: { code?: unknown; message?: unknown }) =>
         fail(

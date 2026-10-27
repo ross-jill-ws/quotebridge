@@ -20,7 +20,7 @@ import type { Recorder } from "../recording/index.js";
 import type { TradeResult } from "../bridge/account-protocol.js";
 import { TradingError, tradingMessage, type JournalRecord, type RequestEngine, type TradeInput, type TradingPreview } from "../trading/index.js";
 import { ScreenshotError, type Screenshots } from "../screenshots/index.js";
-import type { CaptureErrorCode, ScreenshotView, WindowCapture } from "../../shared/server-host-protocol.js";
+import type { CaptureErrorCode, ScreenshotTarget, WindowCapture } from "../../shared/server-host-protocol.js";
 import type { ApiKeyScope } from "../auth/index.js";
 import type { SessionKind } from "./window-session.js";
 import { json, write } from "./respond.js";
@@ -117,7 +117,8 @@ export class RestV1 {
       get(/^\/requests\/(?!preview$)([^/]+)$/, (c) => this.request(c)),
       get(/^\/indicators$/, (c) => this.indicatorList(c)),
       get(/^\/indicators\/([^/]+)$/, (c) => this.indicator(c)),
-      get(/^\/screenshots\/feeds$/, (c) => this.screenshot(c, "feeds")),
+      get(/^\/screenshots\/feeds$/, (c) => this.screenshot(c, async () => ({ target: { view: "feeds" } }))),
+      get(/^\/screenshots\/charts\/([^/]+)$/, (c) => this.screenshot(c, () => this.chartTarget(c.params[0]))),
     ];
   }
 
@@ -328,28 +329,30 @@ export class RestV1 {
   }
 
   /**
-   * GET /screenshots/feeds: the app window switched to the view and captured (main does it over the host protocol),
-   * as JSON with base64, or the raw PNG with `format=png` and the health fields in headers. It changes the window, so
-   * a `trader` key (or the app window) only.
+   * GET /screenshots/feeds and /screenshots/charts/{marketId}: the app window switched to the view and captured (main
+   * does it over the host protocol), as JSON with base64, or the raw PNG with `format=png` and the health fields in
+   * headers. It changes the window, so a `trader` key (or the app window) only.
    */
-  private async screenshot(c: Context, view: ScreenshotView): Promise<Answer> {
+  private async screenshot(c: Context, chooseTarget: () => Promise<{ target: ScreenshotTarget; market?: KnownMarket }>): Promise<Answer> {
     if (c.access !== "trader" && c.access !== "window") {
       throw new ApiError(403, "insufficient-scope", "A screenshot switches the app window's view: use a key with the trader scope.");
     }
     only(c.query, ["format"]);
     const format = c.query.get("format") ?? "json";
     if (format !== "json" && format !== "png") throw new ApiError(400, "invalid-format", "format must be json or png.", { parameter: "format", allowed: ["json", "png"] });
+    const { target, market } = await chooseTarget();
     const screenshots = this.options.screenshots;
     if (!screenshots) throw new ApiError(503, "window-unavailable", "There is no app window to capture.");
     let capture: WindowCapture;
     try {
-      capture = await screenshots.take(view);
+      capture = await screenshots.take(target);
     } catch (e) {
       if (e instanceof ScreenshotError) throw new ApiError(SCREENSHOT_STATUS[e.code], e.code, e.message);
       throw e;
     }
-    const { png, capturedAt, ...health } = capture;
-    const fields = { ...health, capturedAt: iso(capturedAt), contentType: "image/png" };
+    const { png, capturedAt, view, ...health } = capture;
+    const named = market && { marketId: market.id, brokerServer: market.brokerServer, symbol: market.symbol };
+    const fields = { view, ...named, ...health, capturedAt: iso(capturedAt), contentType: "image/png" };
     if (format === "json") return { data: { ...fields, png } };
     const bytes = Buffer.from(png, "base64");
     c.res
@@ -358,6 +361,7 @@ export class RestV1 {
         "content-length": bytes.length,
         "cache-control": "no-store",
         "x-quotebridge-view": fields.view,
+        ...(named && { "x-quotebridge-market-id": named.marketId, "x-quotebridge-broker-server": named.brokerServer, "x-quotebridge-symbol": named.symbol }),
         "x-quotebridge-window": fields.window,
         "x-quotebridge-width": fields.width,
         "x-quotebridge-height": fields.height,
@@ -367,6 +371,14 @@ export class RestV1 {
       })
       .end(bytes);
     return "sent";
+  }
+
+  /** A market's chart to capture: its best source feed, chosen as for its quote; a market no terminal streams has none. */
+  private async chartTarget(id: string): Promise<{ target: ScreenshotTarget; market: KnownMarket }> {
+    const market = await this.knownMarket(id);
+    const source = selectMarketSource(this.options.bridge.snapshot(), market);
+    if (!source) throw new ApiError(409, "no-feed", "No terminal streams this market, so the app has no chart of it. Open its chart in MetaTrader with the QuoteBridge EA.");
+    return { target: { view: "chart", feed: source.feed.feed }, market };
   }
 
   /** GET /accounts: trading accounts, one per broker server and login however many terminals share it. */

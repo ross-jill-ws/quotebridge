@@ -1,22 +1,25 @@
-// GET /api/v1/screenshots/feeds over real HTTP (seam 2): a real server and database, the main process's window
-// capture replaced by a fake. Scope, the JSON and PNG answers, the refusals, one capture at a time and the deadline.
+// GET /api/v1/screenshots/feeds and /charts/{marketId} over real HTTP (seam 2): a real server and database, the main
+// process's window capture replaced by a fake. Scope, the JSON and PNG answers, the chart's feed, the refusals, one
+// capture at a time and the deadline.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ScreenshotView, WindowCapture } from "../src/shared/server-host-protocol.js";
+import type { ScreenshotTarget, WindowCapture } from "../src/shared/server-host-protocol.js";
 import { ScreenshotError } from "../src/server/screenshots/index.js";
-import { startRest, tempFolder } from "./rest-fixtures.js";
+import { marketId } from "../src/server/identity/index.js";
+import { bars, writeHst } from "./hst-fixtures.js";
+import { DEMO, HOUR, MIDNIGHT, OTHER_TERMINAL, startRest, tempFolder, TERMINAL } from "./rest-fixtures.js";
 
 /** A 1×1 PNG. */
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const CAPTURE: WindowCapture = { view: "feeds", window: "hidden", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: Date.UTC(2027, 0, 15, 8), png: PNG };
 
-async function start(t: Parameters<typeof startRest>[0], captureWindow?: (view: ScreenshotView) => Promise<WindowCapture>, screenshotDeadlineMs?: number) {
+async function start(t: Parameters<typeof startRest>[0], captureWindow?: (target: ScreenshotTarget) => Promise<WindowCapture>, screenshotDeadlineMs?: number) {
   return startRest(t, await tempFolder(t, "screenshots-db"), { overrides: { captureWindow, screenshotDeadlineMs } });
 }
 
 test("a trader key gets the Feeds screenshot with the window's health fields and the base64 PNG", { timeout: 30000 }, async (t) => {
   const views: string[] = [];
-  const app = await start(t, async (view) => (views.push(view), CAPTURE));
+  const app = await start(t, async (target) => (views.push(target.view), CAPTURE));
   const body = await app.read("/api/v1/screenshots/feeds", {}, 200, app.traderKey);
   assert.deepEqual(body, {
     data: { view: "feeds", window: "hidden", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: "2027-01-15T08:00:00.000Z", contentType: "image/png", png: PNG },
@@ -98,4 +101,67 @@ test("a capture that misses the deadline answers screenshot-timeout 504, and the
   const late = await app.read("/api/v1/screenshots/feeds", {}, 504, app.traderKey);
   assert.equal(late.error.code, "screenshot-timeout");
   assert.equal((await app.read("/api/v1/screenshots/feeds", {}, 200, app.traderKey)).data.view, "feeds");
+});
+
+// GET /api/v1/screenshots/charts/{marketId}: the market's best source feed, switched to and captured.
+const EURUSD = marketId(DEMO, "EURUSD");
+const CHART: WindowCapture = { ...CAPTURE, view: "chart" };
+
+test("a market's chart screenshot shows its best source feed and names the market", { timeout: 30000 }, async (t) => {
+  const targets: ScreenshotTarget[] = [];
+  const app = await start(t, async (target) => (targets.push(target), CHART));
+  const a = await app.connect();
+  const b = await app.connect({ terminal: OTHER_TERMINAL });
+  await app.quote(a, [{ seq: 1, bid: 1.1, ask: 1.10015, quoteTime: MIDNIGHT + 10 * HOUR - 1 }]);
+  await app.quote(b, [{ seq: 1, bid: 1.1001, ask: 1.1003, quoteTime: MIDNIGHT + 10 * HOUR }]);
+  const body = await app.read(`/api/v1/screenshots/charts/${EURUSD}`, {}, 200, app.traderKey);
+  assert.deepEqual(body, {
+    data: { view: "chart", marketId: EURUSD, brokerServer: DEMO, symbol: "EURUSD", window: "hidden", width: 1800, height: 1200, scale: 1.5, live: "live", capturedAt: "2027-01-15T08:00:00.000Z", contentType: "image/png", png: PNG },
+    meta: {},
+  });
+  assert.deepEqual(targets, [{ view: "chart", feed: b.feedKey() }], "the newest broker quote's terminal, as for the market's quote");
+
+  const res = await app.cli(`/api/v1/screenshots/charts/${EURUSD}`, { format: "png" }, { key: app.traderKey });
+  assert.equal(res.status, 200);
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from(PNG, "base64"));
+  assert.equal(res.headers.get("x-quotebridge-view"), "chart");
+  assert.equal(res.headers.get("x-quotebridge-market-id"), EURUSD);
+  assert.equal(res.headers.get("x-quotebridge-broker-server"), DEMO);
+  assert.equal(res.headers.get("x-quotebridge-symbol"), "EURUSD");
+});
+
+test("a listed feed whose terminal has gone quiet is still captured, as the chart shows it", { timeout: 30000 }, async (t) => {
+  const targets: ScreenshotTarget[] = [];
+  const app = await start(t, async (target) => (targets.push(target), CHART));
+  const ea = await app.connect();
+  await app.quote(ea, [{ seq: 1, bid: 1.1, ask: 1.1002, quoteTime: MIDNIGHT + 10 * HOUR }]);
+  app.clock.advance(60_000);
+  assert.equal((await app.read(`/api/v1/markets/${EURUSD}/quote`)).data.state, "last-known");
+  await app.read(`/api/v1/screenshots/charts/${EURUSD}`, {}, 200, app.traderKey);
+  assert.deepEqual(targets, [{ view: "chart", feed: ea.feedKey() }]);
+});
+
+test("a market no terminal streams (known from HST alone) answers no-feed 409 and nothing is captured", { timeout: 30000 }, async (t) => {
+  let captures = 0;
+  const data = await tempFolder(t, "screenshots-hst");
+  await writeHst(data, DEMO, { version: 401, symbol: "GBPUSD", minutes: 60, digits: 5, bars: bars(MIDNIGHT - 10 * HOUR, HOUR, 10) });
+  const app = await startRest(t, await tempFolder(t, "screenshots-db"), { dataFolders: { [TERMINAL]: data }, overrides: { captureWindow: async () => (captures++, CHART) } });
+  // The terminal's EURUSD chart makes its HST folder known; it streams no GBPUSD.
+  await app.connect();
+  const gbpusd = marketId(DEMO, "GBPUSD");
+  assert.equal((await app.read(`/api/v1/markets/${gbpusd}`)).data.id, gbpusd, "a known market");
+  const body = await app.read(`/api/v1/screenshots/charts/${gbpusd}`, {}, 409, app.traderKey);
+  assert.equal(body.error.code, "no-feed");
+  assert.match(body.error.message, /no terminal/i);
+  assert.equal(captures, 0);
+});
+
+test("an unknown market answers 404 unknown-market, and a readonly key insufficient-scope, before anything is captured", { timeout: 30000 }, async (t) => {
+  let captures = 0;
+  const app = await start(t, async () => (captures++, CHART));
+  await app.connect();
+  assert.equal((await app.read(`/api/v1/screenshots/charts/${marketId(DEMO, "eurusd")}`, {}, 404, app.traderKey)).error.code, "unknown-market");
+  assert.equal((await app.read(`/api/v1/screenshots/charts/${EURUSD}`, {}, 403)).error.code, "insufficient-scope");
+  assert.equal((await app.read(`/api/v1/screenshots/charts/${EURUSD}`, { timeframe: "H1" }, 400, app.traderKey)).error.code, "unknown-parameter");
+  assert.equal(captures, 0);
 });

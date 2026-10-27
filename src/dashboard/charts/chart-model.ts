@@ -1,6 +1,7 @@
 // The Charts view's model (pure): the legend at the crosshair or the latest bar, the forming candle that
 // follows the live quote, day separators, paging back through the chart history, where the view goes when bars come
-// in, what the view remembers (Milestone 2's indicators read as their packages), and since when it has candles.
+// in, what the view remembers (Milestone 2's indicators read as their packages), since when it has candles, its
+// address, and when it has drawn all it will (for a REST screenshot).
 import type { Candle } from "../../server/candles/index.js";
 import { brokerToUtc, UNKNOWN_RULE, type ClockRule } from "../../shared/clock.js";
 import { bucketStart, isIntraday, PAGE_BARS, PERIODS, type Period } from "../../shared/periods.js";
@@ -118,6 +119,34 @@ export function daySeparators(candles: readonly Candle[], period: Period): numbe
 
 export const CHART_TYPES = ["bars", "candles", "line"] as const;
 export type ChartType = (typeof CHART_TYPES)[number];
+
+/** The Charts view on one feed: a Feeds row's link, a screenshot's target; it becomes the remembered feed. */
+export function chartHash(feed: string): string {
+  return `#/charts?feed=${encodeURIComponent(feed)}`;
+}
+
+/**
+ * How far the Charts view has drawn, as its section marks it for a REST screenshot: `drawn` (all it will), `empty`
+ * (no feeds to chart) or `loading`.
+ */
+export type ChartState = "drawn" | "empty" | "loading";
+
+/**
+ * Whether the chart has drawn all it will: its candles, the values of every indicator whose package is enabled (once
+ * the package list is in), and `trades`: false while trade lines are shown and the trades not yet read.
+ */
+export function chartDrawn(chart: {
+  candles: boolean;
+  indicators: readonly { id: string; package: string }[];
+  packages: ReadonlyMap<string, { enabled: boolean }> | undefined;
+  values: ReadonlyMap<string, unknown>;
+  trades: boolean;
+}): boolean {
+  const { candles, indicators, packages, values, trades } = chart;
+  if (!candles || !trades) return false;
+  if (!indicators.length) return true;
+  return packages !== undefined && indicators.every((i) => !packages.get(i.package)?.enabled || values.has(i.id));
+}
 
 /** What the Charts view keeps in localStorage. `feed` is absent until a symbol is chosen. */
 export type ChartMemory = { feed?: string; period: Period; type: ChartType; askLine: boolean; indicators: IndicatorSpec[] };

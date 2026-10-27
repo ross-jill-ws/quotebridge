@@ -1,7 +1,7 @@
 // The server side of the server host protocol (ADR 10): runs the bridge server and the database
 // on the host's `start`, and takes them down through the one stop path on `stop`.
 import type { HostTransport } from "../shared/host-transport.js";
-import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ScreenshotView, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type TerminalAttentionStatus, type WindowCapture } from "../shared/server-host-protocol.js";
+import { HOST_SETTINGS_KEYS, type HostMessage, type HostSettingsChange, type ScreenshotTarget, type ServerError, type ServerMessage, type ServerStartConfig, type ServerStatus, type TerminalAttentionStatus, type WindowCapture } from "../shared/server-host-protocol.js";
 import { SettingsStore } from "../shared/settings-store.js";
 import type { BridgeSnapshot } from "./bridge/index.js";
 import { openDatabase, type AppDatabase } from "./database.js";
@@ -38,11 +38,11 @@ export function runServerHost(transport: HostTransport<HostMessage, ServerMessag
   /** Main captures the app window; a dev run in a browser tab has none. */
   const captureWindow = options.openDashboard
     ? undefined
-    : (view: ScreenshotView) =>
+    : (target: ScreenshotTarget) =>
         new Promise<WindowCapture>((resolve, reject) => {
           const requestId = nextCaptureId++;
           captures.set(requestId, { resolve, reject });
-          send({ type: "capture-window", view, requestId });
+          send({ type: "capture-window", requestId, ...target });
         });
   const settleCapture = (requestId: unknown) => {
     const capture = typeof requestId === "number" ? captures.get(requestId) : undefined;

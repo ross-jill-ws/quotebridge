@@ -29,8 +29,11 @@ export type ServerStartConfig = {
   bridgeBundle?: { sourceFolder: string; dllFolder: string };
 };
 
+/** What a screenshot shows: the Feeds view, or the Charts view on one feed (its `feed` key). */
+export type ScreenshotTarget = { view: "feeds" } | { view: "chart"; feed: string };
+
 /** The view a screenshot shows; the window is switched to it and left there. */
-export type ScreenshotView = "feeds";
+export type ScreenshotView = ScreenshotTarget["view"];
 
 /** The app window as the user left it; a capture leaves it so. */
 export type WindowState = "visible" | "hidden" | "minimised";
@@ -67,7 +70,7 @@ export type CaptureErrorCode = (typeof CAPTURE_ERROR_CODES)[number];
 /** Main's deadline for one capture; the server waits a little longer, so main's own answer arrives first. */
 export const CAPTURE_DEADLINE_MS = 10_000;
 
-/** The app window's page, asked by main to switch to a view: drawn (with its live link), or why not. */
+/** The app window's page, asked by main to switch to a target: drawn (with its live link), or why not. */
 export type PageReady = { ready: true; live: LiveLinkState } | { busy: string } | { unavailable: string };
 
 /** Why a capture failed, in plain words. */
@@ -133,10 +136,10 @@ export type ServerMessage =
   /** The settings after the server saved a change (main applies Start with Windows from here). */
   | { type: "settings"; settings: Settings }
   /**
-   * A screenshot asked through the REST API: main switches the app window to `view`, captures it and answers with
+   * A screenshot asked through the REST API: main switches the app window to the target, captures it and answers with
    * `window-captured` or `window-capture-failed` carrying the same `requestId` (the server's own numbering).
    */
-  | { type: "capture-window"; view: ScreenshotView; requestId: number }
+  | ({ type: "capture-window"; requestId: number } & ScreenshotTarget)
   /** `during: "start"` means the start failed and nothing is left bound or open; the host may send `start` again. */
   | {
       type: "error";

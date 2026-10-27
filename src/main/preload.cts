@@ -9,13 +9,13 @@ const SCREENSHOT_CHANNEL = "quotebridge:screenshot";
 const SCREENSHOT_REPLY_CHANNEL = "quotebridge:screenshot-reply";
 
 type ScreenshotReady = { ready: true; live: string } | { busy: string } | { unavailable: string };
-/** The dashboard's answer to a screenshot: switch to the view and say when it has drawn, or which dialog is open. */
-let screenshotHandler: ((view: string) => Promise<ScreenshotReady>) | undefined;
+/** The dashboard's answer to a screenshot: switch to the view (Feeds, or a feed's chart) and say when it has drawn, or which dialog is open. */
+let screenshotHandler: ((target: unknown) => Promise<ScreenshotReady>) | undefined;
 
-electron.ipcRenderer.on(SCREENSHOT_CHANNEL, async (_event, request: { id: number; view: string }) => {
+electron.ipcRenderer.on(SCREENSHOT_CHANNEL, async (_event, request: { id: number; target: unknown }) => {
   let ready: ScreenshotReady;
   try {
-    ready = screenshotHandler ? await screenshotHandler(request.view) : { unavailable: "The app window is still loading." };
+    ready = screenshotHandler ? await screenshotHandler(request.target) : { unavailable: "The app window is still loading." };
   } catch (e) {
     ready = { unavailable: `The app window could not show the view: ${(e as Error)?.message ?? e}` };
   }
@@ -30,7 +30,7 @@ electron.contextBridge.exposeInMainWorld("quoteBridgeNative", {
   /** Opens the app's data folder in File Explorer. */
   openDataFolder: (): Promise<void> => electron.ipcRenderer.invoke(OPEN_DATA_FOLDER_CHANNEL),
   /** Answers main's screenshot requests (one handler; a later one replaces it). */
-  onScreenshot: (handler: (view: string) => Promise<ScreenshotReady>): void => {
+  onScreenshot: (handler: (target: unknown) => Promise<ScreenshotReady>): void => {
     screenshotHandler = typeof handler === "function" ? handler : undefined;
   },
 });

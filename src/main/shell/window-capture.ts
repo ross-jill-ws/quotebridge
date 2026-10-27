@@ -1,7 +1,10 @@
-// Screenshots of the app window for the REST API: switch the window to a view and capture it whether it is visible,
-// minimised or hidden in the tray, without showing or focusing it, and leave it as it was. Electron comes in as a port.
-// `capturePage` fails on a hidden window, so a hidden one is made transparent and shown without focus for the capture.
-import { CAPTURE_DEADLINE_MS, type CaptureErrorCode, type PageReady, type ScreenshotView, type WindowCapture, type WindowState } from "../../shared/server-host-protocol.js";
+// Screenshots of the app window for the REST API: switch the window to a view (Feeds, or one feed's chart) and capture
+// it whether it is visible, minimised or hidden in the tray, without showing or focusing it, and leave it as it was.
+// Electron comes in as a port.
+// `capturePage` fails on a hidden window, and a minimised one runs no animation frames, so its page never paints the new
+// view (a chart's canvas least of all): either is made transparent and shown without focus for the capture. Chromium
+// still renders a transparent window as hidden unless its background throttling is off (seen on Electron 44).
+import { CAPTURE_DEADLINE_MS, type CaptureErrorCode, type PageReady, type ScreenshotTarget, type WindowCapture, type WindowState } from "../../shared/server-host-protocol.js";
 
 export type { PageReady };
 
@@ -12,12 +15,16 @@ export interface CaptureTarget {
   state(): WindowState;
   getOpacity(): number;
   setOpacity(value: number): void;
+  getBackgroundThrottling(): boolean;
+  setBackgroundThrottling(allowed: boolean): void;
+  /** Shows a hidden window, or restores a minimised one, without focusing it. */
   showInactive(): void;
   hide(): void;
+  minimize(): void;
   /** The display scale of the window's screen. */
   scale(): number;
-  /** Asks the page to switch to `view` unless a dialog is open, and to answer once it has drawn. */
-  prepare(view: ScreenshotView): Promise<PageReady>;
+  /** Asks the page to switch to the target unless a dialog is open, and to answer once it has drawn. */
+  prepare(target: ScreenshotTarget): Promise<PageReady>;
   /** The window's page as PNG bytes; empty when nothing has been drawn yet. */
   capture(): Promise<Uint8Array>;
 }
@@ -47,13 +54,13 @@ export class WindowCapturer {
   ) {}
 
   /** One capture at a time; each is given its deadline from when its turn comes. */
-  capture(view: ScreenshotView): Promise<WindowCapture> {
-    const turn = this.queue.then(() => this.once(view));
+  capture(target: ScreenshotTarget): Promise<WindowCapture> {
+    const turn = this.queue.then(() => this.once(target));
     this.queue = turn.catch(() => {});
     return turn;
   }
 
-  private once(view: ScreenshotView): Promise<WindowCapture> {
+  private once(target: ScreenshotTarget): Promise<WindowCapture> {
     const { window } = this;
     const why = window.unavailable();
     if (why) return Promise.reject(new CaptureFailure("window-unavailable", why));
@@ -61,12 +68,14 @@ export class WindowCapturer {
     const state = window.state();
     let done = false;
     let restore = () => {};
-    if (state === "hidden") {
+    if (state !== "visible") {
       const opacity = window.getOpacity();
-      // Set before showing, so a failure part-way still hides the window and gives its opacity back.
+      const throttling = window.getBackgroundThrottling();
+      const putBack = state === "hidden" ? () => window.hide() : () => window.minimize();
+      // Set before showing, so a failure part-way still puts the window back and gives its opacity and throttling back.
       restore = () => {
         restore = () => {};
-        for (const step of [() => window.hide(), () => window.setOpacity(opacity)]) {
+        for (const step of [putBack, () => window.setOpacity(opacity), () => window.setBackgroundThrottling(throttling)]) {
           try {
             step();
           } catch (e) {
@@ -76,6 +85,7 @@ export class WindowCapturer {
       };
       try {
         window.setOpacity(0);
+        window.setBackgroundThrottling(false);
         window.showInactive();
       } catch (e) {
         restore();
@@ -93,7 +103,7 @@ export class WindowCapturer {
         else resolve(capture!);
       };
       const timer = setTimeout(() => finish(new CaptureFailure("screenshot-timeout", `The app window was not captured within ${deadlineMs / 1000} seconds.`)), deadlineMs);
-      this.take(view, state, () => done).then(
+      this.take(target, state, () => done).then(
         (capture) => finish(null, capture),
         (e) => finish(e instanceof CaptureFailure ? e : new CaptureFailure("window-unavailable", `The app window could not be captured: ${(e as Error)?.message ?? e}`)),
       );
@@ -101,10 +111,10 @@ export class WindowCapturer {
   }
 
   /** Switches, waits for the drawing and captures; stops early once the capture has `ended` (deadline). */
-  private async take(view: ScreenshotView, state: WindowState, ended: () => boolean): Promise<WindowCapture> {
+  private async take(target: ScreenshotTarget, state: WindowState, ended: () => boolean): Promise<WindowCapture> {
     const { window } = this;
-    const page = await window.prepare(view);
-    // Past the deadline the window is already as it was; a hidden one would not capture anyway.
+    const page = await window.prepare(target);
+    // Past the deadline the window is already as it was; a hidden or minimised one would not capture anyway.
     if (ended()) throw new CaptureFailure("screenshot-timeout", "The app window answered after the deadline.");
     if ("busy" in page) throw new CaptureFailure("window-busy", `The app window has a dialog open ("${page.busy}"). Close it and try again.`);
     if ("unavailable" in page) throw new CaptureFailure("window-unavailable", page.unavailable);
@@ -114,7 +124,7 @@ export class WindowCapturer {
       if (!ended()) image = await window.capture();
     }
     const { width, height } = pngSize(image);
-    return { view, window: state, width, height, scale: window.scale(), live: page.live, capturedAt: (this.options.now ?? Date.now)(), png: Buffer.from(image).toString("base64") };
+    return { view: target.view, window: state, width, height, scale: window.scale(), live: page.live, capturedAt: (this.options.now ?? Date.now)(), png: Buffer.from(image).toString("base64") };
   }
 }
 

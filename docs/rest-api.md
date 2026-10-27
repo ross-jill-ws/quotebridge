@@ -920,13 +920,14 @@ HTTP/1.1 409 Conflict
 ## Screenshots
 
 `GET /screenshots/feeds` shows that the app is running normally: it switches **your own app window** to the Feeds
-view, captures it and answers the image with the window's health. The window is left on Feeds. It is captured
-whether it is shown, minimised or hidden in the tray, without being shown or focused, and is left that way. It needs
+view, captures it and answers the image with the window's health. The window is left on Feeds.
+[`GET /screenshots/charts/{marketId}`](#a-markets-chart) does the same with one market's chart. The window is captured
+whether it is shown, minimised or hidden in the tray, without being seen or focused, and is left that way. It needs
 a `trader` key, because it changes the window; a `readonly` key answers `403 insufficient-scope`.
 
 | Field | Value |
 | --- | --- |
-| `view` | `feeds` |
+| `view` | `feeds`, or `chart` for [a market's chart](#a-markets-chart) |
 | `window` | How the window was: `visible`, `minimised` or `hidden` (in the tray). |
 | `width`, `height`, `scale` | The image's size in the window's own physical pixels, at its display's scale. |
 | `live` | The page's link to the app: `live`, `connecting`, `reconnecting` or `session-ended`. |
@@ -955,8 +956,9 @@ One screenshot is taken at a time; others wait their turn. Each has ten seconds.
 | Refusal | When |
 | --- | --- |
 | `409 window-busy` | A dialog is open in the window (an order, close, modify or review dialog, or the setup screen). The message names it. Nothing is switched and no image is taken. |
+| `409 no-feed` | Only for [a market's chart](#a-markets-chart): no terminal streams the market. |
 | `503 window-unavailable` | There is no window to capture: the app is still starting, the window is being recreated after a crash, or the server runs without the app (a development run in a browser tab). |
-| `504 screenshot-timeout` | The window was not captured within ten seconds; so too while the Terminals view's Remove confirmation is open, which stops the page answering. A hidden window is hidden again. |
+| `504 screenshot-timeout` | The window was not captured within ten seconds; so too while the Terminals view's Remove confirmation is open, which stops the page answering. A hidden or minimised window is put back. |
 
 ```http
 GET /api/v1/screenshots/feeds
@@ -968,6 +970,39 @@ HTTP/1.1 403 Forbidden
 
 { "error": { "code": "insufficient-scope", "message": "A screenshot switches the app window's view: use a key with the trader scope.", "details": null } }
 ```
+
+### A market's chart
+
+`GET /screenshots/charts/{marketId}` switches the window to the Charts view on the market's best source feed, chosen
+as for [its quote](#quote): a connected terminal before a quiet one, then the newest broker quote. The window is
+left on that chart, and its chart remembers that feed, as when you pick it yourself. The chart is drawn as the window
+remembers it: its period, chart type, Ask line and indicators. Trade lines are shown, unless you turned them off on
+the chart already open. The image is taken once the chart has drawn its candles, every indicator's values and, with
+trade lines shown, the trades. After six seconds it is taken with what the chart shows then (still loading, say).
+With no live link to the app, the chart is captured loading.
+
+The answer has the [screenshot's fields](#screenshots) with `view: "chart"` and the market's `marketId`,
+`brokerServer` and `symbol`. With `?format=png` these are the headers `X-QuoteBridge-Market-Id`, `-Broker-Server`
+and `-Symbol` too.
+
+```http
+GET /api/v1/screenshots/charts/{market}
+Authorization: Bearer <trader key>
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "data": { "view": "chart", "marketId": "{market}", "brokerServer": "EasyForex-Demo", "symbol": "EURUSD", "window": "hidden", "width": 1800, "height": 1200, "scale": 1.5, "live": "live", "capturedAt": "2027-01-15T08:00:00.000Z", "contentType": "image/png", "png": "<any>" },
+  "meta": {}
+}
+```
+
+An unknown market answers `404 unknown-market`. A market the app knows only from a recording or MetaTrader's HST
+files, with no terminal streaming it, answers `409 no-feed`. A feed whose terminal has gone quiet is still listed, and
+its chart is captured as it shows, with its offline notice. The other refusals, the queue and the ten seconds are as
+for Feeds.
 
 ## Error codes
 
@@ -986,6 +1021,7 @@ HTTP/1.1 403 Forbidden
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
 | `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart, or is a real account (`executor-real-account`), which never trades. |
 | `window-busy` | 409 | A dialog is open in the app window; no screenshot was taken. |
+| `no-feed` | 409 | No terminal streams the market, so there is no chart of it to capture. |
 | `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |
 | `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `invalid-distance`, `unsatisfiable-distance`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |

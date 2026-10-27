@@ -13,7 +13,7 @@ import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, rea
 import { DevSignInFile } from "./shell/dev-sign-in-file.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 import { WindowCapturer, type PageReady } from "./shell/window-capture.js";
-import type { ScreenshotView } from "../shared/server-host-protocol.js";
+import type { ScreenshotTarget } from "../shared/server-host-protocol.js";
 
 const devRun = devRunControls(app.isPackaged, process.env);
 const SERVER_ENTRY = devRun.serverEntry ?? fileURLToPath(new URL("../server/entry.js", import.meta.url));
@@ -80,7 +80,7 @@ async function boot() {
       const ports = effectivePorts(settings.ports, overrides);
       return { eaPort: ports.ea, httpPort: ports.http, dataFolder, bridgeBundle };
     },
-    captureWindow: (view) => (capturer ? capturer.capture(view) : Promise.reject(Error("The app window is still starting."))),
+    captureWindow: (target) => (capturer ? capturer.capture(target) : Promise.reject(Error("The app window is still starting."))),
   });
   supervisor.onEvent((event) => {
     if (event.type === "settings") settings = event.settings;
@@ -150,14 +150,17 @@ async function boot() {
     state: () => (window.isMinimized() ? "minimised" : window.isVisible() ? "visible" : "hidden"),
     getOpacity: () => window.getOpacity(),
     setOpacity: (value) => window.setOpacity(value),
+    getBackgroundThrottling: () => window.webContents.getBackgroundThrottling(),
+    setBackgroundThrottling: (allowed) => window.webContents.setBackgroundThrottling(allowed),
     showInactive: () => window.showInactive(),
     hide: () => window.hide(),
+    minimize: () => window.minimize(),
     scale: displayScale,
-    prepare: (view: ScreenshotView) =>
+    prepare: (target: ScreenshotTarget) =>
       new Promise<PageReady>((resolve) => {
         const id = nextPageRequest++;
         pageAnswers.set(id, resolve);
-        window.webContents.send(SCREENSHOT_CHANNEL, { id, view });
+        window.webContents.send(SCREENSHOT_CHANNEL, { id, target });
       }),
     capture: async () => {
       const image = await window.webContents.capturePage();
