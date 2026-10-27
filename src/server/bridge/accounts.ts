@@ -131,10 +131,12 @@ export class AccountState {
 
   executor(id: string): { state: "zero" | "multiple" | "not-ready" | "real-account" | "ready"; source: AccountSource | null } {
     const enabled = this.sources(id).filter((s) => s.connected && s.enabled);
+    // A real account never trades, so it is never told to enable one chart: however many are enabled, it is real.
+    const real = [...this.announcements.values()].some((a) => a.accountId === id && !a.demo);
+    if (real) return { state: "real-account", source: enabled.length === 1 ? enabled[0] : null };
     if (enabled.length !== 1) return { state: enabled.length ? "multiple" : "zero", source: null };
     const source = enabled[0];
-    const announcement = this.announcements.get(source.session)!;
-    return { state: !announcement.demo ? "real-account" : !source.ready || source.maxLots === null || Number(source.maxLots) <= 0 ? "not-ready" : "ready", source };
+    return { state: !source.ready || source.maxLots === null || Number(source.maxLots) <= 0 ? "not-ready" : "ready", source };
   }
 
   list(): AccountSnapshot[] {

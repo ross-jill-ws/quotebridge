@@ -338,8 +338,8 @@ seconds (`504 read-timeout`); offline they answer the last complete snapshot wit
 Financial snapshots are kept in memory only.
 
 `executor` says whether the account can trade: `ready` when exactly one connected chart has demo trading
-enabled and ready, else `zero`, `multiple`, `not-ready` or `real-account`. Real accounts are readable but never
-trade.
+enabled and ready, else `zero`, `multiple`, `not-ready` or `real-account`. A real account is `real-account` however
+many of its charts have demo trading enabled: it is readable but never trades.
 
 ```http
 GET /api/v1/accounts
@@ -931,7 +931,7 @@ HTTP/1.1 409 Conflict
 | `cross-broker-market` | 409 | The market is not on the account's broker server. |
 | `preview-unavailable`, `preview-expired`, `preview-invalidated`, `settings-changed`, `executor-changed`, `identity-changed`, `limits-changed`, `target-changed`, `price-changed`, `estimates-changed`, `expiry-conversion-changed`, `stale-snapshot`, `stale-quote` | 409 | The preview no longer holds: preview again. |
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
-| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart. |
+| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart, or is a real account (`executor-real-account`), which never trades. |
 | `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |
 | `invalid-decimal`, `numeric-range`, `invalid-side`, `invalid-type`, `invalid-market-fields`, `invalid-volume`, `invalid-tick`, `invalid-stops`, `invalid-entry`, `invalid-expiry`, `ambiguous-expiry`, `conflicting-stops`, `invalid-risk`, `invalid-distance`, `unsatisfiable-distance`, `unsatisfiable-risk`, `risk-unavailable`, `insufficient-margin`, `frozen-target`, `wrong-target-kind`, `invalid-slippage`, `invalid-review` | 422 | A trading value is invalid for this account and market. |
 | `indicator-failed` | 422 | The indicator's calculation failed; `details.reason` says why. |

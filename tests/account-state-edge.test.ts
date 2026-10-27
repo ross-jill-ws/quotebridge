@@ -271,6 +271,16 @@ test("two terminals deduplicate the same broker/login, while equal logins at dif
   assert.equal(bridge.accounts.get(b.id)?.funds.balance, "222");
 });
 
+test("a real account's executor state is real-account with no trading chart or several, never zero or multiple", async (t) => {
+  const { bridge, connect, announce } = await startAccounts(t);
+  const reader = await connect({ terminal: "mt4-a" });
+  const account = await announce(reader, { demo: false });
+  assert.deepEqual(bridge.accounts.executor(account.id), { state: "real-account", source: null });
+  await announce(await connect({ terminal: "mt4-b" }), { enabled: true, demo: false, ready: true, maxLots: "0.5" });
+  await announce(await connect({ terminal: "mt4-c" }), { enabled: true, demo: false, ready: true, maxLots: "0.5" });
+  assert.deepEqual(bridge.accounts.executor(account.id), { state: "real-account", source: null });
+});
+
 for (const scenario of [
   { name: "unready demo", demo: true, ready: false, maxLots: "0.5", state: "not-ready" },
   { name: "unready real", demo: false, ready: false, maxLots: null, state: "real-account" },
