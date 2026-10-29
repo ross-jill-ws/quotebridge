@@ -109,6 +109,21 @@ $env:QUOTEBRIDGE_EA_PORT = '7755'; npm run dev; Remove-Item Env:QUOTEBRIDGE_EA_P
 | `npm run package` | Builds the Windows installer into `release/`. |
 | `npm run verify:package` | Checks the unpacked build in `release/win-unpacked`. |
 
+## Releasing
+
+The **Release** workflow (`.github/workflows/release.yml`) builds the installer on GitHub Actions; no local build
+machine is needed.
+
+1. Compile the EA locally with MetaEditor: 0 errors, 0 warnings.
+2. Push a tag `v<semver>`, for example `git tag v0.2.0 && git push origin v0.2.0`. The tag sets the app's version.
+3. The workflow builds the ZeroMQ DLL, runs the type check and tests, builds `QuoteBridge-Setup-<version>-x64.exe`,
+   checks the package against the tagged commit (EA sources, DLL and notices, no `.ex4`, native modules) and creates
+   the GitHub release with the installer and its `.sha256`. A tag with a pre-release part (`v0.2.0-beta.1`) makes a
+   pre-release.
+
+Run the workflow by hand (**Actions › Release › Run workflow**) to get the installer as a workflow artifact without a
+release. The installer is not code-signed until the SignPath application is approved.
+
 ## Which mode to use
 
 | You are working on | Use |

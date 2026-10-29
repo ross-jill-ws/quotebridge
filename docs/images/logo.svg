@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="QuoteBridge">
+  <rect width="64" height="64" rx="14" fill="#161D45"/>
+  <path d="M9 44h46" stroke="#C3CBE0" stroke-width="4" stroke-linecap="round"/>
+  <path d="M14 44Q32 10 50 44" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <path d="M23 33.5V44M41 33.5V44" stroke="#C3CBE0" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="27" r="5" fill="#2EE6A0"/>
+</svg>
