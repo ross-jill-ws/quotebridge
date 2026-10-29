@@ -105,7 +105,7 @@ test("remote browsers and API credentials cannot mutate trading settings", async
 test("trading setting changes discard unused previews, but unrelated settings preserve approval", { timeout: 15000 }, async (t) => {
   const clock = new FakeClock();
   const f = await start(t, { withDatabase: true, now: clock.now });
-  const credential = { headers: { cookie: f.cookie, origin: f.server.httpOrigin } };
+  const credential = { headers: { cookie: f.cookie, host: new URL(f.server.httpOrigin).host, origin: f.server.httpOrigin } };
   const engine = f.server.trading!;
   const ea = new FakeEA({ bars: () => [] }).connect(`tcp://127.0.0.1:${f.cfg.eaPort}`);
   t.after(() => ea.close());

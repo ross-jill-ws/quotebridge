@@ -120,8 +120,8 @@ test("the EA answers a bar request in pages the server accepts, with the same li
   assert.equal(source.match(/^#define QB_BARS_PER_PAGE (\d+)$/m)?.[1], String(BARS_PER_PAGE));
   assert.equal(source.match(/^#define QB_MAX_REQUEST_BARS (\d+)$/m)?.[1], String(MAX_REQUEST_BARS));
   assert.ok(source.includes(`"|loading|0|0|"`), "a loading answer has no bars");
-  assert.ok(source.includes(`"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+rows`));
-  assert.ok(source.includes("CopyRates(Symbol(),timeframe,1+shift,count,barRates)"), "closed bars only: the forming bar 0 is skipped");
+  assert.ok(source.includes(`"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+pageRows`));
+  assert.ok(source.includes("CopyRates(Symbol(),timeframe,1+shift,barCount,barRates)"), "closed bars only: the forming bar 0 is skipped");
   const timer = source.match(/void OnTimer\(\)\s*\{([\s\S]*?)\n\}/)![1];
   assert.ok(timer.indexOf("Flush();") < timer.indexOf("FlushBars();"), "quotes go out first");
 });

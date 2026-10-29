@@ -77,14 +77,14 @@ MqlRates barRates[];
 string barRequest="";
 int barOffset=0,barTotal=0,barTimeframe=0;
 bool IsTimeframe(int t) {return t==1||t==5||t==15||t==30||t==60||t==240||t==1440||t==10080||t==43200;}
-void RequestBars(string request,int timeframe,int count,int shift) {
- if(StringToInteger(request)<=0||!IsTimeframe(timeframe)||count<1||count>QB_MAX_REQUEST_BARS||shift<0)return;
+void RequestBars(string request,int timeframe,int barCount,int shift) {
+ if(StringToInteger(request)<=0||!IsTimeframe(timeframe)||barCount<1||barCount>QB_MAX_REQUEST_BARS||shift<0)return;
  if(barRequest==request)return;
  barRequest="";ArrayResize(barRates,0);
  ArraySetAsSeries(barRates,false);
  ResetLastError();
  // Bar 0 is still forming: closed bars start at 1.
- int copied=CopyRates(Symbol(),timeframe,1+shift,count,barRates);
+ int copied=CopyRates(Symbol(),timeframe,1+shift,barCount,barRates);
  int error=GetLastError();
  // 4066: history is being updated; 4073: none loaded yet.
  if(copied<=0||error==4066||error==4073){ArrayResize(barRates,0);Send("G|1|"+session+"|"+request+"|"+IntegerToString(timeframe)+"|loading|0|0|");return;}
@@ -94,12 +94,12 @@ void FlushBars() {
  if(barRequest=="")return;
  for(int page=0;page<3;page++) {
   int end=MathMin(barOffset+QB_BARS_PER_PAGE,barTotal);
-  string rows="";
+  string pageRows="";
   for(int i=barOffset;i<end;i++) {
-   if(i>barOffset)rows+=";";
-   rows+=IntegerToString((long)barRates[i].time)+","+DoubleToString(barRates[i].open,Digits)+","+DoubleToString(barRates[i].high,Digits)+","+DoubleToString(barRates[i].low,Digits)+","+DoubleToString(barRates[i].close,Digits)+","+IntegerToString(barRates[i].tick_volume);
+   if(i>barOffset)pageRows+=";";
+   pageRows+=IntegerToString((long)barRates[i].time)+","+DoubleToString(barRates[i].open,Digits)+","+DoubleToString(barRates[i].high,Digits)+","+DoubleToString(barRates[i].low,Digits)+","+DoubleToString(barRates[i].close,Digits)+","+IntegerToString(barRates[i].tick_volume);
   }
-  if(!Send("G|1|"+session+"|"+barRequest+"|"+IntegerToString(barTimeframe)+"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+rows))return;
+  if(!Send("G|1|"+session+"|"+barRequest+"|"+IntegerToString(barTimeframe)+"|ok|"+IntegerToString(barTotal)+"|"+IntegerToString(barOffset)+"|"+pageRows))return;
   barOffset=end;
   if(barOffset>=barTotal){barRequest="";ArrayResize(barRates,0);return;}
  }
