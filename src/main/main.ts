@@ -9,7 +9,7 @@ import { aboutText, APP_NAME, APP_USER_MODEL_ID, SOURCE_URL } from "../shared/ap
 import { TRADINGVIEW_URL } from "../shared/licences.js";
 import { SettingsStore, type Settings } from "../shared/settings-store.js";
 import { Supervisor, utilityProcessLauncher, type SupervisorEvent } from "./supervisor/index.js";
-import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, readDevOverrides, Shell, TITLE_BAR_COLOURS, type ShellPorts } from "./shell/index.js";
+import { appDataFolder, bridgeBundleFolders, devRunControls, effectivePorts, isReloadKey, readDevOverrides, Shell, TITLE_BAR_COLOURS, type ShellPorts } from "./shell/index.js";
 import { DevSignInFile } from "./shell/dev-sign-in-file.js";
 import { discBitmap, TRAY_COLOURS } from "./shell/tray-icon.js";
 import { WindowCapturer, type PageReady } from "./shell/window-capture.js";
@@ -169,11 +169,13 @@ async function boot() {
       return image.isEmpty() ? new Uint8Array() : image.toPNG({ scaleFactor: displayScale() });
     },
   });
-  // A crashed page never answers: those captures fail at once instead of at their deadline.
-  window.webContents.on("render-process-gone", () => {
-    for (const answer of pageAnswers.values()) answer({ unavailable: "The app window's page stopped; it is being recreated." });
+  // A crashed or reloaded page never answers: those captures fail at once instead of at their deadline.
+  const abandonCaptures = (unavailable: string) => {
+    for (const answer of pageAnswers.values()) answer({ unavailable });
     pageAnswers.clear();
-  });
+  };
+  window.webContents.on("render-process-gone", () => abandonCaptures("The app window's page stopped; it is being recreated."));
+  // Also removes Electron's default shortcuts (F5, Ctrl+R, DevTools); the window brings its reload keys back below.
   window.removeMenu();
   void window.loadURL(STARTING_PAGE);
   // The window shows only the app's own dashboard; the About links open in the default browser.
@@ -262,6 +264,13 @@ async function boot() {
     if (shell.closeRequested() === "hide") event.preventDefault();
   });
   window.webContents.on("render-process-gone", () => void shell.rendererGone());
+  window.webContents.on("before-input-event", (event, input) => {
+    if (!isReloadKey(input)) return;
+    event.preventDefault();
+    if (input.isAutoRepeat) return;
+    abandonCaptures("The app window's page was reloaded.");
+    void shell.reloadRequested();
+  });
   app.on("second-instance", (_event, argv) => shell.secondInstance(argv));
   // Any other way of quitting (e.g. an update installer) goes through the same stop path.
   app.on("before-quit", (event) => {

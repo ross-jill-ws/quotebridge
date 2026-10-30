@@ -83,3 +83,4 @@ left off. Delete that folder yourself to remove it for good.
 | The installer refuses the folder | Choose a new or empty folder inside your user profile. |
 | *No MetaTrader terminals were found* | Start each terminal once, then click **Rescan** in Terminals, or **Add folder…** for a portable one. |
 | A terminal shows *Compile failed* | Click **Compile log** on its card, close MetaEditor if it is open, then **Recompile**. |
+| The window stops changing views or stops updating | Press **F5** (or **Ctrl+R**) in the window. It reloads the page only; the server keeps running and the EAs stay connected. |

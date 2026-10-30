@@ -149,6 +149,18 @@ export class Shell {
 
   /** The window's renderer crashed: sessions are one-time, so get a fresh token and reload. */
   async rendererGone() {
+    await this.reloadWindow();
+  }
+
+  /**
+   * F5 or Ctrl+R in the window: the way out when the dashboard gets stuck. A fresh token rather than a plain reload,
+   * so it also works after the server restarted and the window's session went with it.
+   */
+  async reloadRequested() {
+    await this.reloadWindow();
+  }
+
+  private async reloadWindow() {
     try {
       this.ports.window.loadURL(await this.ports.supervisor.issueWindowToken());
     } catch {
@@ -221,6 +233,13 @@ export class Shell {
  * Start with Windows (ADR 6) as the OS login item: starts hidden in the tray. Only once setup is
  * completed, where the user confirms the pre-ticked choice.
  */
+/** The keys that reload the window (Electron's `before-input-event` input): F5 and Ctrl+R, on key down. */
+export function isReloadKey(input: { type: string; key: string; control: boolean; alt: boolean; meta: boolean; shift: boolean }): boolean {
+  if (input.type !== "keyDown" || input.alt || input.meta) return false;
+  if (input.key === "F5") return !input.control && !input.shift;
+  return input.control && !input.shift && input.key.toLowerCase() === "r";
+}
+
 export function loginItemFor(settings: Settings): LoginItem {
   return { openAtLogin: settings.setupCompleted && settings.startWithWindows, args: [HIDDEN_ARG] };
 }

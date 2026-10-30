@@ -2,7 +2,7 @@
 // through fake Electron ports and a fake supervisor.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Shell, type ShellPorts, type LoginItem } from "../src/main/shell/index.js";
+import { isReloadKey, Shell, type ShellPorts, type LoginItem } from "../src/main/shell/index.js";
 import type { StopReason, StopResult, SupervisorEvent, SupervisorStatus } from "../src/main/supervisor/index.js";
 import type { HostSettingsChange } from "../src/shared/server-host-protocol.js";
 import { DEFAULT_SETTINGS, type Settings } from "../src/shared/settings-store.js";
@@ -302,6 +302,28 @@ test("a crashed window renderer gets a fresh one-time token and reloads", async 
   await shell.rendererGone();
   assert.equal(supervisor.tokenRequests, 1);
   assert.equal(window.url, "http://127.0.0.1:6580/session?token=reissued-1");
+});
+
+test("F5 or Ctrl+R reloads the window with a fresh one-time token", async () => {
+  const { shell, supervisor, window } = setup();
+  shell.start();
+  await shell.reloadRequested();
+  assert.equal(supervisor.tokenRequests, 1);
+  assert.equal(window.url, "http://127.0.0.1:6580/session?token=reissued-1");
+});
+
+test("only F5 and Ctrl+R on key down count as reload keys", () => {
+  const key = (key: string, mods: Partial<{ type: string; control: boolean; alt: boolean; meta: boolean; shift: boolean }> = {}) =>
+    isReloadKey({ type: "keyDown", key, control: false, alt: false, meta: false, shift: false, ...mods });
+  assert.equal(key("F5"), true);
+  assert.equal(key("r", { control: true }), true);
+  assert.equal(key("R", { control: true }), true);
+  assert.equal(key("F5", { type: "keyUp" }), false);
+  assert.equal(key("r"), false);
+  assert.equal(key("r", { control: true, shift: true }), false);
+  assert.equal(key("r", { control: true, alt: true }), false);
+  assert.equal(key("F5", { control: true }), false);
+  assert.equal(key("F4"), false);
 });
 
 test("the tray warns while a managed terminal needs attention; a server warning takes precedence", () => {
