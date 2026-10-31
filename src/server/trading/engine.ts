@@ -87,7 +87,11 @@ export class RequestEngine<Credential> {
     validateTradeInput(input);
     const copied = structuredClone(input);
     if (!copied || typeof copied.accountId !== "string") throw new TradingError("invalid-input", 400);
-    if (!(await this.options.settings()).enabled) throw new TradingError("trading-disabled", 403);
+    // Demo and real accounts each have their own switch; an account not reported yet waits for the executor's answer.
+    const settings = await this.options.settings();
+    if (this.options.bridge.accounts.get(copied.accountId)?.demo === false) {
+      if (settings.realAccounts !== true) throw new TradingError("real-trading-disabled", 403);
+    } else if (!settings.enabled) throw new TradingError("trading-disabled", 403);
     // No preview the account could not execute: the dashboard, REST and CLI all wait for its result or review.
     this.assertSettled(copied.accountId);
     const epoch = this.settingsEpoch;

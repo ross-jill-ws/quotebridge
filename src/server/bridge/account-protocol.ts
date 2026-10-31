@@ -10,6 +10,8 @@ export type AccountHello = {
   ready: boolean;
   /** EA 1.12+ new-order cap; null means an older peer did not advertise it. */
   maxLots: string | null;
+  /** EA 1.13+ EnableRealTrading; false from an older peer, which never trades a real account. */
+  realEnabled: boolean;
 };
 
 export const ORDERS_PER_PAGE = 20;
@@ -206,10 +208,11 @@ export function parseAccountMessage(p: string[]): AccountMessage {
   if (p[0] === "P") return parseConditions(p);
   if (p[0] === "X") return parseResult(p);
   if (p[0] === "E") return parseReadError(p);
-  if (p[0] !== "I" || (p.length !== 8 && p.length !== 9)) return invalid();
+  if (p[0] !== "I" || p.length < 8 || p.length > 10) return invalid();
   return {
     type: "account-hello", session: p[2], login: login(p[3]), currency: text(p[4]),
     demo: flag(p[5]), enabled: flag(p[6]), ready: flag(p[7]),
-    maxLots: p.length === 9 ? decimal(p[8], "signed") : null,
+    maxLots: p.length >= 9 ? decimal(p[8], "signed") : null,
+    realEnabled: p.length === 10 ? flag(p[9]) : false,
   };
 }

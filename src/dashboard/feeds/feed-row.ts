@@ -130,6 +130,8 @@ export type FeedGroup = {
   name: string;
   /** "EA 1.08 connected", or "Offline, last heard 2 h ago". */
   state: { text: string; online: boolean };
+  /** Whether the terminal is logged into a demo account; undefined until one of its EAs has said. */
+  demo?: boolean;
   /** By symbol. */
   feeds: FeedSnapshot[];
 };
@@ -153,7 +155,8 @@ export function groupFeeds(snapshot: Pick<BridgeSnapshot, "feeds" | "terminals">
   const presence = new Map(snapshot.terminals.map((p) => [p.terminalId, p]));
   const groups = [...byTerminal].map(([terminal, feeds]): FeedGroup => {
     const brokers = [...new Set(feeds.map((f) => f.broker))].join(", ");
-    return { terminal, name: names.get(terminal) ?? brokers, state: terminalState(feeds, presence.get(terminal), snapshotTime), feeds };
+    const demo = presence.get(terminal)?.demo;
+    return { terminal, name: names.get(terminal) ?? brokers, state: terminalState(feeds, presence.get(terminal), snapshotTime), ...(demo !== undefined && { demo }), feeds };
   });
   groups.sort((a, b) => a.name.localeCompare(b.name) || (a.terminal < b.terminal ? -1 : 1));
 

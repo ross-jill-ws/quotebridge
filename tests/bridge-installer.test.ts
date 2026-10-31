@@ -50,7 +50,8 @@ test("the installed template carries the derived Terminal ID and the app's endpo
   assert.notEqual(expected, bundled);
   assert.equal(installed, expected);
   assert.match(installed, /^TerminalId=mt4-[0-9a-f]{12}\r?$/m);
-  assert.match(installed, /^EnableDemoTrading=false\r?$/m);
+  assert.doesNotMatch(installed, /EnableDemoTrading/);
+  assert.match(installed, /^EnableRealTrading=false\r?$/m);
   assert.match(installed, /^flags=343\r?$/m);
   assert.equal(await readFile(join(terminal.dataFolder, "templates", "default.tpl"), "utf8"), DEFAULT_TPL);
   assert.equal(await readFile(join(terminal.dataFolder, "templates", "my-scalping.tpl"), "utf8"), OTHER_TPL);
@@ -79,7 +80,7 @@ test("a terminal is not installed before the first install and installed with th
 
   const status = await installer.status(terminal);
   assert.equal(status.state, "installed");
-  assert.equal(status.eaVersion, "1.12");
+  assert.equal(status.eaVersion, "1.13");
   assert.equal(status.terminalId, terminalIdFor(terminal.dataFolder));
 });
 
@@ -229,7 +230,7 @@ test("a compile with errors copies nothing, keeps the old EA and shows compile f
   assert.deepEqual(await readFile(join(terminal.dataFolder, "MQL4", "Experts", "QuoteBridge.ex4")), EX4);
   const status = await newer.status(terminal);
   assert.equal(status.state, "compile-failed");
-  assert.equal(status.eaVersion, "1.12");
+  assert.equal(status.eaVersion, "1.13");
   assert.equal(status.lastFailure?.reason, "compile-errors");
   assert.equal(status.lastFailure?.errors?.length, 2);
   assert.ok(status.lastFailure?.compileLog?.startsWith(fixture.appData));

@@ -39,7 +39,7 @@ test("accounts are deduplicated across terminals, with explicit identity, label 
   assert.deepEqual((await app.read(`/api/v1/accounts/${ACCOUNT}`)).data, data[0]);
   assert.equal((await app.read(`/api/v1/accounts/${accountId(DEMO, OTHER_LOGIN)}`, {}, 404)).error.code, "unknown-account");
   await app.announce(b, { enabled: true });
-  assert.deepEqual((await app.read(`/api/v1/accounts/${ACCOUNT}`)).data.executor, { state: "multiple", terminalId: null }, "two executors block trading");
+  assert.deepEqual((await app.read(`/api/v1/accounts/${ACCOUNT}`)).data.executor, { state: "ready", terminalId: TERMINAL }, "a demo account's several charts: the first ready one trades");
 });
 
 test("funds, positions and pending orders come fresh from one terminal as decimal strings with UTC and broker times", { timeout: 20000 }, async (t) => {

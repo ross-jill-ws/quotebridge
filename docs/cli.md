@@ -23,7 +23,7 @@ Every command has `--help` with its options, output and exit codes.
 - Create keys in the **app window › Settings › API keys**. `readonly` reads everything but screenshots; `trader` also
   takes screenshots and previews, executes and reviews requests. A `readonly` key's screenshot, preview, execute or
   review answers exit 4 (`insufficient-scope`).
-- Installation and setup, API keys, network settings, recording, Demo trading, the lot cap and slippage are the app
+- Installation and setup, API keys, network settings, recording, Demo trading, Real-account trading, the lot cap and slippage are the app
   window's alone. No command changes them.
 - The key is saved in `~/.mt4-quote-bridge/config.json` (owner-only). `MT4QB_SERVER`, `MT4QB_API_KEY` and
   `MT4QB_CONFIG` override the saved values.
@@ -194,10 +194,10 @@ initiative.
 | 1 | Other error: the app is unreachable or answered unexpectedly (500) |
 | 2 | Usage error, or a malformed value (400) |
 | 3 | Not signed in, or the key is invalid or revoked (401) |
-| 4 | Forbidden (403): `readonly` key, Demo trading off, symbol not tradable |
+| 4 | Forbidden (403): `readonly` key, Demo trading off, a real account with Real-account trading off (`real-trading-disabled`), symbol not tradable |
 | 5 | Not found (404) |
 | 6 | Ambiguous symbol or login |
-| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, a real account (`executor-real-account`), no single ready executor, a dialog open in the app window (`window-busy`), no feed for a chart (`no-feed`) |
+| 7 | Conflict (409): cross-broker market, preview expired or invalidated, account unresolved, a real account with no `EnableRealTrading` chart (`executor-real-account`), no single ready executor, a dialog open in the app window (`window-busy`), no feed for a chart (`no-feed`) |
 | 8 | Invalid trading or indicator values (422) |
 | 9 | Source or app window unavailable, the terminal did not answer in five seconds, or a screenshot in ten (503, 504); not an order failure |
 | 10 | The request's outcome is unknown and not reviewed: never retry |

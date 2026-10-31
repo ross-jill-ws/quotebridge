@@ -226,18 +226,42 @@ test("trading-off/settings changes invalidate previews; expiry, stale quotes and
   await stale; assert.deepEqual(await f.engine.list(f.trader.key), []);
 });
 
-test("zero, multiple, unready and real-account executors block mutation previews", async (t) => {
+test("zero, unready, real-account and several real executors block mutation previews", async (t) => {
   const f = await setup(t);
   await f.announce(f.ea, { enabled: false });
   await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "executor-zero" });
   await f.announce(f.ea, { enabled: true, ready: false });
   await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "executor-not-ready" });
   await f.announce(f.ea, { enabled: true, demo: false });
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "real-trading-disabled" });
+  f.changeSettings({ enabled: true, maxLots: "1", slippage: 20, realAccounts: true });
+  // EnableDemoTrading alone never makes a real account's chart its trading chart.
   await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "executor-real-account" });
-  await f.announce(f.ea, { enabled: true });
-  const second = await f.connect(); await f.announce(second, { enabled: true });
+  await f.announce(f.ea, { demo: false, realEnabled: true });
+  const second = await f.connect(); await f.announce(second, { demo: false, realEnabled: true });
   await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "executor-multiple" });
+  f.changeSettings({ enabled: true, maxLots: "1", slippage: 20 });
   await assert.rejects(f.engine.preview(f.readonly.key, f.input), { code: "not-authorized" });
+});
+
+test("a real account trades only with Real-account trading on and a chart with EnableRealTrading; Demo trading is not its switch", async (t) => {
+  const f = await setup(t);
+  const real = { demo: false };
+  await f.announce(f.ea, { demo: false, realEnabled: true });
+  await assert.rejects(f.engine.preview(f.trader.key, f.input), { code: "real-trading-disabled" });
+  f.changeSettings({ enabled: false, maxLots: "1", slippage: 20, realAccounts: true });
+  const p = await approve(f, f.input, f.ea, real);
+  assert.equal(p.settings.realAccounts, true);
+  // Switching it off discards the preview at once, as any settings change does.
+  f.changeSettings({ enabled: false, maxLots: "1", slippage: 20 });
+  await assert.rejects(f.engine.execute(f.trader.key, p.id, true), { code: "preview-unavailable" });
+  f.changeSettings({ enabled: false, maxLots: "1", slippage: 20, realAccounts: true });
+  const again = await approve(f, f.input, f.ea, real);
+  assert.equal((await dispatch(f, again.id, f.ea, real)).outcome, "dispatching");
+  // A demo account still answers to Demo trading alone.
+  const demo = await f.connect({ terminal: "mt4-demo", broker: "Demo-Other" });
+  const demoAccount = await f.announce(demo, { enabled: true });
+  await assert.rejects(f.engine.preview(f.trader.key, { ...f.input, accountId: demoAccount.id }), { code: "trading-disabled" });
 });
 
 test("executor and EA cap changes invalidate an unused preview even when later restored", async (t) => {

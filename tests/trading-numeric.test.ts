@@ -67,7 +67,7 @@ test("every mutation needs a fresh demo-ready executor, same-account contract an
     (c) => { c.settings.enabled = false; }, (c) => { c.account.demo = false; },
     (c) => { c.account.ready = false; }, (c) => { c.account.connected = false; },
     (c) => { c.account.state = "stale"; }, (c) => { c.account.source = null; },
-    (c) => { c.account.sources = []; }, (c) => { c.account.sources.push({ ...c.account.sources[0], session: "other" }); },
+    (c) => { c.account.sources = []; }, (c) => { c.account.sources.unshift({ ...c.account.sources[0], session: "other" }); },
     (c) => { c.account.sources[0].ready = false; }, (c) => { c.account.sources[0].enabled = false; },
     (c) => { c.account.source!.receivedAt -= 5001; }, (c) => { c.contract.source.receivedAt -= 5001; },
     (c) => { c.contract.source.receivedAt++; }, (c) => { c.account.source!.receivedAt = NaN; },

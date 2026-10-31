@@ -271,7 +271,7 @@ test("two terminals deduplicate the same broker/login, while equal logins at dif
   assert.equal(bridge.accounts.get(b.id)?.funds.balance, "222");
 });
 
-test("a real account's executor state is real-account with no trading chart or several, never zero or multiple", async (t) => {
+test("a real account's executor state is real-account until a chart has EnableRealTrading, whatever EnableDemoTrading says", async (t) => {
   const { bridge, connect, announce } = await startAccounts(t);
   const reader = await connect({ terminal: "mt4-a" });
   const account = await announce(reader, { demo: false });
@@ -281,10 +281,21 @@ test("a real account's executor state is real-account with no trading chart or s
   assert.deepEqual(bridge.accounts.executor(account.id), { state: "real-account", source: null });
 });
 
+test("each terminal's presence says whether its account is demo, once an EA there has announced it", async (t) => {
+  const { bridge, connect, announce } = await startAccounts(t);
+  const demo = await connect({ terminal: "mt4-demo" });
+  const real = await connect({ terminal: "mt4-real" });
+  await connect({ terminal: "mt4-quiet" });
+  await announce(demo, { demo: true });
+  await announce(real, { demo: false, login: "999" });
+  const shown = Object.fromEntries(bridge.snapshot().terminals.map((p) => [p.terminalId, p.demo]));
+  assert.deepEqual(shown, { "mt4-demo": true, "mt4-real": false, "mt4-quiet": undefined });
+});
+
 for (const scenario of [
   { name: "unready demo", demo: true, ready: false, maxLots: "0.5", state: "not-ready" },
-  { name: "unready real", demo: false, ready: false, maxLots: null, state: "real-account" },
-  { name: "ready real", demo: false, ready: true, maxLots: "0.5", state: "real-account" },
+  { name: "unready real", demo: false, ready: false, maxLots: "0.5", state: "not-ready" },
+  { name: "ready real", demo: false, ready: true, maxLots: "0.5", state: "ready" },
   { name: "demo with unknown cap", demo: true, ready: true, maxLots: null, state: "not-ready" },
   { name: "demo with zero cap", demo: true, ready: true, maxLots: "0.0000000000", state: "not-ready" },
   { name: "demo with negative cap", demo: true, ready: true, maxLots: "-1.0000000000", state: "not-ready" },
@@ -294,7 +305,8 @@ for (const scenario of [
     const reader = await connect({ terminal: "mt4-a-reader" });
     const executor = await connect({ terminal: "mt4-z-executor" });
     const account = await announce(reader, { demo: scenario.demo });
-    await announce(executor, { enabled: true, demo: scenario.demo, ready: scenario.ready, maxLots: scenario.maxLots });
+    // A real account's trading chart is the one with EnableRealTrading; a demo one's, EnableDemoTrading.
+    await announce(executor, scenario.demo ? { enabled: true, demo: true, ready: scenario.ready, maxLots: scenario.maxLots } : { demo: false, ready: scenario.ready, maxLots: scenario.maxLots, realEnabled: true });
     assert.equal(bridge.accounts.executor(account.id).state, scenario.state);
     const market = { brokerServer: executor.broker, symbol: "EURUSD" };
     const reading = bridge.accounts.conditions(account.id, market);
@@ -323,13 +335,14 @@ for (const scenario of [
 }
 
 for (const enabled of [false, true]) for (const sameTerminal of [false, true]) {
-  test(`${enabled ? "multiple" : "zero"} executors fall back deterministically by ${sameTerminal ? "session" : "terminal"}, not announcement order`, async (t) => {
+  test(`${enabled ? "several" : "zero"} trading charts of a demo account pick deterministically by ${sameTerminal ? "session" : "terminal"}, not announcement order`, async (t) => {
     const { bridge, connect, announce } = await startAccounts(t);
     const z = await connect({ terminal: sameTerminal ? "mt4-shared" : "mt4-z", session: "z-reader" });
     const a = await connect({ terminal: sameTerminal ? "mt4-shared" : "mt4-a", session: "a-reader" });
     const account = await announce(z, { enabled });
     await announce(a, { enabled });
-    assert.equal(bridge.accounts.executor(account.id).state, enabled ? "multiple" : "zero");
+    // Every chart of a demo account may trade: with several, the first ready one is its trading chart.
+    assert.deepEqual([bridge.accounts.executor(account.id).state, bridge.accounts.executor(account.id).source?.session ?? null], enabled ? ["ready", a.session] : ["zero", null]);
     const reading = bridge.accounts.conditions(account.id, { brokerServer: a.broker, symbol: "EURUSD" });
     const request = await readRequest(a, "P");
     await deliver(bridge, a, conditionsWire(a, request));
@@ -341,7 +354,7 @@ for (const enabled of [false, true]) for (const sameTerminal of [false, true]) {
 
 for (const scenario of [
   { name: "zero executors", sources: [{ enabled: false }] },
-  { name: "multiple executors", sources: [{ enabled: true }, { enabled: true }] },
+  { name: "multiple real executors", sources: [{ demo: false, realEnabled: true }, { demo: false, realEnabled: true }] },
   { name: "real account", sources: [{ enabled: true, demo: false }] },
   { name: "unknown EA cap", sources: [{ enabled: true, maxLots: null }] },
   { name: "unready executor", sources: [{ enabled: true, ready: false }] },

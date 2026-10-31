@@ -15,6 +15,27 @@ export class AccountReadError extends Error {
 
 export type AccountBinding = { accountId: string; session: string; terminalId: string; brokerServer: string; login: string };
 type Announcement = AccountBinding & AccountHello;
+export type ExecutorState = "zero" | "multiple" | "not-ready" | "real-account" | "ready";
+
+const executorReady = (s: Pick<AccountSource, "ready" | "maxLots">) => s.ready && s.maxLots !== null && Number(s.maxLots) > 0;
+
+/**
+ * The chart that trades for an account, among its sources (sorted by terminal, then session). A demo account's is the
+ * first ready connected chart, or the first connected one if none is ready: every chart of a demo account may trade
+ * (EA 1.13 has no demo input; an older EA reports its EnableDemoTrading). A real account's is the one connected chart
+ * with EnableRealTrading (ADR 14): none is `real-account`, read-only, and more than one `multiple`. Whether the app
+ * lets the account's kind trade is the engine's check, not this one.
+ */
+export function chooseExecutor<S extends Pick<AccountSource, "connected" | "enabled" | "ready" | "maxLots">>(sources: S[], real: boolean): { state: ExecutorState; source: S | null } {
+  const enabled = sources.filter((s) => s.connected && s.enabled);
+  if (real) {
+    if (!enabled.length) return { state: "real-account", source: null };
+    if (enabled.length > 1) return { state: "multiple", source: null };
+  } else if (!enabled.length) return { state: "zero", source: null };
+  const source = enabled.find(executorReady) ?? enabled[0];
+  return { state: executorReady(source) ? "ready" : "not-ready", source };
+}
+
 export type AccountSource = AccountBinding & { enabled: boolean; ready: boolean; maxLots: string | null; connected: boolean };
 export type Funds = { balance: string | null; equity: string | null; margin: string | null; freeMargin: string | null; profit: string | null; marginLevel: string | null; currency: string | null; leverage: number | null };
 export type AccountSnapshot = AccountIdentity & {
@@ -124,19 +145,20 @@ export class AccountState {
     return !!p && !!a && a.accountId === binding.accountId && a.login === binding.login && p.terminalId === binding.terminalId && p.brokerServer === binding.brokerServer && this.now() - p.lastSeen < ACCOUNT_READ_MS;
   }
 
+  /** Whether the account a terminal is logged into is a demo account; null until one of its charts has announced it. */
+  terminalDemo(terminalId: string): boolean | null {
+    for (const a of this.announcements.values()) if (a.terminalId === terminalId) return a.demo;
+    return null;
+  }
+
   sources(id: string): AccountSource[] {
-    return [...this.announcements.values()].filter((a) => a.accountId === id).map((a) => ({ ...bindingOf(a), enabled: a.enabled, ready: a.ready, maxLots: a.maxLots, connected: this.current(a) }))
+    return [...this.announcements.values()].filter((a) => a.accountId === id).map((a) => ({ ...bindingOf(a), enabled: a.demo ? a.enabled : a.realEnabled, ready: a.ready, maxLots: a.maxLots, connected: this.current(a) }))
       .sort((a, b) => lexical(a.terminalId, b.terminalId) || lexical(a.session, b.session));
   }
 
-  executor(id: string): { state: "zero" | "multiple" | "not-ready" | "real-account" | "ready"; source: AccountSource | null } {
-    const enabled = this.sources(id).filter((s) => s.connected && s.enabled);
-    // A real account never trades, so it is never told to enable one chart: however many are enabled, it is real.
+  executor(id: string): { state: ExecutorState; source: AccountSource | null } {
     const real = [...this.announcements.values()].some((a) => a.accountId === id && !a.demo);
-    if (real) return { state: "real-account", source: enabled.length === 1 ? enabled[0] : null };
-    if (enabled.length !== 1) return { state: enabled.length ? "multiple" : "zero", source: null };
-    const source = enabled[0];
-    return { state: !source.ready || source.maxLots === null || Number(source.maxLots) <= 0 ? "not-ready" : "ready", source };
+    return chooseExecutor(this.sources(id), real);
   }
 
   list(): AccountSnapshot[] {

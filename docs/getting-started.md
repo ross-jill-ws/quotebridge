@@ -81,8 +81,9 @@ page) adds your own. To write one, or convert an MT4 indicator, see [Indicator p
 
 ## 7. Trade on demo accounts (optional)
 
-Demo trading is off until you switch it on in **Settings › Trading**, and real accounts never trade. Each account
-needs one chart with the EA input `EnableDemoTrading=true` and AutoTrading on. [Trading](trading.md) explains every
+Demo trading is off until you switch it on in **Settings › Trading**, and real accounts stay read-only unless you also
+switch on **Real-account trading** there. A demo account trades from any of its charts with AutoTrading
+on; a real account needs one chart with the EA input `EnableRealTrading=true`. [Trading](trading.md) explains every
 gate, and [the Trading page](trading-page.md) the view.
 
 ![The Trading page: two demo accounts with funds, positions and pending orders](images/trading-dark.png)

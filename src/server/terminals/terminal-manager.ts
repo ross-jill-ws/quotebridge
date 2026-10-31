@@ -114,8 +114,11 @@ export interface TerminalView {
   legacyTerminalId: string | null;
   lastFailure: InstallFailure | null;
   pendingRemoval: string[];
-  /** Runtime presence: the last hello from this Terminal ID, the EA version and the broker server it reported. */
-  presence: { lastHello: number; eaVersion: string | null; online: boolean; brokerServer: string } | null;
+  /**
+   * Runtime presence: the last hello from this Terminal ID, the EA version and the broker server it reported, and once
+   * one of its EAs has announced the account, whether it is a demo account.
+   */
+  presence: { lastHello: number; eaVersion: string | null; online: boolean; brokerServer: string; demo?: boolean } | null;
   /** The clock of the broker server the terminal is logged into, once its EA said hello and the rule is known. */
   brokerClock: BrokerClock | null;
   checklist: TerminalChecklist;
@@ -630,7 +633,7 @@ export class TerminalManager {
       legacyTerminalId: status?.legacyTerminalId ?? null,
       lastFailure,
       pendingRemoval: status?.pendingRemoval ?? [],
-      presence: seen ? { lastHello: seen.lastHello, eaVersion: seen.eaVersion, online: now - seen.lastHello < ONLINE_WINDOW_MS, brokerServer: seen.brokerServer } : null,
+      presence: seen ? { lastHello: seen.lastHello, eaVersion: seen.eaVersion, online: now - seen.lastHello < ONLINE_WINDOW_MS, brokerServer: seen.brokerServer, ...(seen.demo !== undefined && { demo: seen.demo }) } : null,
       brokerClock: (seen && this.runtime.brokerClock?.(seen.brokerServer)) || null,
       checklist: { refreshNavigator: eaConnected, applyTemplate: eaConnected, allowDllImports: eaConnected, eaConnected },
       hint,

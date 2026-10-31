@@ -35,8 +35,8 @@ scripts.
   → [indicator packages](docs/indicator-packages.md)
 - **Record and keep your history.** Record any market, keep a copy of the HST bars that survives MetaTrader trimming
   them, and download CSV or HST from the History page.
-- **Demo trading across accounts.** Preview an order on any demo account, check it, then send it. Real accounts are
-  shown but never trade, and an unknown outcome is never sent twice. → [trading](docs/trading.md)
+- **Trading across accounts.** Preview an order on any demo account, check it, then send it. Real accounts are marked
+  and stay read-only until you opt in, in the app and on one chart; an unknown outcome is never sent twice. → [trading](docs/trading.md)
 - **Built for scripts and agents.** A local REST API and the `mt4-quote-bridge` CLI serve markets, candles, indicator
   values, accounts, screenshots and trading requests, behind read-only or trader API keys. → [REST API](docs/rest-api.md)
 - **Stays out of the way.** It runs in the tray, starts with Windows, restarts its own server after a crash, updates

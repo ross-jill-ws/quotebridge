@@ -55,7 +55,7 @@ export type RequestView = Approval & {
 /** The app window's trading settings (Settings › Trading). */
 export type TradingSettings = SettingsView["trading"];
 /** Until the settings are read: trading off, so nothing can be previewed. */
-export const TRADING_UNKNOWN: TradingSettings = { enabled: false, maxLots: "", slippage: 0 };
+export const TRADING_UNKNOWN: TradingSettings = { enabled: false, maxLots: "", slippage: 0, realAccounts: false };
 
 /** QuoteBridge's EA stamps this magic number on the trades it places; any other trade was placed outside QuoteBridge. */
 export const QUOTEBRIDGE_MAGIC = 27012026;
@@ -112,7 +112,10 @@ export function unresolvedByAccount(requests: RequestView[]): Map<string, Reques
   return new Map(requests.filter(isUnresolved).map((r) => [r.accountId, r]));
 }
 
-/** A real account (or one whose terminal says so): readable, never traded by QuoteBridge. */
+/**
+ * A real account (or one whose terminal says so). It trades only with Real-account trading on in Settings › Trading and
+ * one chart with the EA's input EnableRealTrading (ADR 14); otherwise it is read-only.
+ */
 export const isReal = (a: AccountView) => a.demo === false || a.executor.state === "real-account";
 
 /** The account's trading chart (its executor) among its sources, if it has one: one terminal may have several charts. */
@@ -120,9 +123,12 @@ const executorSource = (a: AccountView) => a.sources.find((s) => s.terminalId ==
 
 export type ActionBlock = { kind: "real" | "unknown-demo" | "off" | "offline" | "executor" | "unresolved"; text: string; requestId?: string };
 
-const EXECUTOR_BLOCKS: Record<Exclude<ExecutorState, "ready" | "real-account">, string> = {
-  zero: "No chart of this account has demo trading enabled. Set it up under Set up trading on the Trading page.",
-  multiple: "More than one chart of this account has demo trading enabled. Leave it on in exactly one.",
+// A demo account trades from any of its charts (the app picks one), so only an EA older than 1.13 with its old input
+// EnableDemoTrading off leaves it with none; "multiple" is a real account's alone.
+const EXECUTOR_BLOCKS: Record<Exclude<ExecutorState, "ready">, string> = {
+  zero: "No chart of this account can trade: its EA is older than 1.13 and has EnableDemoTrading off. Update the EA with Recompile on the Terminals page.",
+  "real-account": "No chart of this real account has the EA's input EnableRealTrading set to true. Set it up under Set up trading on the Trading page.",
+  multiple: "More than one chart of this account has EnableRealTrading set to true. Leave it on in exactly one.",
   "not-ready": "The account's trading chart is not ready: check AutoTrading and the EA's permissions in MetaTrader.",
 };
 const OLD_EA_BLOCK = "The trading chart runs an EA older than 1.12, which does not report its lot cap. In MetaTrader, attach QuoteBridge to that chart again, or restart MetaTrader when safe.";
@@ -132,33 +138,40 @@ const OLD_EA_BLOCK = "The trading chart runs an EA older than 1.12, which does n
  * unresolved request or offline terminal never blocks this one.
  */
 export function actionBlock(account: AccountView, settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>): ActionBlock | undefined {
-  if (isReal(account)) return { kind: "real", text: "Real accounts are read-only in QuoteBridge. Trade them in MetaTrader." };
-  if (account.demo !== true) return { kind: "unknown-demo", text: "It is not known yet whether this is a demo account: its terminal has not reported it." };
-  if (!settings.enabled) return { kind: "off", text: "Demo trading is off. Switch it on in the app window's Settings › Trading." };
+  if (isReal(account)) {
+    if (settings.realAccounts !== true) return { kind: "real", text: "Real accounts are read-only while Real-account trading is off in the app window's Settings › Trading. Trade them in MetaTrader." };
+  } else if (account.demo !== true) return { kind: "unknown-demo", text: "It is not known yet whether this is a demo account: its terminal has not reported it." };
+  else if (!settings.enabled) return { kind: "off", text: "Demo trading is off. Switch it on in the app window's Settings › Trading." };
   if (!account.connected) return { kind: "offline", text: "This account's terminal is offline." };
   const executor = account.executor.state;
   // An EA older than 1.12 sends no lot cap, so its chart is never ready whatever MetaTrader's permissions.
   if (executor === "not-ready" && executorSource(account)?.maxLots === null) return { kind: "executor", text: OLD_EA_BLOCK };
-  if (executor !== "ready" && executor !== "real-account") return { kind: "executor", text: EXECUTOR_BLOCKS[executor] };
+  if (executor !== "ready") return { kind: "executor", text: EXECUTOR_BLOCKS[executor] };
   const open = unresolved.get(account.id);
   if (open) return { kind: "unresolved", text: "This account has a request without a definitive result. Check it before sending another.", requestId: open.requestId };
   return undefined;
 }
 
 /**
- * The accounts a new order may name, each with what blocks it now: demo accounts only, and for a chart's Buy or Sell
- * (`brokerServer` given) only those on the chart's own broker server; a symbol of the same name at another broker is
- * another market. `note` explains an empty list, the real accounts left out and why a blocked account's option cannot
- * be chosen (all but trading off, which the dialog already says once).
+ * The accounts a new order may name, each with what blocks it now: demo accounts, and real accounts too while
+ * Real-account trading is on; for a chart's Buy or Sell (`brokerServer` given) only those on the chart's own broker
+ * server; a symbol of the same name at another broker is another market. `note` explains an empty list, the real
+ * accounts left out and why a blocked account's option cannot be chosen (all but trading off, which the dialog already
+ * says once).
  */
 export function orderAccounts(accounts: AccountView[], settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>, brokerServer?: string) {
   const here = accounts.filter((a) => brokerServer === undefined || a.brokerServer === brokerServer);
-  const demo = here.filter((a) => a.demo === true && !isReal(a));
-  const real = here.filter(isReal).length;
+  const realOn = settings.realAccounts === true;
+  const tradable = here.filter((a) => (isReal(a) ? realOn : a.demo === true));
+  const readOnly = realOn ? 0 : here.filter(isReal).length;
   const where = brokerServer ? ` on ${brokerServer}` : "";
-  const options = demo.map((account) => ({ account, block: actionBlock(account, settings, unresolved) }));
+  const options = tradable.map((account) => ({ account, block: actionBlock(account, settings, unresolved) }));
   const blocked = options.flatMap(({ account, block }) => (block && block.kind !== "off" ? [`${account.label}: ${block.text}`] : []));
-  const notes = [!demo.length && `No demo account${where} can trade here.`, real > 0 && `Real accounts${where} are read-only in QuoteBridge (${real}).`, ...blocked].filter(Boolean);
+  const notes = [
+    !tradable.length && `No ${realOn ? "" : "demo "}account${where} can trade here.`,
+    readOnly > 0 && `Real accounts${where} are read-only while Real-account trading is off (${readOnly}).`,
+    ...blocked,
+  ].filter(Boolean);
   return { options, note: notes.length ? notes.join(" ") : undefined };
 }
 
@@ -248,7 +261,7 @@ export function requestBody(form: OrderForm): { body: Record<string, unknown> } 
 export function previewKey(form: OrderForm, account: AccountView, settings: TradingSettings, unresolved: ReadonlyMap<string, RequestView>,
   trade?: PositionView | PendingView | null): string {
   return JSON.stringify([form, account.id, account.connected, account.executor, executorSource(account)?.maxLots ?? null, unresolved.get(account.id)?.requestId ?? null,
-    settings.enabled, settings.maxLots, settings.slippage, trade === undefined ? undefined : targetFingerprint(trade)]);
+    settings.enabled, settings.realAccounts === true, settings.maxLots, settings.slippage, trade === undefined ? undefined : targetFingerprint(trade)]);
 }
 
 /**
@@ -284,34 +297,44 @@ export function enterKeyAction(stage: DialogStage): "preview" | "none" {
 export type GuideState = "ready" | "zero" | "not-ready" | "multiple" | "real" | "offline";
 const GUIDE_TITLES: Record<GuideState, string> = {
   ready: "Ready to trade on demo.",
-  zero: "No chart has demo trading enabled.",
+  zero: "The account's EA is too old to trade.",
   "not-ready": "The trading chart is not ready.",
-  multiple: "More than one chart has demo trading enabled.",
+  multiple: "More than one chart has EnableRealTrading on.",
   real: "Real account: read-only.",
   offline: "No chart of this account is connected.",
 };
+const REAL_GUIDE_TITLES: Partial<Record<GuideState, string>> = {
+  ready: "Ready to trade with real money.",
+  zero: "No chart has EnableRealTrading on.",
+  multiple: "More than one chart has EnableRealTrading on.",
+};
 
 /**
- * Set up trading for one account, as a checklist: exactly one chart of the account trades (the executor). The steps
- * are the trader's to do in MetaTrader; QuoteBridge only detects them, and never edits MetaTrader's settings.
+ * Set up trading for one account, as a checklist: one chart of the account trades (the executor), any chart of a demo
+ * account, the one with EnableRealTrading of a real account. The steps are the trader's to do in MetaTrader;
+ * QuoteBridge only detects them, and never edits MetaTrader's settings.
  */
 export function executorGuide(account: AccountView, settings: TradingSettings) {
   const connected = account.sources.filter((s) => s.connected);
   const enabled = connected.filter((s) => s.executorEnabled);
   const executor = account.executor.state;
-  const state: GuideState = isReal(account) ? "real" : !connected.length ? "offline" : executor === "real-account" ? "real" : executor;
+  const real = isReal(account);
+  // A real account's guide is read-only until Real-account trading is on; then it also needs its one EnableRealTrading chart.
+  const state: GuideState = real && settings.realAccounts !== true ? "real" : !connected.length ? "offline" : executor === "real-account" ? "zero" : executor;
   const steps = [
     { done: connected.length > 0, text: "Open a chart of this account with the QuoteBridge EA running." },
-    { done: enabled.length === 1, text: "In exactly one of its charts, set the EA's input EnableDemoTrading to true (F7 › Inputs). Leave it false in the others." },
+    ...(real ? [{ done: enabled.length === 1, text: "In exactly one of its charts, set the EA's input EnableRealTrading to true (F7 › Inputs). Leave it false in the others." }] : []),
     { done: executor === "ready", text: "Switch on AutoTrading in MetaTrader, and allow live trading in that EA's Common tab." },
-    { done: settings.enabled, text: "Switch on Demo trading in the app window's Settings › Trading." },
+    real
+      ? { done: settings.realAccounts === true, text: "Switch on Real-account trading in the app window's Settings › Trading." }
+      : { done: settings.enabled, text: "Switch on Demo trading in the app window's Settings › Trading." },
   ];
   const ea = (executorSource(account) ?? enabled[0] ?? account.sources[0])?.maxLots ?? null;
   const caps = (ea === null
     ? "The EA does not report its lot cap (MaxDemoOrderLots): upgrade the EA before trading."
     : `New orders are capped at the smallest of the broker's maximum, the EA's cap (${ea} lots) and the app's cap (${settings.maxLots} lots).`)
     + " QuoteBridge never changes the EA's inputs or MetaTrader's settings: those changes are yours.";
-  return { state, title: GUIDE_TITLES[state], steps, caps };
+  return { state, title: real ? (REAL_GUIDE_TITLES[state] ?? GUIDE_TITLES[state]) : GUIDE_TITLES[state], steps, caps };
 }
 
 /** A journal record's status for people. A review acknowledges an unknown outcome; it does not settle it. */

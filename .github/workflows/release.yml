@@ -3,7 +3,7 @@ name: Release
 # A v* tag builds the DLL, the app and the installer, checks the package against the tagged commit
 # and attaches the installer to a GitHub release (unsigned until SignPath, ADR 8).
 # Run it by hand (workflow_dispatch) to get the installer as a workflow artifact, without a release.
-# Before tagging, compile the EA locally with MetaEditor: 0 errors, 0 warnings (ADR 3).
+# Before tagging, compile the EA locally with MetaEditor: 0 errors, 0 warnings (ADR 3): `npm run compile:ea`.
 
 on:
   push:

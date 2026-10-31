@@ -8,7 +8,7 @@ import { FakeClock, FakeEA, fakeTerminalIdentity, freeEndpoint, type FakeEAOptio
 export const LOGIN = "876543219";
 export const OTHER_LOGIN = "876543220";
 export const UNUSED_REQUEST = "f".repeat(32);
-export type Announcement = { login?: string; currency?: string; demo?: boolean; enabled?: boolean; ready?: boolean; maxLots?: string | null };
+export type Announcement = { login?: string; currency?: string; demo?: boolean; enabled?: boolean; ready?: boolean; maxLots?: string | null; realEnabled?: boolean };
 export type Page = {
   login?: string; broker?: string; currency?: string; demo?: boolean; balance?: string; equity?: string;
   margin?: string; freeMargin?: string; profit?: string; leverage?: number; ready?: boolean;
@@ -63,6 +63,8 @@ export async function startAccounts(t: TestContext) {
   const announce = async (ea: FakeEA, a: Announcement = {}) => {
     const fields = ["I", "1", ea.session, a.login ?? LOGIN, a.currency ?? "USD", Number(a.demo ?? true), Number(a.enabled ?? false), Number(a.ready ?? true)];
     if (a.maxLots !== null) fields.push(a.maxLots ?? "0.5000000000");
+    // EA 1.13 appends EnableRealTrading; fixtures without it are the older EA.
+    if (a.realEnabled !== undefined) fields.push(String(Number(a.realEnabled)));
     await deliver(bridge, ea, fields.join("|"));
     const account = bridge.accounts.list().find((s) => s.login === (a.login ?? LOGIN) && s.brokerServer === ea.broker);
     assert.ok(account, "announcement exposes an account through the public service");

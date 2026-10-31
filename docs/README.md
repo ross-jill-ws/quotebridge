@@ -14,7 +14,7 @@ them, charts them with indicators, trades on demo accounts and serves it all to 
 - [Terminals and feed identity](terminals.md): setup, EA upgrades and how charts share a verified terminal identity.
 - [Indicator packages](indicator-packages.md): the package format, for writing your own indicators or converting MT4
   ones, and how to install them.
-- [Trading](trading.md): demo trading across accounts, the EA and app gates, preview/execute and unknown outcomes.
+- [Trading](trading.md): demo and opt-in real trading across accounts, the EA and app gates, preview/execute and unknown outcomes.
 - [Trading page](trading-page.md): the app window's view of accounts, positions and orders.
 
 ## Scripts and agents

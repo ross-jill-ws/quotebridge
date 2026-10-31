@@ -17,18 +17,20 @@ All field counts below include type/version/session. No optional trailing fields
 - Text is nonempty, at most 120 UTF-16 code units, with no leading/trailing whitespace, C0/C1 controls or UTF-8 replacement characters. Result/error messages have a 512-unit limit. `profitCurrency` alone may be empty (metadata unavailable). EA `TradeText` replaces wire/row delimiters with underscores; the protocol has no escaping syntax.
 - All pages and results are structurally validated before correlation. Structural validity is not authorization, freshness or evidence that the response belongs to an outstanding request.
 
-## `I`: account announcement (8 or 9 fields)
+## `I`: account announcement (8, 9 or 10 fields)
 
 Sent immediately after each periodic `H` hello, not in response to a read request:
 
 ```text
-I|1|session|login|currency|demo|enabled|ready[|maxLots]
-I|1|chart-example|12345678|USD|1|0|1|0.5000000000
+I|1|session|login|currency|demo|enabled|ready[|maxLots[|realEnabled]]
+I|1|chart-example|12345678|USD|1|0|1|0.5000000000|0
 ```
 
-`enabled` is `EnableDemoTrading` on this chart; `ready` is the EA's connection/AutoTrading/permissions/fresh-clock readiness. Neither flag bypasses demo-only execution or the app's independent gates. Real accounts remain readable.
+`enabled` says the chart may trade a demo account: always `1` from EA 1.13, which has no demo input, and `EnableDemoTrading` from older EAs; `ready` is the EA's connection/AutoTrading/permissions/fresh-clock readiness. No flag bypasses the app's independent gates. Real accounts remain readable.
 
 **EA 1.12 additive extension:** append configured `MaxDemoOrderLots` as a signed decimal string. Zero/negative caps make the executor not ready, but do not prevent account or conditions reads. The first eight fields are unchanged. The app accepts exactly eight fields from older EAs and exposes `maxLots: null`, **not** a default or zero. It accepts exactly nine fields for the extension. The chart hello's reported version is now `1.12`; its 16-field installation identity format is unchanged from 1.11.
+
+**EA 1.13 additive extension (ADR 14):** append `realEnabled`, the chart's `EnableRealTrading` flag (`0`/`1`). On a demo account the app may use any connected chart with `enabled` (the first ready one, by terminal then session); on a real account only the one chart with `realEnabled`; nine fields (or eight) mean `realEnabled` false, so an older EA never trades a real account. The EA executes `X` only when `IsDemo() || EnableRealTrading` holds (rejection 9001 otherwise). The chart hello's reported version is `1.13`.
 
 The effective **new-order** cap is the minimum of broker maximum, EA cap and app cap. A missing EA cap is unknown, not permission to assume a value; upgrade before a preview that requires verified limits. Do not automatically raise any configured cap. Full close, modify and cancellation of a larger existing trade are not rejected solely for exceeding the new-order cap. No settings, permissions or live trading actions are automated by this extension.
 
@@ -166,7 +168,7 @@ Financial fields and identities are strings; flags are booleans; counts, kind, p
 - `read(accountId)` requests a fresh `V` snapshot with a five-second deadline. Concurrent reads of the same source share its one frozen EA page stream and receive separate returned objects. Pages can arrive out of order, but missing, repeated, overlapping, duplicate-ticket or inconsistent pages never publish. Invalidating a read discards its pages rather than resuming it later.
 - `conditions(accountId, {brokerServer, symbol})` rejects cross-broker markets. It prefers a sole executor chart even when that chart is unready or the account is real; otherwise it uses a connected source in stable terminal/session order. It never switches sources midway through a request and does not require trading permission.
 - The optional `requireExecutor: true` argument to either read requires exactly one ready demo executor with a known positive EA cap, never a fallback. Permission/executor changes invalidate these reads. A fresh `V` reporting not-ready is rejected; its response is bound to the executor, even if another complete source wins ordinary account discovery ordering. This is a prerequisite for, not an authorization to send, a trade.
-- `executor(accountId)` distinguishes `zero`, `multiple`, `not-ready`, `real-account` and `ready`. Source flags and the EA cap remain explicit; the app never sets MetaTrader permissions.
+- `executor(accountId)` distinguishes `zero`, `multiple`, `not-ready`, `real-account` (a real account none of whose connected charts has `realEnabled`) and `ready`. Whether Real-account trading is on is the request engine's check, not the executor's. Source flags and the EA cap remain explicit; the app never sets MetaTrader permissions.
 - `expectResult(requestId, binding)` / `onResult(listener)` retain an immutable original account/session/terminal binding for later execution evidence. They send nothing. Dispatched bindings survive revocation/login changes; unknown or mismatched results are rejected, not routed to the new login. Synchronous/asynchronous subscriber failures are contained with static diagnostic text, never exception messages containing account data. Durable request-journal recovery is the request engine's responsibility.
 - `restoreResult(requestId, binding)` registers a trusted durable-journal binding without requiring its original session to be online. `dispatch(requestId, binding, wire)` is the engine's post-admission transport boundary and checks that the original source is still the unique ready executor; it cannot reassign an execution to another terminal.
 

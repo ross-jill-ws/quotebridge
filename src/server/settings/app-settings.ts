@@ -61,7 +61,7 @@ export class AppSettings {
         if (!(TIMES_SHOWN as readonly unknown[]).includes(value)) throw new SettingsRequestError(400, `Time shown must be one of ${TIMES_SHOWN.join(", ")}.`);
         change.timeShown = value as Settings["timeShown"];
       } else if (key === "trading") {
-        if (!isTradingSettings(value)) throw new SettingsRequestError(400, "Invalid trading settings: expected enabled, positive decimal maxLots and nonnegative whole slippage.");
+        if (!isTradingSettings(value)) throw new SettingsRequestError(400, "Invalid trading settings: expected enabled, positive decimal maxLots, nonnegative whole slippage and optional realAccounts.");
         change.trading = { ...value };
       } else if (key === "orderDefaults") {
         // The whole list: the view adds, edits and removes a market's entry by saving the list it shows.
@@ -103,7 +103,7 @@ export class AppSettings {
 
   private toView(settings: Settings): SettingsView {
     const { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, ports, trading, orderDefaults } = settings;
-    return { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, trading: { ...trading }, orderDefaults: orderDefaults.map((d) => ({ ...d })), ports: { ...ports }, portsInUse: { ...this.portsInUse } };
+    return { startWithWindows, openWindowAtStartup, theme, flashPrices, chartColours, timeShown, trading: { ...trading, realAccounts: trading.realAccounts === true }, orderDefaults: orderDefaults.map((d) => ({ ...d })), ports: { ...ports }, portsInUse: { ...this.portsInUse } };
   }
 }
 

@@ -31,7 +31,7 @@ and, as **Distance** stops, the stop loss and take profit in points from the ent
 Choosing another market replaces the defaults it filled in, but keeps what you typed. Without defaults the fields
 start empty. The trading account is never chosen for you.
 
-Real accounts show their Funds and trades but no actions: QuoteBridge trades demo accounts only. An account whose terminal has not yet said whether it is a demo account cannot trade until it does. An offline account
+Each account's head says **Demo** or **Real** (a solid amber pill), as Feeds and Terminals do for each terminal. Real accounts show their Funds and trades but no actions while **Real-account trading** is off. With it on, a real account trades like a demo one, and the page and the order dialog say that its orders use real money. An account whose terminal has not yet said whether it is a demo account (**Demo or real?**) cannot trade until it does. An offline account
 shows its last snapshot as stale, or dashes when the app has none since it started.
 
 ## Preview, then send
@@ -64,13 +64,14 @@ does not invent a result, and nothing is resent. A late answer from MetaTrader s
 
 ## Set up trading
 
-Each demo account's checklist shows whether it can trade, telling apart no trading chart, one ready, one not ready and
-more than one:
+Each account's checklist (a real account's only while Real-account trading is on) shows whether it can trade:
 
-1. A chart of the account with the QuoteBridge EA running.
-2. In exactly one of its charts, the EA input **EnableDemoTrading** set to true (F7 › Inputs).
+1. A chart of the account with the QuoteBridge EA running. Any chart of a demo account can trade; with several, the
+   first ready one does.
+2. A real account only: in exactly one of its charts, the EA input **EnableRealTrading** set to true (F7 › Inputs, EA
+   1.13 or later).
 3. **AutoTrading** on in MetaTrader and live trading allowed in that EA's Common tab.
-4. **Demo trading** on in the app window's Settings › Trading.
+4. **Demo trading** (a real account: **Real-account trading**) on in the app window's Settings › Trading.
 
 QuoteBridge only detects these: every change in MetaTrader is yours, and the app never edits MetaTrader's settings or
 the EA's inputs. New orders are capped at the smallest of the broker's maximum, the EA's `MaxDemoOrderLots` and the
@@ -84,7 +85,7 @@ entry in violet, stop loss in gold and take profit in azure. The lines are read-
 **Trades** in the toolbar hides them all, and **Accounts** chooses whose lines show.
 
 **Buy…** and **Sell…** open the order dialog for the chart's market. It lists only demo accounts on the chart's broker
-server, and you must choose one even when there is just one. A symbol of the same name at another broker is another
+server (and its real accounts while Real-account trading is on), and you must choose one even when there is just one. A symbol of the same name at another broker is another
 market: QuoteBridge never substitutes it.
 
 ## Settings › Trading
@@ -94,6 +95,10 @@ Only the app window changes these; a remote browser sees them read-only.
 - **Demo trading** (off by default). Switching it off blocks every new order, change, close and cancel at once. It
   cannot recall a request already sent: for an emergency, act in MetaTrader. Sent requests are still followed and can
   be reviewed while it is off.
+- **Real-account trading** (off by default) lets real accounts trade, from the one chart of each with the EA input
+  `EnableRealTrading=true`. Switching it on shows its risks and needs your acknowledgement; switching it off applies at
+  once, blocks every new request on real accounts and, like Demo trading, recalls nothing already sent. It is
+  independent of Demo trading.
 - **Lot cap for new orders** (1.0 by default) and **Slippage** (20 points by default). A change discards open previews.
 - **Order defaults**: per market (symbol and broker server), the lots, stop loss and take profit a new order starts
   with; each is optional. Stop loss and take profit are points from the entry, so they follow the price and the side.

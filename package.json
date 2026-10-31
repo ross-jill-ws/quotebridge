@@ -1,7 +1,7 @@
 {
   "name": "quotebridge",
   "productName": "QuoteBridge for MetaTrader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Windows desktop app that bridges MetaTrader quotes to a dashboard.",
   "author": "Ross Zhu",
@@ -10,12 +10,14 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsx scripts/build-dashboard.ts && tsx scripts/build-indicators.ts",
+    "build:release": "npm run compile:ea && npm run build",
     "start": "npm run build && electron .",
     "dev": "tsx scripts/dev/dev.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"tests/**/*.test.ts\"",
     "package": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && electron-builder --win nsis --x64 --publish never",
     "verify:package": "tsx scripts/release/verify-package.ts release/win-unpacked",
+    "compile:ea": "tsx scripts/release/compile-ea.ts",
     "indicator-package": "tsx scripts/indicator-package.ts"
   },
   "devDependencies": {

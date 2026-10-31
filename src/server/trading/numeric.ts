@@ -1,5 +1,5 @@
 import { brokerToUtc, isClockRule, utcToBroker } from "../../shared/clock.js";
-import { sameAccountBinding } from "../bridge/accounts.js";
+import { chooseExecutor, sameAccountBinding } from "../bridge/accounts.js";
 import type { AccountOrder } from "../bridge/account-protocol.js";
 import { marketId } from "../identity/index.js";
 import { TradingError, type ApprovedIntent, type EffectiveLimits, type TradeEstimates, type TargetFingerprint, type StopDistances, type TradeInput, type TradingPreview, type ValidatedTrade, type ValidationContext } from "./types.js";
@@ -82,16 +82,20 @@ function volumeAndGrid(intent: ApprovedIntent, context: ValidationContext, cap: 
 }
 function current(context: ValidationContext, accountId: string, symbol: string) {
   const { account: a, contract: contract, now, settings } = context, c = contract.conditions;
-  if (settings.enabled !== true) fail("trading-disabled", 403);
-  if (a.demo !== true) fail("demo-only", 403);
+  if (a.demo === false) {
+    if (settings.realAccounts !== true) fail("real-trading-disabled", 403);
+  } else {
+    if (settings.enabled !== true) fail("trading-disabled", 403);
+    if (a.demo !== true) fail("demo-only", 403);
+  }
   if (a.connected !== true || a.state !== "fresh" || a.ready !== true || !a.source) fail("account-unavailable", 503);
-  const enabled = a.sources.filter((s) => s.enabled === true && s.connected === true);
-  if (enabled.length !== 1 || enabled[0].ready !== true || !enabled[0].maxLots || decimal(enabled[0].maxLots) === 0n) fail("executor-unavailable", 409);
-  if (decimal(enabled[0].maxLots, true) !== decimal(context.eaMaxLots, true)) fail("limits-changed", 409);
+  const executor = chooseExecutor(a.sources, a.demo === false).source;
+  if (!executor || executor.ready !== true || !executor.maxLots || decimal(executor.maxLots) === 0n) fail("executor-unavailable", 409);
+  if (decimal(executor.maxLots, true) !== decimal(context.eaMaxLots, true)) fail("limits-changed", 409);
   const source = a.source;
   if (accountId !== a.id || source.accountId !== a.id || source.brokerServer !== a.brokerServer || source.login !== a.login ||
       contract.accountId !== a.id || contract.market.brokerServer !== a.brokerServer || contract.market.symbol !== symbol || c.symbol !== symbol ||
-      !sameAccountBinding(source, contract.source) || !sameAccountBinding(source, enabled[0]) || c.session !== source.session || c.login !== source.login) fail("identity-changed", 409);
+      !sameAccountBinding(source, contract.source) || !sameAccountBinding(source, executor) || c.session !== source.session || c.login !== source.login) fail("identity-changed", 409);
   for (const received of [source.receivedAt, contract.source.receivedAt]) {
     if (!Number.isSafeInteger(now) || !Number.isSafeInteger(received) || received > now || now - received > 5000) fail("stale-snapshot", 409);
   }
@@ -286,7 +290,7 @@ export function revalidateTrade(preview: TradingPreview, context: ValidationCont
   current(context, intent.accountId, intent.symbol);
   if (!Number.isSafeInteger(preview.createdAt) || !Number.isSafeInteger(preview.expiresAt) || context.now < preview.createdAt || context.now >= preview.expiresAt) fail("preview-expired", 409);
   if (!sameAccountBinding(preview.source, context.account.source!) || preview.marketId !== marketId(context.account.brokerServer, intent.symbol)) fail("identity-changed", 409);
-  if (preview.settings.enabled !== context.settings.enabled || normalized(preview.settings.maxLots, true) !== normalized(context.settings.maxLots, true) ||
+  if (preview.settings.enabled !== context.settings.enabled || (preview.settings.realAccounts === true) !== (context.settings.realAccounts === true) || normalized(preview.settings.maxLots, true) !== normalized(context.settings.maxLots, true) ||
       preview.settings.slippage !== context.settings.slippage || intent.slippage !== context.settings.slippage) fail("settings-changed", 409);
   if (intent.action !== "new") {
     const target = fingerprint(findTarget(intent.ticket, context));

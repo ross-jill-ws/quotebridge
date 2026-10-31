@@ -229,10 +229,30 @@ test("requests list the journal oldest first by cursor, filtered by exact accoun
   assert.equal((await app.read("/api/v1/requests", { limit: 501 }, 400)).error.code, "invalid-parameter");
 });
 
-test("a real account reads over REST, but its place and close previews answer 409 executor-real-account and the EA receives no order", { timeout: 30000 }, async (t) => {
+test("a real account trades over REST once Real-account trading is on and its chart has EnableRealTrading", { timeout: 30000 }, async (t) => {
   const app = await startRest(t, await tempFolder(t, "rest-db"), { trading: true });
   const ea = await app.connect();
-  await app.announce(ea, { demo: false, enabled: true });
+  await app.announce(ea, { demo: false, realEnabled: true });
+  const real = { demo: false };
+  assert.equal((await app.send("/api/v1/requests/preview", PLACE, 403)).error.code, "real-trading-disabled");
+  await noCommand(ea);
+  // Only the app window switches it on (settings-http covers remote browsers and API keys); Demo trading may stay off.
+  await browserSend(app, "/api/settings", { trading: { enabled: false, maxLots: "1.0", slippage: 20, realAccounts: true } }, 200);
+  const account = (await app.read(`/api/v1/accounts/${ACCOUNT}`)).data;
+  assert.deepEqual([account.demo, account.executor.state], [false, "ready"]);
+  const p = (await withReads(app, ea, "/api/v1/requests/preview", PLACE, 201, app.traderKey, real)).data;
+  const executing = app.send(`/api/v1/requests/${p.requestId}/execute`, { confirm: true }, 202);
+  await app.answer(ea, 2, real);
+  assert.match(await command(ea), new RegExp(`^X\\|1\\|${ea.session}\\|${p.requestId}\\|`));
+  await executing;
+});
+
+test("a real account reads over REST, but its place and close previews answer 409 executor-real-account and the EA receives no order", { timeout: 30000 }, async (t) => {
+  const app = await startRest(t, await tempFolder(t, "rest-db"), { trading: true });
+  await app.post("/api/settings", { trading: { enabled: true, maxLots: "1.0", slippage: 20, realAccounts: true } });
+  const ea = await app.connect();
+  // EnableDemoTrading on a real account's chart: still no trading chart.
+  await app.announce(ea, { demo: false, enabled: true, realEnabled: false });
   const page = { demo: false, rows: [orderRow(7, 0), orderRow(8, 2)], total: 2 };
   const read = async (path: string) => {
     const pending = app.read(path);

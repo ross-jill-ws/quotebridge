@@ -25,8 +25,8 @@ Download the installer from the [latest release](https://github.com/ross-jill-ws
 In PowerShell, in the folder you downloaded to:
 
 ```powershell
-Get-FileHash .\QuoteBridge-Setup-0.1.0-x64.exe -Algorithm SHA256
-Get-Content .\QuoteBridge-Setup-0.1.0-x64.exe.sha256
+Get-FileHash .\QuoteBridge-Setup-0.2.0-x64.exe -Algorithm SHA256
+Get-Content .\QuoteBridge-Setup-0.2.0-x64.exe.sha256
 ```
 
 The two hashes must be the same. If they differ, delete the file and download it again.

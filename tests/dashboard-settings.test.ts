@@ -2,11 +2,22 @@
 // development run's port overrides win over the saved ports; the theme the page takes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apiKeyRows, deleteRecording, factsAccount, orderDefaultsChange, orderDefaultsFacts, parsePort, portChange, portsNote, recordingRows, removeOrderDefaults, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
+import { allowRealTrading, apiKeyRows, deleteRecording, factsAccount, orderDefaultsChange, orderDefaultsFacts, parsePort, portChange, portsNote, recordingRows, removeOrderDefaults, revokeApiKey, tradingChange } from "../src/dashboard/settings/settings-model.js";
 import { themeAttribute } from "../src/dashboard/theme.js";
 import type { SettingsView } from "../src/server/settings/index.js";
 
 const VIEW: SettingsView = { trading: { enabled: false, maxLots: "1.0", slippage: 20 }, startWithWindows: true, openWindowAtStartup: false, theme: "system", flashPrices: true, chartColours: "default", timeShown: "broker", orderDefaults: [], ports: { ea: 5555, http: 5580 }, portsInUse: { ea: 5555, http: 5580 } };
+
+test("switching Real-account trading on names its risks and asks for them to be acknowledged", () => {
+  const ask = allowRealTrading();
+  assert.equal(ask.title, "Allow trading on real accounts?");
+  assert.match(ask.risks.join(" "), /real money/);
+  assert.match(ask.risks.join(" "), /EnableRealTrading/);
+  assert.match(ask.risks.join(" "), /trader API keys and the command-line client/);
+  assert.match(ask.risks.join(" "), /cannot recall a request already sent/);
+  assert.match(ask.acknowledge, /I understand/);
+  assert.equal(ask.confirm, "Allow real-account trading");
+});
 
 test("a typed port is a whole number from 1024 to 65535, different from the other port and from the current one", () => {
   assert.deepEqual(parsePort(" 5556 ", "ea", VIEW), { port: 5556 });

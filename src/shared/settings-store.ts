@@ -33,9 +33,12 @@ export const TIMES_SHOWN = ["broker", "local", "utc"] as const;
 export type TimeShown = (typeof TIMES_SHOWN)[number];
 
 export interface TradingSettings {
+  /** Demo accounts may trade. */
   enabled: boolean;
   maxLots: string;
   slippage: number;
+  /** Real accounts may trade too (ADR 14); absent in settings saved before it, which is off. */
+  realAccounts?: boolean;
 }
 
 /**
@@ -202,9 +205,9 @@ function isPort(port: unknown): port is number {
 export function isTradingSettings(value: unknown): value is TradingSettings {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const given = value as Record<string, unknown>;
-  return Object.keys(given).length === 3
-    && Object.keys(given).every((key) => ["enabled", "maxLots", "slippage"].includes(key))
+  return Object.keys(given).every((key) => ["enabled", "maxLots", "slippage", "realAccounts"].includes(key))
     && typeof given.enabled === "boolean"
+    && (given.realAccounts === undefined || typeof given.realAccounts === "boolean")
     && typeof given.maxLots === "string"
     && /^(?:0|[1-9]\d{0,14})(?:\.\d{1,10})?$/.test(given.maxLots)
     && /[1-9]/.test(given.maxLots)

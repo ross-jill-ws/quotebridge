@@ -6,6 +6,7 @@
 // and Bid, as Feeds does.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TimeShown } from "../../shared/settings-store.js";
+import { AccountKind } from "../account-kind.js";
 import { ApiError, get, getAll, post, type Envelope } from "../api.js";
 import { Price } from "../price.js";
 import type { Live } from "../use-live.js";
@@ -14,6 +15,7 @@ import {
   currentTrade,
   describeIntent,
   enterKeyAction,
+  isReal,
   marketQuote,
   newOrderForm,
   orderAccounts,
@@ -129,7 +131,8 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
     return () => void (current = false);
   }, [brokerServer, place === undefined]);
 
-  // The accounts a new order may name: demo accounts (on the chart's broker server for a chart's order).
+  // The accounts a new order may name: demo accounts, and real ones while Real-account trading is on (on the chart's
+  // broker server for a chart's order).
   const choices = orderAccounts(trading.accounts, settings, unresolved, fixedMarket?.brokerServer);
 
   const block: ActionBlock | undefined = account ? actionBlock(account, settings, unresolved) : undefined;
@@ -213,7 +216,7 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
         <header class="dialog-head">
           <h2 id="order-title">{title}</h2>
         </header>
-        {!settings.enabled && (
+        {!settings.enabled && !settings.realAccounts && (
           <div class="notice warn" role="status">
             Demo trading is off in the app window's Settings, so nothing can be sent. Switching it off never recalls a request already sent: for an emergency,
             act in MetaTrader.
@@ -230,6 +233,7 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
                   {choices.options.map(({ account: a, block: b }) => (
                     <option key={a.id} value={a.id} disabled={!!b}>
                       {a.label}
+                      {isReal(a) ? " · Real" : ""}
                       {a.currency ? ` · ${a.currency}` : ""}
                       {b ? ` (${b.kind === "unresolved" ? "unresolved request" : b.kind === "off" ? "trading off" : b.kind === "offline" ? "offline" : "not ready"})` : ""}
                     </option>
@@ -386,6 +390,15 @@ export function OrderDialog(props: { target: OrderTarget; trading: TradingState;
           )}
         </fieldset>
 
+        {account && isReal(account) && !block && stage !== "sent" && (
+          <div class="notice warn real-money" role="note">
+            <AccountKind demo={false} />
+            <span>
+              <strong>{account.label} is a real account.</strong> This {target.kind === "place" ? "order" : "change"} uses real money once it is sent. Check the
+              preview before you send it.
+            </span>
+          </div>
+        )}
         {account && block && stage === "editing" && (
           <div class="notice warn" role="status">
             {block.text}

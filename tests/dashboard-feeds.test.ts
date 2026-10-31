@@ -243,6 +243,16 @@ test("a terminal the app does not manage is named by its broker", () => {
   assert.equal(view.groups[0].name, "Demo-Broker");
 });
 
+test("a group's head says Demo or Real once the terminal's EA has announced its account, and nothing before", () => {
+  const groups = groupFeeds(
+    { feeds: [feed({ terminal: "mt4-d" }), feed({ terminal: "mt4-r" }), feed({ terminal: "mt4-u" })], terminals: [presence("mt4-d", { demo: true }), presence("mt4-r", { demo: false }), presence("mt4-u")] },
+    new Map([["mt4-d", "A demo"], ["mt4-r", "B real"], ["mt4-u", "C unknown"]]),
+    NOW,
+  ).groups;
+  assert.deepEqual(groups.map((g) => [g.terminal, g.demo]), [["mt4-d", true], ["mt4-r", false], ["mt4-u", undefined]]);
+  assert.equal("demo" in groups[2], false);
+});
+
 test("a group's head shows the terminal's EA version while connected, and when it was last heard once offline", () => {
   const head = (feeds: FeedSnapshot[], p: TerminalPresence) => groupFeeds({ feeds, terminals: [p] }, new Map(), NOW).groups[0].state;
   assert.deepEqual(head([feed()], presence("mt4-0123456789ab")), { text: "EA 1.08 connected", online: true });

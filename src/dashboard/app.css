@@ -641,6 +641,65 @@ input[type="checkbox"]:focus-visible {
   padding-left: 0;
 }
 
+/* Demo or real account: a quiet pill for demo, a solid one for real money, so the two never look alike. */
+.account-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.account-kind::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.account-kind.demo {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.account-kind.real {
+  color: var(--surface);
+  background: var(--caution);
+  border-color: var(--caution);
+}
+
+.account-kind.real::before {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface) 35%, transparent);
+}
+
+.account-kind.unknown {
+  color: var(--ink-3);
+  border-color: var(--line);
+  border-style: dashed;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+.account-kind.unknown::before {
+  display: none;
+}
+
+/* The order dialog's warning when the chosen account trades real money. */
+.notice.real-money {
+  border: 1px solid var(--caution);
+}
+
 /* Feeds: one panel per terminal, the terminal's own state in its head. */
 .attention-text {
   color: var(--caution);
@@ -1790,6 +1849,61 @@ label.setting-row {
 .confirm-actions {
   display: flex;
   gap: 8px;
+}
+
+/* Settings › Trading › Real-account trading: the switch, and under it the risks to acknowledge before it goes on. */
+.real-trading-row {
+  flex-wrap: wrap;
+}
+
+.real-trading-row .setting-text {
+  cursor: pointer;
+}
+
+.real-trading-row.disabled .setting-text {
+  cursor: default;
+}
+
+.real-trading-row .setting-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.real-trading-row.on .switch:checked {
+  background: var(--caution);
+}
+
+.real-trading-confirm {
+  flex-basis: 100%;
+  margin-top: 0;
+  border: 1px solid var(--caution);
+  color: var(--ink);
+}
+
+.risk-list {
+  margin: 8px 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.risk-list li + li {
+  margin-top: 5px;
+}
+
+.risk-acknowledge {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.risk-acknowledge input {
+  margin: 2px 0 0;
+  accent-color: var(--caution);
 }
 
 details.setting-row,

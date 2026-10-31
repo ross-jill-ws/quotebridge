@@ -8,11 +8,13 @@ import type { SettingsView as Settings } from "../../server/settings/index.js";
 import { APP_NAME, SOURCE_URL, TRADEMARK_NOTICE } from "../../shared/app-identity.js";
 import { BUNDLED_WORKS } from "../../shared/licences.js";
 import type { ChartColours, Theme, TimeShown } from "../../shared/settings-store.js";
+import { AccountKind } from "../account-kind.js";
 import { get, getAll, post, type Envelope } from "../api.js";
 import { native, type AboutApp } from "../terminals/native.js";
 import { applyTheme } from "../theme.js";
 import type { AccountView } from "../trading/trading-model.js";
 import {
+  allowRealTrading,
   apiKeyRows,
   deleteRecording,
   factsAccount,
@@ -230,13 +232,14 @@ function TradingGroup(props: { settings: Settings; onChange: (trading: Settings[
   const { settings, onChange, onOrderDefaults } = props;
   const trading = settings.trading;
   const manage = settings.manage === true;
+  const on = trading.enabled || trading.realAccounts === true;
   return (
     <SettingsGroup
       title="Trading"
       after={
         <div class="notice warn" role="note">
-          {trading.enabled
-            ? "Switching Demo trading off blocks every new order, change, close and cancel at once, but cannot recall a request already sent. For an emergency, act in MetaTrader."
+          {on
+            ? "Switching Demo trading or Real-account trading off blocks every new order, change, close and cancel on those accounts at once, but cannot recall a request already sent. For an emergency, act in MetaTrader."
             : "Off: nothing can be previewed or sent. Requests already sent are still followed and can be reviewed on the Trading page."}
         </div>
       }
@@ -244,15 +247,16 @@ function TradingGroup(props: { settings: Settings; onChange: (trading: Settings[
       <Toggle
         label="Demo trading"
         hint={manage
-          ? "Lets the Trading page, chart orders and trader API keys preview and send orders on demo accounts. Real accounts are always read-only."
+          ? "Lets the Trading page, chart orders, trader API keys and the command-line client preview and send orders on demo accounts."
           : "Only the app window can change trading settings."}
         checked={trading.enabled}
         disabled={!manage}
         onChange={(enabled) => onChange({ ...trading, enabled }).catch(() => {})}
       />
+      <RealTradingRow trading={trading} manage={manage} onChange={onChange} />
       <TradingValue
         label="Lot cap for new orders"
-        hint="New orders are limited to the smallest of this, the EA's MaxDemoOrderLots and the broker's maximum. Closing, changing or cancelling a larger trade is not."
+        hint="New orders, demo or real, are limited to the smallest of this, the EA's MaxDemoOrderLots and the broker's maximum. Closing, changing or cancelling a larger trade is not."
         field="maxLots"
         unit="lots"
         settings={settings}
@@ -765,6 +769,83 @@ function Toggle({ label, hint, checked, disabled, onChange }: { label: string; h
       </span>
       <input type="checkbox" role="switch" class="switch" checked={checked} disabled={disabled} onChange={(e) => onChange((e.target as HTMLInputElement).checked)} />
     </label>
+  );
+}
+
+/**
+ * Settings › Trading › Real-account trading. Switching it on asks first, naming the risks, and needs them acknowledged;
+ * switching it off applies at once.
+ */
+function RealTradingRow({ trading, manage, onChange }: { trading: Settings["trading"]; manage: boolean; onChange: (trading: Settings["trading"]) => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [understood, setUnderstood] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const on = trading.realAccounts === true;
+  const close = () => {
+    setConfirming(false);
+    setUnderstood(false);
+  };
+  const allow = async () => {
+    setBusy(true);
+    try {
+      await onChange({ ...trading, realAccounts: true });
+      close();
+    } catch {
+      // The view shows the server's reason; the confirmation stays open to try again or cancel.
+    } finally {
+      setBusy(false);
+    }
+  };
+  const consequence = confirming ? allowRealTrading() : undefined;
+  return (
+    <div class={`setting-row real-trading-row${!manage ? " disabled" : ""}${on ? " on" : ""}`}>
+      <label class="setting-text" for="real-trading-switch">
+        <span class="setting-label">
+          Real-account trading <AccountKind demo={false} />
+        </span>
+        <span class="setting-hint">
+          {!manage
+            ? "Only the app window can change trading settings."
+            : on
+              ? "On: real accounts trade from the one chart that has the EA's input EnableRealTrading set to true. Orders on them use real money."
+              : "Off: real accounts are read-only, whatever their charts' inputs. Switch it on to trade them as demo accounts are traded, with real money."}
+        </span>
+      </label>
+      <input
+        id="real-trading-switch"
+        type="checkbox"
+        role="switch"
+        class="switch"
+        checked={on}
+        disabled={!manage || busy || confirming}
+        onChange={(e) => {
+          if (!(e.target as HTMLInputElement).checked) return void onChange({ ...trading, realAccounts: false }).catch(() => {});
+          setConfirming(true);
+        }}
+      />
+      {consequence && (
+        <div class="confirm real-trading-confirm" role="alertdialog" aria-label={consequence.title} onKeyDown={(e) => e.key === "Escape" && close()}>
+          <strong>{consequence.title}</strong>
+          <ul class="risk-list">
+            {consequence.risks.map((risk) => (
+              <li key={risk}>{risk}</li>
+            ))}
+          </ul>
+          <label class="risk-acknowledge">
+            <input type="checkbox" checked={understood} onChange={(e) => setUnderstood((e.target as HTMLInputElement).checked)} autoFocus />
+            <span>{consequence.acknowledge}</span>
+          </label>
+          <div class="confirm-actions">
+            <button class="button danger" disabled={!understood || busy} onClick={allow}>
+              {consequence.confirm}
+            </button>
+            <button class="button quiet" disabled={busy} onClick={close}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

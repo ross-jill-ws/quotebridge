@@ -4,6 +4,7 @@
 // Money is never added up across accounts: each account shows its own currency.
 import { useMemo, useState } from "preact/hooks";
 import type { TimeShown } from "../../shared/settings-store.js";
+import { AccountKind } from "../account-kind.js";
 import type { Live } from "../use-live.js";
 import { OrderDialog, type OrderTarget } from "./order-dialog.js";
 import { ReviewDialog } from "./review-dialog.js";
@@ -34,10 +35,10 @@ const RECENT_REQUESTS = 20;
 
 const EXECUTOR_TEXT: Record<AccountView["executor"]["state"], string> = {
   ready: "Trading chart ready",
-  zero: "No trading chart",
+  zero: "EA too old to trade",
   multiple: "Several trading charts",
   "not-ready": "Trading chart not ready",
-  "real-account": "Real account: read-only",
+  "real-account": "No EnableRealTrading chart",
 };
 
 /** The Trading view; times follow `timeShown`. */
@@ -80,7 +81,15 @@ export function TradingView({ live, timeShown }: { live: Live; timeShown: TimeSh
           {trading.error}
         </div>
       )}
-      {settings && !settings.enabled && (
+      {settings?.realAccounts && (
+        <div class="notice warn real-money" role="status">
+          <span>
+            <strong>Real-account trading is on.</strong> Orders on real accounts use real money. Switch it off in Settings › Trading to make every real account
+            read-only again; that never recalls a request already sent.
+          </span>
+        </div>
+      )}
+      {settings && !settings.enabled && !settings.realAccounts && (
         <div class="notice warn" role="status">
           <span>
             <strong>Demo trading is off.</strong> Nothing can be previewed or sent{trading.manage ? "; switch it on in Settings › Trading" : "; only the app window can switch it on"}. Switching it off never
@@ -226,7 +235,7 @@ function summary(t: TradingState): string {
   const brokers = new Set(t.accounts.map((a) => a.brokerServer)).size;
   const connected = t.accounts.filter((a) => a.connected).length;
   const accounts = `${t.accounts.length} trading account${t.accounts.length === 1 ? "" : "s"} on ${brokers} broker server${brokers === 1 ? "" : "s"}, ${connected} connected.`;
-  return `${accounts} ${t.settings?.enabled ? "Demo trading is on." : "Demo trading is off."}`;
+  return `${accounts} ${t.settings?.enabled ? "Demo trading is on." : "Demo trading is off."}${t.settings?.realAccounts ? " Real-account trading is on." : ""}`;
 }
 
 type PanelProps = {
@@ -260,7 +269,7 @@ function AccountPanel({ account, trading, funds, positions, orders, readError, u
     <article class="account" aria-label={account.label}>
       <header class="account-head">
         <h3>{account.label}</h3>
-        <span class="tag">{account.demo === false ? "Real" : account.demo ? "Demo" : "Unknown"}</span>
+        <AccountKind demo={account.demo} showUnknown />
         {currency && <span class="chip">{currency}</span>}
         <span class={`group-state ${account.connected ? "" : "muted"}`}>
           <span class={`dot ${account.connected && funds?.state !== "stale" ? "good" : "off"}`} aria-hidden="true" />
@@ -270,7 +279,7 @@ function AccountPanel({ account, trading, funds, positions, orders, readError, u
         <span class={`account-executor ${account.executor.state === "ready" ? "" : "caution-text"}`}>{EXECUTOR_TEXT[account.executor.state]}</span>
       </header>
       {readError && <div class="notice warn">Could not read this account just now: {readError}</div>}
-      {real && <p class="account-note">Real accounts are read-only in QuoteBridge: their Funds and trades show here, but every change is made in MetaTrader.</p>}
+      {real && <p class="account-note">Real accounts are read-only while Real-account trading is off: their Funds and trades show here, but every change is made in MetaTrader.</p>}
       {block?.kind === "unresolved" && (
         <div class="notice warn">
           <span>{block.text}</span>

@@ -1,7 +1,9 @@
 # Trading
 
-QuoteBridge trades on **demo accounts** only, across as many accounts and brokers as your terminals are signed in to.
-Real accounts are shown and readable but never trade. This page explains the model and the gates; the
+QuoteBridge trades on **demo accounts**, across as many accounts and brokers as your terminals are signed in to.
+**Real accounts** are shown and readable, and stay read-only unless you allow them to trade with two separate switches:
+**Real-account trading** in the app's Settings and `EnableRealTrading` on one of the account's charts. Every view marks
+each account and terminal **Demo** or **Real**. This page explains the model and the gates; the
 [Trading page](trading-page.md) describes the app window's view, the [CLI](cli.md) the command line, and the
 [REST API](rest-api.md#trading-requests) the contract both use.
 
@@ -18,25 +20,52 @@ Real accounts are shown and readable but never trade. This page explains the mod
   currency, and QuoteBridge never adds up money across accounts. After a restart, an account is listed offline with
   no Funds until a terminal reconnects; nothing is shown as zero that is unknown.
 
-## What has to be true before a demo trade
+## What has to be true before a trade
 
-Every gate is checked by the app, and the demo-only and trading-chart gates again by the EA. You set MetaTrader up;
-QuoteBridge never changes MetaTrader settings or permissions.
+Every gate is checked by the app, and the account-kind and trading-chart gates again by the EA. You set MetaTrader up;
+QuoteBridge never changes MetaTrader settings or permissions. Whether an account is demo or real is what MetaTrader
+reports (`IsDemo()`), never a setting.
 
-1. **Demo trading is on** in the app window's **Settings › Trading** (off by default). Only the app window can switch
-   it, set the app's lot cap (default 1.0) or slippage (default 20 points); no API key or remote browser can.
-2. **The account is a demo account.** Real accounts are refused by the app and the EA, with no override.
-3. **Exactly one trading chart for the account.** On one chart of the account (any symbol), set the QuoteBridge EA's
-   input `EnableDemoTrading=true`. That chart is the account's **executor**; it sends every trade for the account,
-   whatever the symbol. With none, or more than one, the account cannot trade and the app says which
-   (`zero`, `multiple`). Other charts of the account keep supplying quotes.
-4. **The executor is ready:** MetaTrader is connected, **AutoTrading** is on, the EA may trade (its *Allow live
+1. **Trading is on for the account's kind** in the app window's **Settings › Trading**, both off by default:
+   **Demo trading** for demo accounts, **Real-account trading** for real ones. Each switch is independent: Demo trading
+   never lets a real account trade. Switching Real-account trading on asks you to acknowledge its risks first. Only the
+   app window can switch them, set the app's lot cap (default 1.0) or slippage (default 20 points); no API key, CLI or
+   remote browser can.
+2. **A trading chart for the account.** One chart of the account, its **executor**, sends every trade for the
+   account, whatever the symbol; the other charts keep supplying quotes.
+   - **Demo account:** any chart running EA 1.13 or later can trade; there is no input to set. With several, the app
+     uses the first ready one (by terminal, then chart). An older EA trades only with its old input
+     `EnableDemoTrading=true`; with none, the account shows `zero`.
+   - **Real account:** exactly one chart with the EA input `EnableRealTrading=true` (EA 1.13 or later). With none, the
+     account shows `real-account` and stays read-only; with more than one, `multiple`.
+3. **The executor is ready:** MetaTrader is connected, **AutoTrading** is on, the EA may trade (its *Allow live
    trading* option), and the EA sees fresh server time. A chart that is enabled but not ready shows `not-ready`.
-5. **The EA's cap is known and positive.** The EA input `MaxDemoOrderLots` (default 1.0, needs EA 1.12 or later) caps
-   new orders at the EA.
+4. **The EA's cap is known and positive.** The EA input `MaxDemoOrderLots` (default 1.0, needs EA 1.12 or later) caps
+   new orders at the EA, on demo and real accounts alike.
 
 The account list (Trading page, `accounts list`) shows each account's executor state: `ready`, `zero`, `multiple`,
-`not-ready` or `real-account`.
+`not-ready` or `real-account` (a real account with no `EnableRealTrading` chart).
+
+### Real accounts
+
+Orders on a real account use real money: with leverage, price gaps and slippage a loss can exceed the stop loss and the
+margin held. Once both switches are on, the Trading page, chart orders, `trader` API keys and the CLI can all place,
+change, close and cancel the account's trades, through the same preview and execute as on demo. The order dialog marks
+a real account's order, and the Trading page says while Real-account trading is on. Switching it off blocks every new
+request on real accounts at once, but cannot recall one already sent.
+
+### If an account cannot trade
+
+The Trading page says why under the account, and the order dialog under its list of accounts:
+
+| You see | Do this |
+| --- | --- |
+| *Demo trading is off.* | Switch on **Demo trading** in the app window's **Settings › Trading**. |
+| *Real accounts are read-only while Real-account trading is off…* | Switch on **Real-account trading** in **Settings › Trading**, read the risks and confirm. |
+| *No chart of this real account has the EA's input EnableRealTrading set to true.* | In MetaTrader, on one chart of the account, press **F7**, open **Inputs** and set `EnableRealTrading` to true. |
+| *More than one chart of this account has EnableRealTrading set to true.* | Set it back to false on every chart but one. |
+| *No chart of this account can trade: its EA is older than 1.13…* | Click **Recompile** on the terminal's card in **Terminals** to update its EA. |
+| *The account's trading chart is not ready…* | Switch on **AutoTrading** in MetaTrader, and tick **Allow live trading** in the EA's **Common** tab (F7). |
 
 ### Lot caps and slippage
 
@@ -48,9 +77,9 @@ new volume.
 Slippage (points) is how far the price may move from the previewed price for a market order or a close. A fill is not
 guaranteed.
 
-Changing the lot cap or slippage, or switching Demo trading off, discards every preview not yet executed. Switching
-Demo trading off blocks every new preview and execute, including closes and cancels, but **cannot recall a request
-already sent**. In an emergency, act in MetaTrader directly.
+Changing the lot cap or slippage, or switching Demo or Real-account trading, discards every preview not yet executed.
+Switching either off blocks every new preview and execute on those accounts, including closes and cancels, but
+**cannot recall a request already sent**. In an emergency, act in MetaTrader directly.
 
 ## Preview, execute, result
 
@@ -88,7 +117,7 @@ interrupted, or when the app restarts while it was being sent. It may or may not
 - An unknown request blocks only its own account, previews included. To unblock it, check MetaTrader's open orders and account history,
   then **review** the request with a note of what you found (8–500 characters) and the acknowledgement that you
   checked. Review does not invent an outcome (the status stays unknown, marked reviewed) and never resends anything.
-  It works with Demo trading off.
+  It works with Demo and Real-account trading off.
 - Requests are kept indefinitely; there is no delete.
 
 While a terminal's request is unresolved, an EA update for that terminal waits. Quitting the app warns about

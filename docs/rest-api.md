@@ -70,7 +70,7 @@ while items are added. Samples are cursor-paged too (1,000 by default, 10,000 at
 share a time. Candles and indicator values are time-paged: the newest `limit` bars within `from`/`to`, oldest first;
 `meta.next.to` is the `to` of the page before, null once `from` or the oldest bar is reached.
 
-**Status codes.** `400` malformed request, `401` unauthenticated, `403` forbidden (scope, demo-only, trading off),
+**Status codes.** `400` malformed request, `401` unauthenticated, `403` forbidden (scope, demo or real-account trading off),
 `404` unknown resource or route, `405` wrong method, `409` ambiguity, conflict, an expired or invalidated preview, or a busy app window,
 `413`/`415` body too large or not JSON, `422` invalid trading or indicator values, `503` source or app window unavailable,
 `504` the terminal did not answer within five seconds, or a screenshot took more than ten.
@@ -338,9 +338,13 @@ connected terminal of the account (never balance from one terminal with position
 seconds (`504 read-timeout`); offline they answer the last complete snapshot with `state: "stale"`, or nulls.
 Financial snapshots are kept in memory only.
 
-`executor` says whether the account can trade: `ready` when exactly one connected chart has demo trading
-enabled and ready, else `zero`, `multiple`, `not-ready` or `real-account`. A real account is `real-account` however
-many of its charts have demo trading enabled: it is readable but never trades.
+`executor` says whether the account can trade and from which terminal: `ready` or `not-ready` for its trading
+chart, else `zero`, `multiple` or `real-account`. Any connected chart of a demo account can trade (an EA older than
+1.13 only with its old `EnableDemoTrading` input on; none is `zero`), and the first ready one is used. A real account
+trades only from exactly one chart with `EnableRealTrading` (EA 1.13 or later): none is `real-account`, more than
+one `multiple`. `executorEnabled` on a source says whether that chart may be the trading chart. A `ready` real account still trades only while **Real-account
+trading** is on in the app window's Settings. `demo` is what MetaTrader reports (`IsDemo()`), or null until a
+terminal has said.
 
 ```http
 GET /api/v1/accounts
@@ -622,9 +626,10 @@ HTTP/1.1 200 OK
 
 ## Trading requests
 
-Every change to an account goes through a request: preview it, then execute that exact preview. Only demo accounts
-trade, with **Demo trading** switched on in the app window's Settings and exactly one chart per account enabled for
-it. MetaTrader's own permissions are yours to set; the app never changes them.
+Every change to an account goes through a request: preview it, then execute that exact preview. Demo accounts
+trade with **Demo trading** switched on in the app window's Settings, real accounts only with **Real-account trading**
+switched on there; a real account also needs exactly one chart with
+`EnableRealTrading`, while any chart of a demo account can trade. MetaTrader's own permissions are yours to set; the app never changes them.
 
 | Endpoint | Answer |
 | --- | --- |
@@ -1013,13 +1018,13 @@ for Feeds.
 | `invalid-indicator-parameter` | 400 | An indicator parameter is unknown or out of range. |
 | `unauthenticated` | 401 | No valid key or session. |
 | `insufficient-scope`, `forbidden-origin`, `not-authorized` | 403 | The key may only read, or the session may not change this. |
-| `trading-disabled`, `demo-only`, `trading-not-allowed` | 403 | Demo trading is off, the account is real, or the broker does not allow trading the symbol. |
+| `trading-disabled`, `real-trading-disabled`, `demo-only`, `trading-not-allowed` | 403 | Demo trading is off (a demo account), Real-account trading is off (a real account), it is not known whether the account is demo or real, or the broker does not allow trading the symbol. |
 | `unknown-route`, `unknown-market`, `unknown-account`, `unknown-position`, `unknown-order`, `unknown-terminal`, `unknown-feed`, `unknown-indicator`, `request-not-found`, `no-candles`, `no-history` | 404 | No such resource. |
 | `method-not-allowed` | 405 | Use the method the message names. |
 | `cross-broker-market` | 409 | The market is not on the account's broker server. |
 | `preview-unavailable`, `preview-expired`, `preview-invalidated`, `settings-changed`, `executor-changed`, `identity-changed`, `limits-changed`, `target-changed`, `price-changed`, `estimates-changed`, `expiry-conversion-changed`, `stale-snapshot`, `stale-quote` | 409 | The preview no longer holds: preview again. |
 | `account-unresolved` | 409 | The account has a request without a definitive result: GET it, and review it if unknown. |
-| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready demo trading chart, or is a real account (`executor-real-account`), which never trades. |
+| `executor-zero`, `executor-multiple`, `executor-not-ready`, `executor-real-account`, `executor-unavailable` | 409 | The account has no single ready trading chart, or is a real account none of whose charts has `EnableRealTrading` (`executor-real-account`). |
 | `window-busy` | 409 | A dialog is open in the app window; no screenshot was taken. |
 | `no-feed` | 409 | No terminal streams the market, so there is no chart of it to capture. |
 | `request-not-unknown`, `account-changed`, `invalid-response`, `invalid-conditions`, `invalid-quote`, `invalid-target`, `clock-rule-required`, `target-unavailable`, `terminal-updating`, `result-mismatch` | 409 | The request conflicts with the current state, or the terminal's data cannot be used. |

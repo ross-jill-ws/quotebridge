@@ -5,7 +5,8 @@ const MESSAGES: Record<string, string> = {
   // Who may trade, and whether trading is on
   "not-authorized": "This credential may not trade.",
   "trading-disabled": "Demo trading is off in the app window's Settings.",
-  "demo-only": "QuoteBridge trades on demo accounts only.",
+  "real-trading-disabled": "Real-account trading is off in the app window's Settings › Trading, so this real account is read-only.",
+  "demo-only": "It is not known whether this account is demo or real, so it cannot trade.",
   "trading-not-allowed": "The broker does not allow trading this symbol on this account.",
   "trading-stopped": "The app is stopping; no request is accepted.",
   "terminal-updating": "The account's terminal is being updated.",
@@ -56,7 +57,7 @@ const MESSAGES: Record<string, string> = {
   "preview-unavailable": "No valid preview has this ID: it expired, was invalidated or already ran. Preview again.",
   "preview-expired": "The preview has expired. Preview again.",
   "preview-invalidated": "Settings or the account's source changed since the preview. Preview again.",
-  "settings-changed": "Demo trading, the lot cap or the slippage changed since the preview. Preview again.",
+  "settings-changed": "Demo or real-account trading, the lot cap or the slippage changed since the preview. Preview again.",
   "executor-changed": "The account's trading chart changed since the preview. Preview again.",
   "identity-changed": "The account's terminal or chart changed since the preview. Preview again.",
   "limits-changed": "A lot cap changed since the preview. Preview again.",
@@ -73,7 +74,7 @@ const MESSAGES: Record<string, string> = {
 
 /** The message for a request engine refusal code. */
 export function tradingMessage(code: string): string {
-  if (code === "executor-real-account") return "QuoteBridge trades on demo accounts only; this real account is read-only.";
-  if (code.startsWith("executor-")) return `The account's trading chart is not ready (${code.slice("executor-".length)}). Exactly one chart per account must have demo trading enabled.`;
+  if (code === "executor-real-account") return "This real account is read-only: none of its charts has the EA's input EnableRealTrading set to true.";
+  if (code.startsWith("executor-")) return `The account's trading chart is not ready (${code.slice("executor-".length)}). A demo account needs a connected chart running EA 1.13 or later; a real account exactly one chart with EnableRealTrading.`;
   return MESSAGES[code] ?? `The request was refused: ${code}. See the REST API manual's error codes.`;
 }

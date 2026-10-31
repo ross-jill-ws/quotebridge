@@ -143,6 +143,8 @@ export type TerminalPresence = {
   eaVersion: string | null;
   /** The broker server the terminal is logged into, as of its latest hello. */
   brokerServer: string;
+  /** Whether the account it is logged into is a demo account, once one of its EAs has announced it (MetaTrader's IsDemo()). */
+  demo?: boolean;
 };
 
 export type BridgeSnapshot = {
@@ -507,7 +509,10 @@ export class BridgeServer {
         ...(this.lastRejectionByFeed.has(feed) && { lastRejection: { ...this.lastRejectionByFeed.get(feed)! } }),
       };
     });
-    const terminals = [...this.terminals.values()].sort((a, b) => (a.terminalId < b.terminalId ? -1 : 1)).map((t) => ({ ...t }));
+    const terminals = [...this.terminals.values()].sort((a, b) => (a.terminalId < b.terminalId ? -1 : 1)).map((t) => {
+      const demo = this.accounts.terminalDemo(t.terminalId);
+      return demo === null ? { ...t } : { ...t, demo };
+    });
     return { time: now, invalidMessages: this.invalidMessages, rejections: this.rejections.map((r) => ({ ...r })), feeds, terminals };
   }
 

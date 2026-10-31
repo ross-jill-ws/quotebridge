@@ -43,7 +43,7 @@ ServerEndpoint=tcp://127.0.0.1:5555
 TerminalId=mt4-main
 SamplingMilliseconds=500
 BufferCapacity=1200
-EnableDemoTrading=false
+EnableRealTrading=false
 MaxDemoOrderLots=1.0
 DemoMagicNumber=27012026
 </inputs>

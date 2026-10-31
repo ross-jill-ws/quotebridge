@@ -2,6 +2,7 @@
 // with Install / Recompile / Remove, rescan, add folder and the broker clock's Change… dialog.
 import { useState } from "preact/hooks";
 import type { TerminalsState, TerminalView } from "../../server/terminals/index.js";
+import { AccountKind } from "../account-kind.js";
 import { post } from "../api.js";
 import { useTicker } from "../use-live.js";
 import { AddFolder } from "./add-folder.js";
@@ -180,6 +181,7 @@ function TerminalCardView({
               {card.connection.text}
             </span>
           )}
+          {t.supported && <AccountKind demo={t.presence?.demo} />}
           {/* A found terminal's "Not installed" goes without saying; an unsupported one's reason is shown below. */}
           {(!found || t.operation) && <span class={`state ${card.state.tone}`}>{card.state.text}</span>}
           {found && folder && <span class="mono path">{folder}</span>}

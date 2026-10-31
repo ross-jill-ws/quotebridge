@@ -61,7 +61,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
     flashPrices: true,
     chartColours: "default",
     timeShown: "broker",
-    trading: { enabled: false, maxLots: "1.0", slippage: 20 },
+    trading: { enabled: false, maxLots: "1.0", slippage: 20, realAccounts: false },
     orderDefaults: [],
     ports: { ea: cfg.eaPort, http: cfg.httpPort },
     portsInUse: { ea: cfg.eaPort, http: cfg.httpPort },
@@ -71,7 +71,7 @@ test("GET /api/settings answers the saved settings the view shows and the ports 
 
 test("app-window trading changes are persisted and handed to the host before the response", async (t) => {
   const { store, saved, post, get } = await start(t);
-  const trading = { enabled: true, maxLots: "0.10", slippage: 5 };
+  const trading = { enabled: true, maxLots: "0.10", slippage: 5, realAccounts: true };
   const response = await post({ trading });
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.trading, trading);
@@ -89,17 +89,18 @@ test("remote browsers and API credentials cannot mutate trading settings", async
   const remote = exchange.headers.get("set-cookie")!.split(";")[0];
   for (const headers of [{ cookie: remote }, { authorization: "Bearer synthetic-not-a-key" }] as Record<string, string>[]) {
     const response = await fetch(`${origin}/api/settings`, { method: "POST", headers: { ...headers, origin, "content-type": "application/json" },
-      body: JSON.stringify({ trading: { enabled: true, maxLots: "2", slippage: 1 } }) });
+      body: JSON.stringify({ trading: { enabled: true, maxLots: "2", slippage: 1, realAccounts: true } }) });
     assert.equal(response.status, 403);
     await response.text();
   }
   assert.equal((await f.get()).body.trading.enabled, false);
+  assert.equal((await f.get()).body.trading.realAccounts, false);
   assert.equal(f.saved.length, 0);
   // The dashboard shows the trading settings read-only where it may not change them.
   assert.equal((await f.get()).body.manage, true, "the app window manages settings");
   const remoteView = (await (await fetch(`${origin}/api/settings`, { headers: { cookie: remote } })).json()) as SettingsView;
   assert.equal(remoteView.manage, false, "a remote browser sees them read-only");
-  assert.deepEqual(remoteView.trading, { enabled: false, maxLots: "1.0", slippage: 20 });
+  assert.deepEqual(remoteView.trading, { enabled: false, maxLots: "1.0", slippage: 20, realAccounts: false });
 });
 
 test("trading setting changes discard unused previews, but unrelated settings preserve approval", { timeout: 15000 }, async (t) => {

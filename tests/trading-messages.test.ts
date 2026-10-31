@@ -6,7 +6,7 @@ import { tradingMessage } from "../src/server/trading/index.js";
 
 /** The engine's refusal codes, as docs/rest-api.md lists them under trading. */
 const CODES = [
-  "not-authorized", "trading-disabled", "demo-only", "trading-not-allowed", "trading-stopped", "terminal-updating", "journal-unavailable",
+  "not-authorized", "trading-disabled", "real-trading-disabled", "demo-only", "trading-not-allowed", "trading-stopped", "terminal-updating", "journal-unavailable",
   "invalid-input", "unknown-property", "invalid-action", "invalid-ticket", "confirmation-required",
   "invalid-decimal", "numeric-range", "invalid-side", "invalid-type", "invalid-market-fields", "invalid-volume", "invalid-tick", "invalid-entry",
   "invalid-stops", "invalid-expiry", "ambiguous-expiry", "conflicting-stops", "invalid-risk", "invalid-distance", "unsatisfiable-distance",
@@ -39,6 +39,8 @@ test("refusals the CLI check met say what to fix", () => {
   assert.match(tradingMessage("invalid-stops"), /wrong side of the entry \(a market order's current price\), or nearer to it than the broker's stop level/);
   assert.match(tradingMessage("target-changed"), /The trade changed since the preview.*Preview again/);
   assert.match(tradingMessage("executor-real-account"), /real account is read-only/);
-  assert.doesNotMatch(tradingMessage("executor-real-account"), /must have demo trading enabled/);
-  assert.match(tradingMessage("executor-zero"), /Exactly one chart per account must have demo trading enabled/);
+  assert.match(tradingMessage("executor-real-account"), /EnableRealTrading/);
+  assert.doesNotMatch(tradingMessage("executor-real-account"), /must have trading enabled/);
+  assert.match(tradingMessage("executor-zero"), /A demo account needs a connected chart running EA 1\.13 or later/);
+  assert.match(tradingMessage("real-trading-disabled"), /Real-account trading is off/);
 });

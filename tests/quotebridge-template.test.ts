@@ -30,7 +30,7 @@ test("template has one chart, one candle pane and a root-level QuoteBridge EA wi
   assert.match(template, /^graph=1$/m);
 });
 
-test("template inputs match the QuoteBridge EA defaults and keep demo trading off", async () => {
+test("template inputs match the QuoteBridge EA defaults and keep real trading off", async () => {
   const sources = await Promise.all(
     ["Experts/QuoteBridge.mq4", "Include/QuoteBridgeTrading.mqh"].map((file) =>
       readFile(new URL(`../mt4/${file}`, import.meta.url), "utf8").then(eol),
@@ -50,7 +50,8 @@ test("template inputs match the QuoteBridge EA defaults and keep demo trading of
       .map((line) => line.split("=")),
   );
   assert.deepEqual(values, defaults);
-  assert.equal(values.EnableDemoTrading, "false");
+  assert.equal(values.EnableDemoTrading, undefined, "demo trading has no input since EA 1.13");
+  assert.equal(values.EnableRealTrading, "false");
   assert.match(template, /^one_click=0$/m);
   assert.match(template, /^one_click_btn=0$/m);
 });

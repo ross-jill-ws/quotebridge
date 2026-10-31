@@ -1,9 +1,9 @@
 #property strict
-#property version "1.12"
-#property description "Quote Bridge: live quotes and holdings; opt-in DEMO trading only."
+#property version "1.13"
+#property description "Quote Bridge: live quotes and holdings; opt-in demo trading; real trading only with EnableRealTrading."
 // Installed and compiled by QuoteBridge for MetaTrader with the terminal's own MetaEditor; do not edit here.
 // Sent in hello; keep equal to #property version.
-#define QB_EA_VERSION "1.12"
+#define QB_EA_VERSION "1.13"
 #include "..\Include\QuoteBridgeZmq.mqh"
 input string ServerEndpoint="tcp://127.0.0.1:5555";
 input string TerminalId="mt4-main";

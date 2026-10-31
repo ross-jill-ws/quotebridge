@@ -1,6 +1,7 @@
-// Demo-only order adapter. Included AFTER Send() and the quote bridge globals.
-// Enable on EXACTLY ONE chart per account. No trailing comment: MT4 would show it in Inputs instead of the name the docs use.
-input bool EnableDemoTrading=false;
+// Order adapter. Included AFTER Send() and the quote bridge globals. Any chart of a demo account may trade (the app
+// sends each account's orders to one of them); a real account only from the chart with EnableRealTrading (ADR 14),
+// EXACTLY ONE per account. No trailing comments: MT4 would show them in Inputs instead of the names the docs use.
+input bool EnableRealTrading=false;
 input double MaxDemoOrderLots=1.0;
 input int DemoMagicNumber=27012026;
 // All 1000 supported orders (20 per page) can leave in one timer, even at a 1000 ms interval.
@@ -14,11 +15,13 @@ void ObserveTradingClock(){
  datetime now=TimeCurrent();
  if(now!=lastServerClock){if(lastServerClock!=0)clockObserved=true;lastServerClock=now;lastServerClockTick=GetTickCount();}
 }
+bool TradeEnabled(){return IsDemo()||EnableRealTrading;}
 bool TradeReady(){return IsConnected() && IsTradeAllowed() && IsExpertEnabled() && clockObserved && GetTickCount()-lastServerClockTick<=30000;}
 void AccountHello(){
  if(AccountNumber()<=0)return;
- // EA 1.12: append the configured new-order cap; preserve the first eight fields.
- Send("I|1|"+session+"|"+IntegerToString(AccountNumber())+"|"+TradeText(AccountCurrency())+"|"+(IsDemo()?"1":"0")+"|"+(EnableDemoTrading?"1":"0")+"|"+(TradeReady()?"1":"0")+"|"+N(MaxDemoOrderLots));
+ // EA 1.12 appended the configured new-order cap, 1.13 EnableRealTrading; the first fields stay as they were. Since 1.13
+ // demo trading has no input: the seventh field is always 1.
+ Send("I|1|"+session+"|"+IntegerToString(AccountNumber())+"|"+TradeText(AccountCurrency())+"|"+(IsDemo()?"1":"0")+"|1|"+(TradeReady()?"1":"0")+"|"+N(MaxDemoOrderLots)+"|"+(EnableRealTrading?"1":"0"));
 }
 void ReadError(string request,string message){Send("E|1|"+session+"|"+request+"|"+IntegerToString(AccountNumber())+"|"+TradeText(message));}
 void AccountSnapshot(string request){
@@ -67,7 +70,7 @@ bool TradeMarker(string key,double value){
  ResetLastError();if(GlobalVariableSet(key,value)==0)return false;
  GlobalVariablesFlush();return GetLastError()==0;
 }
-void ExecuteDemo(string &f[]){
+void ExecuteTrade(string &f[]){
  string request=f[3],action=f[6],symbol=f[8];int login=(int)StringToInteger(f[4]);
  int kind=(int)StringToInteger(f[7]),ticket=(int)StringToInteger(f[9]),slippage=(int)StringToInteger(f[15]);
  double lots=StringToDouble(f[10]),price=StringToDouble(f[11]),sl=StringToDouble(f[12]),tp=StringToDouble(f[13]),cap=StringToDouble(f[16]);
@@ -81,8 +84,8 @@ void ExecuteDemo(string &f[]){
   else TradeResult(request,login,"unknown",0,0,"Request already seen; verify MT4 orders and history");
   return;
  }
- if(login!=AccountNumber() || f[5]!=TradeText(AccountServer()) || !IsDemo() || !EnableDemoTrading || !TradeReady() || IsTradeContextBusy()){
-  TradeResult(request,login,"rejected",0,9001,"Demo execution disabled or account connection changed");return;
+ if(login!=AccountNumber() || f[5]!=TradeText(AccountServer()) || !TradeEnabled() || !TradeReady() || IsTradeContextBusy()){
+  TradeResult(request,login,"rejected",0,9001,"Trading disabled on this chart or account connection changed");return;
  }
  if((action!="N"&&action!="C"&&action!="M"&&action!="D") || kind<0||kind>5||slippage<0||slippage>10000||cap<=0||MaxDemoOrderLots<=0||!SymbolSelect(symbol,true)){
   TradeResult(request,login,"rejected",0,9002,"Invalid order parameters");return;
@@ -116,7 +119,7 @@ void ExecuteDemo(string &f[]){
   }
  }
  if(action=="N" && (ticket!=0||lots<minlot-0.00000001||lots>MathMin(maxlot,MathMin(cap,MaxDemoOrderLots))+0.00000001||MathAbs(lots/step-MathRound(lots/step))>0.000001)){
-  TradeResult(request,login,"rejected",0,9005,"Invalid lot size or demo lot cap exceeded");return;
+  TradeResult(request,login,"rejected",0,9005,"Invalid lot size or lot cap exceeded");return;
  }
  if(action=="N"||action=="M"){
   if(expiry!=0 && (!pending||expiry<=TimeCurrent())){TradeResult(request,login,"rejected",0,9006,"Invalid pending expiration");return;}
@@ -149,7 +152,7 @@ void ExecuteDemo(string &f[]){
 bool TradingReceive(string &f[],int parts){
  if(f[0]!="V"&&f[0]!="P"&&f[0]!="X")return false;
  if(parts<6||!TradeRequestId(f[3]))return true;
- if(f[0]=="X" && parts==24){ExecuteDemo(f);return true;}
+ if(f[0]=="X" && parts==24){ExecuteTrade(f);return true;}
  if((int)StringToInteger(f[4])!=AccountNumber()||f[5]!=TradeText(AccountServer())){ReadError(f[3],"Account changed; reload account selection");return true;}
  if(f[0]=="V" && parts==6)AccountSnapshot(f[3]);
  if(f[0]=="P" && parts==7)MarketSnapshot(f[3],f[6]);

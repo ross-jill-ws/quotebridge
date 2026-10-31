@@ -149,6 +149,24 @@ export function revokeApiKey(k: Pick<ApiKeyView, "name">): { title: string; body
 type TradingSettings = SettingsView["trading"];
 
 /**
+ * The confirmation before Real-account trading goes on (ADR 14): what real money is put at risk, and what the switch
+ * cannot do. It asks for an acknowledgement; switching it off asks nothing.
+ */
+export function allowRealTrading(): { title: string; risks: string[]; acknowledge: string; confirm: string } {
+  return {
+    title: "Allow trading on real accounts?",
+    risks: [
+      "Orders on a real account use real money. With leverage, price gaps and slippage, a loss can exceed the stop loss you set, and the margin you hold.",
+      "Once a real account's chart has the EA's input EnableRealTrading, the Trading page, chart orders, trader API keys and the command-line client can all place, change, close and cancel its trades.",
+      "A connection loss, a stale quote or a mistake in QuoteBridge or a script can send an order you did not mean, or leave its outcome unknown until you check MetaTrader.",
+      "Switching it off again blocks new requests at once, but cannot recall a request already sent. For an emergency, act in MetaTrader.",
+    ],
+    acknowledge: "I understand that orders on real accounts can lose real money, and that I am responsible for every one of them.",
+    confirm: "Allow real-account trading",
+  };
+}
+
+/**
  * Settings › Trading: the trading settings with the app's lot cap or the slippage set to what was typed, or why it
  * cannot be. The server checks the same.
  */

@@ -14,7 +14,7 @@ The embedded server's `RunningServer.trading` is the shared preview/execute/revi
 
 ## Safety and numbers
 
-Settings default to `{ enabled: false, maxLots: "1.0", slippage: 20 }`. Only the app window may change them. Any trading-setting change invalidates unused approvals; disabling blocks every new mutation, not reads, review or result tracking. The app never changes MetaTrader permissions. Both the app and EA reject real-account execution, without an override.
+Settings default to `{ enabled: false, maxLots: "1.0", slippage: 20 }`; `realAccounts` (Real-account trading) is absent, which is off, and the settings view always answers it. Only the app window may change them. Any trading-setting change invalidates unused approvals; disabling blocks every new mutation, not reads, review or result tracking. The app never changes MetaTrader permissions. `enabled` gates demo accounts and `realAccounts` real ones (ADR 14): a real account's preview with it off is `real-trading-disabled` (403), checked at preview and again before dispatch. The EA independently executes a real account's command only from a chart with `EnableRealTrading`, a demo one's only with `EnableDemoTrading`.
 
 All external financial numbers are fixed-decimal strings with at most 15 integer and 10 fractional digits. App calculations use scaled integers, including lot/tick alignment, risk conversion and rounding. New-order lots must meet broker steps and the minimum of broker/EA/app caps. Those caps do not prohibit management of a larger existing trade.
 

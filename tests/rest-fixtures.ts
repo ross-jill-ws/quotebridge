@@ -119,10 +119,12 @@ export async function startRest(t: TestContext, dbFolder: string, options: Start
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   };
-  /** Announces the chart's account (EA 1.12 I message); answers its ID. */
+  /** Announces the chart's account (EA 1.12 I message, or 1.13 with `realEnabled`); answers its ID. */
   const announce = async (ea: FakeEA, a: Announcement = {}) => {
     const fields = ["I", "1", ea.session, a.login ?? LOGIN, a.currency ?? "USD", Number(a.demo ?? true), Number(a.enabled ?? false), Number(a.ready ?? true)];
     if (a.maxLots !== null) fields.push(a.maxLots ?? "0.5000000000");
+    // EA 1.13 appends EnableRealTrading; fixtures without it are the older EA.
+    if (a.realEnabled !== undefined) fields.push(String(Number(a.realEnabled)));
     await deliver(server.bridge, ea, fields.join("|"));
     const account = server.bridge.accounts.list().find((s) => s.login === (a.login ?? LOGIN) && s.brokerServer === ea.broker);
     assert.ok(account);

@@ -16,6 +16,9 @@ test("trading defaults are safe and explicit changes survive reopening", async (
   assert.deepEqual((await store.read()).trading, { enabled: false, maxLots: "1.0", slippage: 20 });
   await store.update((s) => void (s.trading = { enabled: true, maxLots: "0.25", slippage: 0 }));
   assert.deepEqual((await new SettingsStore(store.folder).read()).trading, { enabled: true, maxLots: "0.25", slippage: 0 });
+  // Real-account trading (ADR 14) is off unless saved on; settings saved before it keep the rest of their trading values.
+  await store.update((s) => void (s.trading = { enabled: false, maxLots: "0.25", slippage: 0, realAccounts: true }));
+  assert.deepEqual((await new SettingsStore(store.folder).read()).trading, { enabled: false, maxLots: "0.25", slippage: 0, realAccounts: true });
 });
 
 test("invalid trading settings are rejected on update and persisted corruption fails closed without losing other settings", async (t) => {
@@ -24,7 +27,8 @@ test("invalid trading settings are rejected on update and persisted corruption f
     ...["yes", 1, null].map((enabled) => ({ enabled, maxLots: "1.0", slippage: 20 })),
     ...[1, "0", "-1", "1e2", " 1", "NaN", "Infinity", ".5", "1.", "01", "0.000", "9".repeat(16), "0.00000000001", "9".repeat(400)].map((maxLots) => ({ enabled: true, maxLots, slippage: 20 })),
     ...[-1, 0.5, "20", null, Infinity, 10001, Number.MAX_SAFE_INTEGER + 1].map((slippage) => ({ enabled: true, maxLots: "1.0", slippage })),
-    { enabled: true, maxLots: "1.0", slippage: 20, extra: true }];
+    { enabled: true, maxLots: "1.0", slippage: 20, extra: true },
+    ...["yes", 1, null].map((realAccounts) => ({ enabled: true, maxLots: "1.0", slippage: 20, realAccounts }))];
   for (const trading of invalid) {
     await assert.rejects(store.update((s) => { Object.assign(s, { trading }); }), /trading/i);
     await writeFile(store.file, JSON.stringify({ format: 1, theme: "dark", trading }));

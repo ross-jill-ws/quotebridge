@@ -170,9 +170,12 @@ test("valid boundary fixtures retain decimal precision and bounded page geometry
 
 test("valid account announcement fixtures expose the legacy and additive EA caps without losing decimals", () => {
   assert.deepEqual(parseMessage(Buffer.from(hello("fixture"))), {
-    type: "account-hello", session: "fixture", login: LOGIN, currency: "USD", demo: true, enabled: false, ready: true, maxLots: null,
+    type: "account-hello", session: "fixture", login: LOGIN, currency: "USD", demo: true, enabled: false, ready: true, maxLots: null, realEnabled: false,
   });
   assert.deepEqual(parseMessage(Buffer.from(`${hello("fixture")}|0.5000000000`)), {
-    type: "account-hello", session: "fixture", login: LOGIN, currency: "USD", demo: true, enabled: false, ready: true, maxLots: "0.5000000000",
+    type: "account-hello", session: "fixture", login: LOGIN, currency: "USD", demo: true, enabled: false, ready: true, maxLots: "0.5000000000", realEnabled: false,
+  });
+  assert.deepEqual(parseMessage(Buffer.from(`${hello("fixture")}|0.5000000000|1`)), {
+    type: "account-hello", session: "fixture", login: LOGIN, currency: "USD", demo: true, enabled: false, ready: true, maxLots: "0.5000000000", realEnabled: true,
   });
 });

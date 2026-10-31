@@ -17,7 +17,7 @@ export const localNow = () => Math.floor((Date.now() - new Date().getTimezoneOff
 type Source = { terminal: string; installationFolder: string; dataFolder: string };
 const QUOTEBRIDGE_MAGIC = 27012026;
 
-/** The simulated accounts: an executor-ready demo account with an outside trade, a second ready demo account, a real one. */
+/** The simulated accounts: an executor-ready demo account with an outside trade, a second ready demo account, a real one whose chart has EnableRealTrading (it trades only with Real-account trading on). */
 const ACCOUNTS: Record<"main" | "second" | "real", FakeAccountSpec> = {
   main: {
     login: "50012345", currency: "USD", demo: true, enabled: true, ready: true, maxLots: "0.5", balance: 10000, leverage: 100,
@@ -31,7 +31,7 @@ const ACCOUNTS: Record<"main" | "second" | "real", FakeAccountSpec> = {
     trades: [{ kind: 1, symbol: "EURUSD", lots: 0.1, openPrice: 1.0871, stopLoss: 1.0921, takeProfit: 1.0791, expiration: 0, magic: QUOTEBRIDGE_MAGIC }],
   },
   real: {
-    login: "70011223", currency: "USD", demo: false, enabled: false, ready: true, maxLots: "0.5", balance: 2500, leverage: 50,
+    login: "70011223", currency: "USD", demo: false, enabled: false, realEnabled: true, ready: true, maxLots: "0.5", balance: 2500, leverage: 50,
     trades: [{ kind: 0, symbol: "EURUSD", lots: 0.05, openPrice: 1.0832, stopLoss: 0, takeProfit: 0, expiration: 0, magic: 0 }],
   },
 };

@@ -36,8 +36,8 @@ function helloFields(): string[] {
   return sends[0][1].split("|");
 }
 
-test("QuoteBridge EA version is 1.12", () => {
-  assert.match(source, /^#property version "1\.12"$/m);
+test("QuoteBridge EA version is 1.13", () => {
+  assert.match(source, /^#property version "1\.13"$/m);
 });
 
 test("hello keeps its first 14 fields and appends cleaned installation and data-folder paths", () => {
@@ -47,22 +47,33 @@ test("hello keeps its first 14 fields and appends cleaned installation and data-
   const version = fields[13].match(/^"\+(\w+)\+"$/)?.[1];
   assert.ok(version, `14th hello field must be a version constant, got ${fields[13]}`);
   const defined = source.match(new RegExp(`^#define ${version} "([^"]*)"$`, "m"))?.[1];
-  assert.equal(defined, "1.12", "the hello reports the same version as #property version");
+  assert.equal(defined, "1.13", "the hello reports the same version as #property version");
   assert.deepEqual(fields.slice(14), [
     `"+Clean(TerminalInfoString(TERMINAL_PATH))+"`,
     `"+Clean(TerminalInfoString(TERMINAL_DATA_PATH))`,
   ]);
 });
 
-test("account hello preserves its eight legacy fields and appends the configured EA new-order cap", () => {
+test("account hello preserves its eight legacy fields and appends the EA new-order cap, then EnableRealTrading", () => {
   const body = trading.match(/void AccountHello\(\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(body);
   const send = body.match(/Send\((".*?)\);/)?.[1];
   assert.ok(send);
   assert.deepEqual(send.split("|"), [
     `"I`, `1`, `"+session+"`, `"+IntegerToString(AccountNumber())+"`, `"+TradeText(AccountCurrency())+"`,
-    `"+(IsDemo()?"1":"0")+"`, `"+(EnableDemoTrading?"1":"0")+"`, `"+(TradeReady()?"1":"0")+"`, `"+N(MaxDemoOrderLots)`,
+    `"+(IsDemo()?"1":"0")+"`, `1`, `"+(TradeReady()?"1":"0")+"`, `"+N(MaxDemoOrderLots)+"`,
+    `"+(EnableRealTrading?"1":"0")`,
   ]);
+});
+
+test("the EA executes on any chart of a demo account, and on a real account only from a chart with EnableRealTrading", () => {
+  assert.match(trading, /^input bool EnableRealTrading=false;$/m);
+  assert.doesNotMatch(trading, /EnableDemoTrading/);
+  assert.match(trading, /bool TradeEnabled\(\)\{return IsDemo\(\)\|\|EnableRealTrading;\}/);
+  const execute = trading.match(/void ExecuteTrade\(string &f\[\]\)\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(execute);
+  assert.match(execute, /\|\| !TradeEnabled\(\) \|\| !TradeReady\(\)/);
+  assert.doesNotMatch(execute, /EnableDemoTrading|EnableRealTrading|IsDemo/);
 });
 
 test("the full 1000-order account snapshot fits one EA timer flush within the five-second read deadline", () => {

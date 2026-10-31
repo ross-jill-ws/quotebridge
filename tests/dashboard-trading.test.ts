@@ -68,7 +68,7 @@ test("real accounts are read-only, and trading off, offline or an unready tradin
   assert.match(actionBlock(A, { ...ON, enabled: false }, none)!.text, /Demo trading is off/);
   assert.match(actionBlock(account("o", "Demo-Broker", { connected: false }), ON, none)!.text, /offline/);
   assert.match(actionBlock(account("z", "Demo-Broker", { executor: { state: "zero", terminalId: null } }), ON, none)!.text, /No chart/);
-  assert.match(actionBlock(account("m", "Demo-Broker", { executor: { state: "multiple", terminalId: null } }), ON, none)!.text, /More than one chart/);
+  assert.match(actionBlock(account("z", "Demo-Broker", { executor: { state: "zero", terminalId: null } }), ON, none)!.text, /older than 1\.13/);
   assert.match(actionBlock(account("n", "Demo-Broker", { executor: { state: "not-ready", terminalId: "t" } }), ON, none)!.text, /not ready/);
 });
 
@@ -87,7 +87,7 @@ test("a chart's Buy and Sell offer only demo accounts on the chart's own broker 
   const choice = orderAccounts([A, OTHER, real], ON, new Map(), "Demo-Broker");
   assert.deepEqual(choice.options.map((o) => [o.account.id, o.block]), [["acct-1", undefined]]);
   assert.equal(newOrderForm("buy", "m-EURUSD").accountId, null, "even a single eligible account must be chosen explicitly");
-  assert.match(choice.note!, /Real accounts on Demo-Broker are read-only in QuoteBridge \(1\)/);
+  assert.match(choice.note!, /Real accounts on Demo-Broker are read-only while Real-account trading is off \(1\)/);
   const elsewhere = orderAccounts([A, OTHER], ON, new Map(), "Third-Broker");
   assert.deepEqual(elsewhere.options, []);
   assert.match(elsewhere.note!, /No demo account on Third-Broker can trade here/);
@@ -95,12 +95,36 @@ test("a chart's Buy and Sell offer only demo accounts on the chart's own broker 
   assert.deepEqual(orderAccounts([OTHER, real, A], ON, new Map()).options.map((o) => o.account.id), ["acct-3", "acct-1"]);
 });
 
+test("with Real-account trading on, real accounts are offered and set up with EnableRealTrading; Demo trading is not their switch", () => {
+  const REAL_ON = { ...ON, enabled: false, realAccounts: true };
+  const chart = { terminalId: "t", connected: true, executorEnabled: true, ready: true, maxLots: "0.5" };
+  const unset = account("acct-8", "Demo-Broker", { demo: false, executor: { state: "real-account", terminalId: null }, sources: [{ ...chart, executorEnabled: false }] });
+  const ready = account("acct-9", "Demo-Broker", { demo: false, executor: { state: "ready", terminalId: "t" }, sources: [chart] });
+  assert.match(actionBlock(ready, ON, new Map())!.text, /read-only while Real-account trading is off/);
+  assert.equal(actionBlock(ready, REAL_ON, new Map()), undefined);
+  assert.match(actionBlock(unset, REAL_ON, new Map())!.text, /EnableRealTrading set to true/);
+  assert.match(actionBlock(account("m", "Demo-Broker", { demo: false, executor: { state: "multiple", terminalId: null } }), REAL_ON, new Map())!.text, /More than one chart of this account has EnableRealTrading/);
+  // Demo trading off blocks the demo account, not the real ones.
+  const choice = orderAccounts([A, unset, ready], REAL_ON, new Map(), "Demo-Broker");
+  assert.deepEqual(choice.options.map((o) => [o.account.id, o.block?.kind]), [["acct-1", "off"], ["acct-8", "executor"], ["acct-9", undefined]]);
+  assert.doesNotMatch(choice.note!, /read-only/);
+
+  const guide = executorGuide(unset, REAL_ON);
+  assert.equal(guide.state, "zero");
+  assert.equal(guide.title, "No chart has EnableRealTrading on.");
+  assert.match(guide.steps[1].text, /EnableRealTrading/);
+  assert.deepEqual([guide.steps[3].text, guide.steps[3].done], ["Switch on Real-account trading in the app window's Settings › Trading.", true]);
+  assert.equal(executorGuide(ready, REAL_ON).title, "Ready to trade with real money.");
+  assert.equal(executorGuide(ready, ON).state, "real");
+});
+
 test("a demo account that cannot trade now says why under the list, as its option cannot be chosen", () => {
   const unset = account("acct-5", "Demo-Broker", { executor: { state: "zero", terminalId: null } });
   const choice = orderAccounts([unset], ON, new Map(), "Demo-Broker");
   assert.equal(choice.options[0]!.block?.kind, "executor");
-  assert.match(choice.note!, /Demo-Broker · acct-5: No chart of this account has demo trading enabled\. Set it up under Set up trading on the Trading page\./);
-  assert.equal(orderAccounts([unset, A], ON, new Map(), "Demo-Broker").note, "Demo-Broker · acct-5: No chart of this account has demo trading enabled. Set it up under Set up trading on the Trading page.");
+  const why = "Demo-Broker · acct-5: No chart of this account can trade: its EA is older than 1.13 and has EnableDemoTrading off. Update the EA with Recompile on the Terminals page.";
+  assert.equal(choice.note, why);
+  assert.equal(orderAccounts([unset, A], ON, new Map(), "Demo-Broker").note, why);
   assert.equal(orderAccounts([A], ON, new Map(), "Demo-Broker").note, undefined);
 });
 
@@ -185,8 +209,9 @@ test("Enter in the dialog previews; it never executes, before or after a preview
 test("the setup checklist tells zero, one ready, one not ready and several trading charts apart, and explains the caps", () => {
   const zero = executorGuide(account("z", "Demo-Broker", { executor: { state: "zero", terminalId: null }, sources: [{ terminalId: "t", connected: true, executorEnabled: false, ready: true, maxLots: "0.5" }] }), ON);
   assert.equal(zero.state, "zero");
-  assert.deepEqual(zero.steps.map((s) => s.done), [true, false, false, true]);
-  assert.match(zero.steps[1].text, /EnableDemoTrading/);
+  // A demo account has no chart input to set: open a chart, allow AutoTrading, switch Demo trading on.
+  assert.deepEqual(zero.steps.map((s) => s.done), [true, false, true]);
+  assert.ok(zero.steps.every((s) => !/EnableDemoTrading|EnableRealTrading/.test(s.text)));
   const ready = executorGuide(A, ON);
   assert.equal(ready.state, "ready");
   assert.ok(ready.steps.every((s) => s.done));
@@ -194,10 +219,10 @@ test("the setup checklist tells zero, one ready, one not ready and several tradi
   assert.match(ready.caps, /never changes/);
   const notReady = executorGuide(account("n", "Demo-Broker", { executor: { state: "not-ready", terminalId: "t" } }), { ...ON, enabled: false });
   assert.equal(notReady.state, "not-ready");
-  assert.deepEqual(notReady.steps.map((s) => s.done), [true, true, false, false]);
-  assert.match(notReady.steps[2].text, /AutoTrading/);
-  const multiple = executorGuide(account("m", "Demo-Broker", { executor: { state: "multiple", terminalId: null } }), ON);
-  assert.match(multiple.title, /2 charts|More than one/);
+  assert.deepEqual(notReady.steps.map((s) => s.done), [true, false, false]);
+  assert.match(notReady.steps[1].text, /AutoTrading/);
+  const multiple = executorGuide(account("m", "Demo-Broker", { demo: false, executor: { state: "multiple", terminalId: null } }), { ...ON, realAccounts: true });
+  assert.equal(multiple.title, "More than one chart has EnableRealTrading on.");
   assert.equal(executorGuide(account("r", "R", { demo: false, executor: { state: "real-account", terminalId: null } }), ON).state, "real");
   assert.match(executorGuide(account("u", "Demo-Broker", { sources: [{ ...A.sources[0], maxLots: null }] }), ON).caps, /upgrade the EA/);
 });

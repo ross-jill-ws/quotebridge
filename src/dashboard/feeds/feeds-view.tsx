@@ -2,6 +2,7 @@
 // switch of its market.
 import { useMemo, useRef, useState } from "preact/hooks";
 import type { FeedSnapshot } from "../../server/bridge/index.js";
+import { AccountKind } from "../account-kind.js";
 import type { TimeShown } from "../../shared/settings-store.js";
 import { post } from "../api.js";
 import { clockLabel } from "../display-clock.js";
@@ -140,6 +141,7 @@ function FeedGroupView({
     <section class="feed-group" aria-labelledby={titleId}>
       <header class="group-head">
         <h2 id={titleId}>{group.name}</h2>
+        <AccountKind demo={group.demo} />
         <span class="mono tid">{group.terminal}</span>
         <span class="group-state">
           <span class={`dot ${group.state.online ? "good" : "off"}`} aria-hidden="true" />

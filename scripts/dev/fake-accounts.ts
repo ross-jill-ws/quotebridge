@@ -1,5 +1,5 @@
 // Synthetic trading accounts for `npm run dev`: a fake EA chart announces its account (I) after each hello and answers
-// Funds/order snapshots (V), symbol conditions (P) and demo executions (X) from an in-memory account. Nothing here
+// Funds/order snapshots (V), symbol conditions (P) and executions (X) from an in-memory account. Nothing here
 // touches MetaTrader or a broker. Lots of exactly 0.07 are never answered, so the request becomes unknown after 20 s
 // and the review flow can be tried.
 import type { FakeEA } from "../../tests/fake-ea.js";
@@ -16,8 +16,10 @@ export type FakeAccountSpec = {
   login: string;
   currency: string;
   demo: boolean;
-  /** EnableDemoTrading on this chart, and whether the EA is ready (AutoTrading, permissions). */
+  /** The hello's seventh field (EA 1.13 always 1; an older EA's EnableDemoTrading), and whether the EA is ready (AutoTrading, permissions). */
   enabled: boolean;
+  /** EnableRealTrading on this chart (EA 1.13): a real account trades from it while Real-account trading is on. */
+  realEnabled?: boolean;
   ready: boolean;
   /** The EA's MaxDemoOrderLots. */
   maxLots: string;
@@ -51,7 +53,7 @@ export class FakeAccount {
   /** The account announcement the EA sends after each hello. */
   announceWire(ea: FakeEA) {
     const s = this.spec;
-    return ["I", "1", ea.session, s.login, s.currency, Number(s.demo), Number(s.enabled), Number(s.ready), decimal(Number(s.maxLots))].join("|");
+    return ["I", "1", ea.session, s.login, s.currency, Number(s.demo), Number(s.enabled), Number(s.ready), decimal(Number(s.maxLots)), Number(s.realEnabled ?? false)].join("|");
   }
 
   /** Answers a V, P or X command addressed to this chart. */

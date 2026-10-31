@@ -1,5 +1,5 @@
 // QuoteBridge.tpl substitution: only TerminalId and ServerEndpoint change. Everything else
-// (flags, EnableDemoTrading=false, the root-level expert, no symbol/period/account) stays as bundled.
+// (flags, EnableRealTrading=false, the root-level expert, no symbol/period/account) stays as bundled.
 
 const TERMINAL_ID_LINE = /^TerminalId=[^\r\n]*/gm;
 const SERVER_ENDPOINT_LINE = /^ServerEndpoint=[^\r\n]*/gm;
