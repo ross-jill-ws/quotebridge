@@ -54,7 +54,8 @@ user only, so no administrator rights are needed.
 
 - Windows 10 or 11, 64-bit, with MetaTrader 4 installed.
 - The installer is not code-signed yet, so Windows SmartScreen may say *Windows protected your PC*: choose
-  **More info › Run anyway**. Each release lists the installer's SHA-256 so you can check it first.
+  **More info › Run anyway**. Each release lists the installer's SHA-256 so you can check it first. Signing is being
+  set up under the [code signing policy](#code-signing-policy).
 
 The [install guide](docs/install.md) covers the checksum, updates and uninstalling.
 
@@ -112,6 +113,28 @@ npm run package    # the Windows installer, into release/
 ```
 
 [docs/development.md](docs/development.md) covers `--app`, `--real`, live reload and releasing.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+Only the Windows installer built by this repository's [release workflow](.github/workflows/release.yml) from a
+tagged commit is signed, and every signing request is approved by hand.
+
+Team roles:
+
+- Committers and reviewers: [Ross Zhu](https://github.com/ross-jill-ws). Changes from anyone outside the team are
+  reviewed by a committer before they are merged.
+- Approvers: [Ross Zhu](https://github.com/ross-jill-ws)
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user
+or the person installing or operating it.
+
+QuoteBridge talks to MetaTrader and serves its dashboard and REST API on this PC's loopback addresses only. Other computers
+reach it only after you set up remote access yourself ([AI agents and remote access](docs/agents.md)).
 
 ## License
 

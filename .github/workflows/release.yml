@@ -89,7 +89,7 @@ jobs:
           $notes = @"
           QuoteBridge for MetaTrader $env:APP_VERSION for Windows x64. Installs for the current user; no administrator rights needed.
 
-          The installer is not code-signed yet (SignPath application pending), so Windows SmartScreen may warn before it runs.
+          The installer is not code-signed yet (SignPath application pending), so Windows SmartScreen may warn before it runs. See the [code signing policy](https://github.com/ross-jill-ws/quotebridge#code-signing-policy).
 
           MetaTrader is the registered trademark of MetaQuotes Ltd. QuoteBridge for MetaTrader is an independent project, not affiliated with or endorsed by MetaQuotes Ltd.
           "@

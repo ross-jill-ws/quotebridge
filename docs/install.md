@@ -72,7 +72,8 @@ new version.
 2. Quit QuoteBridge from the tray.
 3. Open **Windows Settings › Apps › Installed apps**, find **QuoteBridge for MetaTrader** and choose **Uninstall**.
 
-Your data in `%APPDATA%\QuoteBridge` (settings, recordings, saved history) is kept, so reinstalling picks up where you
+Uninstalling removes the app folder and its **Start with Windows** entry. Your data in `%APPDATA%\QuoteBridge`
+(settings, recordings, saved history) is kept, so reinstalling picks up where you
 left off. Delete that folder yourself to remove it for good.
 
 ## If something goes wrong

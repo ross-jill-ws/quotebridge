@@ -9,6 +9,15 @@
   WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
 !macroend
 
+; Uninstall takes out the Start with Windows entry the app writes (app.setLoginItemSettings, named after
+; APP_USER_MODEL_ID). An upgrade also runs the old uninstaller; it keeps the entry, which the new version rewrites.
+!macro customUnInstall
+  ${ifNot} ${isUpdated}
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "QuoteBridge"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "QuoteBridge"
+  ${endIf}
+!macroend
+
 ; After the Choose Install Location page: check the folder before installing. The installer never asks for
 ; administrator rights, so a folder the user can't write (e.g. Program Files) gets a clear message instead
 ; of a failed install. A folder holding other files is refused too: the uninstaller deletes the whole folder.
