@@ -145,10 +145,18 @@ export class AccountState {
     return !!p && !!a && a.accountId === binding.accountId && a.login === binding.login && p.terminalId === binding.terminalId && p.brokerServer === binding.brokerServer && this.now() - p.lastSeen < ACCOUNT_READ_MS;
   }
 
-  /** Whether the account a terminal is logged into is a demo account; null until one of its charts has announced it. */
+  /**
+   * Whether the account a terminal is logged into is a demo account; null until one of its charts has announced it.
+   * Only live chart sessions count, the latest heard first: after a login change the old sessions are retired, but their
+   * announcements stay (and come first in the map), so they must not keep showing the previous account's kind.
+   */
   terminalDemo(terminalId: string): boolean | null {
-    for (const a of this.announcements.values()) if (a.terminalId === terminalId) return a.demo;
-    return null;
+    let latest: { demo: boolean; lastSeen: number } | null = null;
+    for (const a of this.announcements.values()) {
+      const peer = a.terminalId === terminalId ? this.transport.peer(a.session) : undefined;
+      if (peer && (!latest || peer.lastSeen >= latest.lastSeen)) latest = { demo: a.demo, lastSeen: peer.lastSeen };
+    }
+    return latest?.demo ?? null;
   }
 
   sources(id: string): AccountSource[] {

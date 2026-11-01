@@ -292,6 +292,16 @@ test("each terminal's presence says whether its account is demo, once an EA ther
   assert.deepEqual(shown, { "mt4-demo": true, "mt4-real": false, "mt4-quiet": undefined });
 });
 
+for (const [from, to] of [[false, true], [true, false]] as const) {
+  test(`a terminal switched from a ${from ? "demo" : "real"} to a ${to ? "demo" : "real"} account shows the new account's kind`, async (t) => {
+    const { bridge, connect, announce } = await startAccounts(t);
+    // MetaTrader re-inits the EA on a login change: the old chart session is retired, a new one announces the account.
+    await announce(await connect({ terminal: "mt4-a" }), { demo: from, login: "111" });
+    await announce(await connect({ terminal: "mt4-a" }), { demo: to, login: "222" });
+    assert.equal(bridge.snapshot().terminals.find((p) => p.terminalId === "mt4-a")?.demo, to);
+  });
+}
+
 for (const scenario of [
   { name: "unready demo", demo: true, ready: false, maxLots: "0.5", state: "not-ready" },
   { name: "unready real", demo: false, ready: false, maxLots: "0.5", state: "not-ready" },
