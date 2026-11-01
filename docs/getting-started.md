@@ -107,8 +107,7 @@ QuoteBridge trades on both demo and real accounts.
    later. Install it with npm:
 
    ```
-   npm pack github:ross-jill-ws/mt4-quote-bridge-cli
-   npm install --global ./mt4-quote-bridge-cli-<version>.tgz
+   npm install --global mt4-quote-bridge-cli
    ```
 
    Then sign in and try it:

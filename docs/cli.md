@@ -9,8 +9,7 @@ Install it by adding its agent skill (`npx skills@latest add https://github.com/
 which installs the CLI the first time the agent uses it, or on its own with Node.js 22.12 or later:
 
 ```text
-npm pack github:ross-jill-ws/mt4-quote-bridge-cli
-npm install --global ./mt4-quote-bridge-cli-<version>.tgz
+npm install --global mt4-quote-bridge-cli
 ```
 
 ```text

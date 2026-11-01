@@ -5,11 +5,12 @@
 <h1 align="center">QuoteBridge for MetaTrader</h1>
 
 <p align="center">
+  <a href="https://quotebridge.app">quotebridge.app</a> ·
   <a href="docs/install.md">install</a> ·
   <a href="docs/getting-started.md">getting started</a> ·
   <a href="docs/README.md">user manual</a> ·
   <a href="docs/rest-api.md">REST API</a> ·
-  <a href="https://github.com/ross-jill-ws/quotebridge/releases/latest">download</a>
+  <a href="https://quotebridge.app/download">download</a>
 </p>
 
 <p align="center"><b>Every MetaTrader 4 terminal on your PC, one live dashboard.</b></p>
@@ -48,8 +49,8 @@ scripts.
 
 ## Install
 
-Download `QuoteBridge-Setup-<version>-x64.exe` from the
-[latest release](https://github.com/ross-jill-ws/quotebridge/releases/latest) and run it. It installs for your Windows
+Download `QuoteBridge-Setup-<version>-x64.exe` from [quotebridge.app](https://quotebridge.app/download) or the
+[latest GitHub release](https://github.com/ross-jill-ws/quotebridge/releases/latest) and run it. It installs for your Windows
 user only, so no administrator rights are needed.
 
 - Windows 10 or 11, 64-bit, with MetaTrader 4 installed.

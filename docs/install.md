@@ -13,7 +13,8 @@ administrator rights.
 
 ## Download
 
-Download the installer from the [latest release](https://github.com/ross-jill-ws/quotebridge/releases/latest):
+Download the installer from [quotebridge.app](https://quotebridge.app/download) or the
+[latest GitHub release](https://github.com/ross-jill-ws/quotebridge/releases/latest):
 
 | File | What it is |
 | --- | --- |
