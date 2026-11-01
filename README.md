@@ -39,6 +39,9 @@ scripts.
   and stay read-only until you opt in, in the app and on one chart; an unknown outcome is never sent twice. → [trading](docs/trading.md)
 - **Built for scripts and agents.** A local REST API and the `mt4-quote-bridge` CLI serve markets, candles, indicator
   values, accounts, screenshots and trading requests, behind read-only or trader API keys. → [REST API](docs/rest-api.md)
+- **Ask an AI agent.** Add the [mt4-quote-bridge-cli](https://github.com/ross-jill-ws/mt4-quote-bridge-cli) skill to
+  Claude Code, Codex or a bot app such as Grok Bot, Dots or Muse, then ask for a quote, a chart or a trade in plain
+  words, from this PC or, through an ngrok tunnel, from anywhere. → [AI agents](docs/agents.md)
 - **Stays out of the way.** It runs in the tray, starts with Windows, restarts its own server after a crash, updates
   the EA in every terminal when the app updates, and never changes MetaTrader's settings or permissions.
 
@@ -75,14 +78,26 @@ The terminal's checklist ticks itself off, and its quotes appear in **Feeds**.
 
 [Install](docs/install.md) · [getting started](docs/getting-started.md) ·
 [terminals](docs/terminals.md) · [indicator packages](docs/indicator-packages.md) · [trading](docs/trading.md) ·
-[trading page](docs/trading-page.md) · [command-line client](docs/cli.md) · [REST API v1](docs/rest-api.md) ·
+[trading page](docs/trading-page.md) · [AI agents and remote access](docs/agents.md) ·
+[command-line client](docs/cli.md) · [REST API v1](docs/rest-api.md) ·
 [account protocol](docs/account-protocol.md) · [development](docs/development.md)
 
 ## Agent instructions
 
 Agents using QuoteBridge go through the `mt4-quote-bridge` CLI and its skill: every command has `--help`, and an
-agent prepares trade previews and executes one only after you approve it. To convert an MT4 indicator, an agent uses
-the [mt4-indicator-to-package](.claude/skills/mt4-indicator-to-package/SKILL.md) skill in this repository.
+agent prepares trade previews and executes one only after you approve it. Install the skill with:
+
+```
+npx skills@latest add https://github.com/ross-jill-ws/mt4-quote-bridge-cli
+```
+
+In a bot app such as Grok Bot, Dots or Muse, paste that line into the chat and ask the bot to install the skill. To
+reach the app from another computer, run `ngrok http 5580 --host-header=rewrite` on the QuoteBridge PC and give the
+agent the address ngrok prints. [AI agents and remote access](docs/agents.md) covers API keys, what to ask, and shows
+a bot at work.
+
+To convert an MT4 indicator, an agent uses the
+[mt4-indicator-to-package](.claude/skills/mt4-indicator-to-package/SKILL.md) skill in this repository.
 
 ## Development
 

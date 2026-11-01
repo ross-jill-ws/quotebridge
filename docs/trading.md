@@ -54,6 +54,8 @@ change, close and cancel the account's trades, through the same preview and exec
 a real account's order, and the Trading page says while Real-account trading is on. Switching it off blocks every new
 request on real accounts at once, but cannot recall one already sent.
 
+![The Trading page with Real-account trading on: its warning banner, and a real account marked Real that is ready to trade with real money](images/trading-real-light.png)
+
 ### If an account cannot trade
 
 The Trading page says why under the account, and the order dialog under its list of accounts:

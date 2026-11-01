@@ -19,6 +19,8 @@ them, charts them with indicators, trades on demo accounts and serves it all to 
 
 ## Scripts and agents
 
+- [AI agents and remote access](agents.md): install the CLI's skill in an AI agent or bot app, reach the app from
+  another computer with ngrok, and what to ask.
 - [Command-line client](cli.md): every `mt4-quote-bridge` command and the API calls behind it.
 - [REST API v1](rest-api.md): markets, accounts, terminals, screenshots and trading requests for the CLI and your own
   scripts.

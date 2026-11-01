@@ -1,7 +1,8 @@
 # REST API v1
 
 The public API for the `mt4-quote-bridge` CLI and your own scripts: exact market, account, terminal and trading-request
-resources. It answers on the app's HTTP port (shown in Settings), on this computer only (`127.0.0.1`, `localhost` or `[::1]`), under `/api/v1`.
+resources. It answers on the app's HTTP port (shown in Settings), on this computer only (`127.0.0.1`, `localhost` or `[::1]`), under `/api/v1`. A tunnel must send one of those as the
+Host header (for ngrok, `--host-header=rewrite`); see [AI agents and remote access](agents.md).
 
 This is a clean-slate contract. It replaced the earlier legacy-compatible read API (`/symbols…`, `/history…`,
 `/indicators/:name/:symbol`) with no adapters: those paths now answer `404 unknown-route`. The data behind it is

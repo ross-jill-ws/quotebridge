@@ -86,7 +86,7 @@ switch on **Real-account trading** there. A demo account trades from any of its 
 on; a real account needs one chart with the EA input `EnableRealTrading=true`. [Trading](trading.md) explains every
 gate, and [the Trading page](trading-page.md) the view.
 
-![The Trading page: two demo accounts with funds, positions and pending orders](images/trading-dark.png)
+![The Trading page: two demo accounts marked Demo, with funds, positions and pending orders](images/trading-dark.png)
 
 ## 8. Use it from scripts and agents
 
@@ -101,7 +101,9 @@ gate, and [the Trading page](trading-page.md) the view.
    mt4-quote-bridge markets candles EURUSD --broker Demo-Broker --timeframe H1
    ```
 
-Every CLI command and subcommand has `--help`.
+Every CLI command and subcommand has `--help`. Or let an AI agent do it: add the CLI's skill to Claude Code, Codex
+or a bot app such as Grok Bot, Dots or Muse, and ask for quotes, charts and trades in plain words, even from
+another computer through ngrok. See [AI agents and remote access](agents.md).
 
 ## Next
 

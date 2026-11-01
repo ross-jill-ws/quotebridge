@@ -1,7 +1,17 @@
 # Command-line client
 
-`mt4-quote-bridge` is QuoteBridge's command-line client (repository `mt4-quote-bridge-cli`). Each command calls one or
-more [REST API v1](rest-api.md) operations; this page lists them all. Trading rules are in [Trading](trading.md).
+`mt4-quote-bridge` is QuoteBridge's command-line client (repository
+[mt4-quote-bridge-cli](https://github.com/ross-jill-ws/mt4-quote-bridge-cli)). Each command calls one or more
+[REST API v1](rest-api.md) operations; this page lists them all. Trading rules are in [Trading](trading.md). To let an
+AI agent run it for you, from this PC or another computer, see [AI agents and remote access](agents.md).
+
+Install it by adding its agent skill (`npx skills@latest add https://github.com/ross-jill-ws/mt4-quote-bridge-cli`),
+which installs the CLI the first time the agent uses it, or on its own with Node.js 22.12 or later:
+
+```text
+npm pack github:ross-jill-ws/mt4-quote-bridge-cli
+npm install --global ./mt4-quote-bridge-cli-<version>.tgz
+```
 
 ```text
 mt4-quote-bridge <command> <subcommand> [options]
@@ -20,6 +30,8 @@ Every command has `--help` with its options, output and exit codes.
 | `config show` | Shows the effective server, config file and whether a key is saved (never the key) | — |
 
 - The app answers on this computer only (`127.0.0.1`, `localhost` or `[::1]`), on the HTTP port in Settings › Connection.
+  From another computer, go through a tunnel such as `ngrok http 5580 --host-header=rewrite` and pass its address to
+  `auth server`; see [AI agents and remote access](agents.md#use-it-from-another-computer-with-ngrok).
 - Create keys in the **app window › Settings › API keys**. `readonly` reads everything but screenshots; `trader` also
   takes screenshots and previews, executes and reviews requests. A `readonly` key's screenshot, preview, execute or
   review answers exit 4 (`insufficient-scope`).

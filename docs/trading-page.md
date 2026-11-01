@@ -92,6 +92,8 @@ market: QuoteBridge never substitutes it.
 
 Only the app window changes these; a remote browser sees them read-only.
 
+![Settings › Trading with Demo trading and Real-account trading switched on, the lot cap 1.0 and slippage 20 points](images/settings-light.png)
+
 - **Demo trading** (off by default). Switching it off blocks every new order, change, close and cancel at once. It
   cannot recall a request already sent: for an emergency, act in MetaTrader. Sent requests are still followed and can
   be reviewed while it is off.
@@ -99,6 +101,9 @@ Only the app window changes these; a remote browser sees them read-only.
   `EnableRealTrading=true`. Switching it on shows its risks and needs your acknowledgement; switching it off applies at
   once, blocks every new request on real accounts and, like Demo trading, recalls nothing already sent. It is
   independent of Demo trading.
+
+  ![Settings › Trading asking "Allow trading on real accounts?": four risks, an acknowledge box to tick, and the Allow real-account trading button greyed until it is ticked](images/settings-confirm-light.png)
+
 - **Lot cap for new orders** (1.0 by default) and **Slippage** (20 points by default). A change discards open previews.
 - **Order defaults**: per market (symbol and broker server), the lots, stop loss and take profit a new order starts
   with; each is optional. Stop loss and take profit are points from the entry, so they follow the price and the side.
