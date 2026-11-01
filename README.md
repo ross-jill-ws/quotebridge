@@ -35,8 +35,9 @@ scripts.
   → [indicator packages](docs/indicator-packages.md)
 - **Record and keep your history.** Record any market, keep a copy of the HST bars that survives MetaTrader trimming
   them, and download CSV or HST from the History page.
-- **Trading across accounts.** Preview an order on any demo account, check it, then send it. Real accounts are marked
-  and stay read-only until you opt in, in the app and on one chart; an unknown outcome is never sent twice. → [trading](docs/trading.md)
+- **Trading on demo and real accounts.** Preview an order, check it, then send it. Real-account trading is off by
+  default: a real account is marked and stays read-only until you set the EA input `EnableRealTrading` to true on one
+  of its charts and switch on Real-account trading in the app; an unknown outcome is never sent twice. → [trading](docs/trading.md)
 - **Built for scripts and agents.** A local REST API and the `mt4-quote-bridge` CLI serve markets, candles, indicator
   values, accounts, screenshots and trading requests, behind read-only or trader API keys. → [REST API](docs/rest-api.md)
 - **Ask an AI agent.** Add the [mt4-quote-bridge-cli](https://github.com/ross-jill-ws/mt4-quote-bridge-cli) skill to
@@ -97,7 +98,7 @@ agent the address ngrok prints. [AI agents and remote access](docs/agents.md) co
 a bot at work.
 
 To convert an MT4 indicator, an agent uses the
-[mt4-indicator-to-package](.claude/skills/mt4-indicator-to-package/SKILL.md) skill in this repository.
+[mt4-indicator-to-package](skills/mt4-indicator-to-package/SKILL.md) skill in this repository.
 
 ## Development
 

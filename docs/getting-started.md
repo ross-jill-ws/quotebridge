@@ -79,31 +79,55 @@ page) adds your own. To write one, or convert an MT4 indicator, see [Indicator p
 
 ![The Indicators page with the eight bundled packages](images/indicators-dark.png)
 
-## 7. Trade on demo accounts (optional)
+## 7. Trade on demo and real accounts (optional)
 
-Demo trading is off until you switch it on in **Settings › Trading**, and real accounts stay read-only unless you also
-switch on **Real-account trading** there. A demo account trades from any of its charts with AutoTrading
-on; a real account needs one chart with the EA input `EnableRealTrading=true`. [Trading](trading.md) explains every
-gate, and [the Trading page](trading-page.md) the view.
+QuoteBridge trades on both demo and real accounts.
+
+- **Demo accounts** can trade from any of their charts, with no EA input to set: just turn on AutoTrading in MetaTrader.
+  Switch on **Demo trading** in the app window's **Settings › Trading** before your first order.
+- **Real-account trading is off by default.** A real account stays read-only until you enable it in two places:
+  1. On exactly one chart of the account, press F7, open **Inputs** and set `EnableRealTrading` to `true`:
+
+     ![The QuoteBridge EA's Inputs tab with EnableRealTrading set to false, its default](images/ea-inputs-real-trading.png)
+
+  2. In the app window, switch on **Real-account trading** in **Settings › Trading** and confirm its risks.
+
+[Trading](trading.md) explains every gate, and [the Trading page](trading-page.md) the view.
 
 ![The Trading page: two demo accounts marked Demo, with funds, positions and pending orders](images/trading-dark.png)
 
 ## 8. Use it from scripts and agents
 
 1. In the app window, open **Settings › API keys** and create a key: `readonly` to read, `trader` to also take
-   screenshots and preview and execute demo trades. The key is shown once.
-2. Call the [REST API](rest-api.md) on `http://127.0.0.1:5580/api/v1` with `Authorization: Bearer <key>`, or use the
-   [command-line client](cli.md):
+   screenshots and preview and execute trades. The key is shown once.
+2. **REST API.** Call the [REST API](rest-api.md) on `http://127.0.0.1:5580/api/v1` with
+   `Authorization: Bearer <key>`.
+3. **CLI.** The command-line client `mt4-quote-bridge`
+   ([mt4-quote-bridge-cli on GitHub](https://github.com/ross-jill-ws/mt4-quote-bridge-cli)) needs Node.js 22.12 or
+   later. Install it with npm:
 
    ```
-   mt4-quote-bridge auth login
+   npm pack github:ross-jill-ws/mt4-quote-bridge-cli
+   npm install --global ./mt4-quote-bridge-cli-<version>.tgz
+   ```
+
+   Then sign in and try it:
+
+   ```
+   mt4-quote-bridge auth server       # accept the default http://127.0.0.1:5580
+   mt4-quote-bridge auth login        # enter your API key
+   mt4-quote-bridge accounts list
    mt4-quote-bridge markets list
-   mt4-quote-bridge markets candles EURUSD --broker Demo-Broker --timeframe H1
+   mt4-quote-bridge markets quote XAUUSD --broker EasyForex-Demo
    ```
 
-Every CLI command and subcommand has `--help`. Or let an AI agent do it: add the CLI's skill to Claude Code, Codex
-or a bot app such as Grok Bot, Dots or Muse, and ask for quotes, charts and trades in plain words, even from
-another computer through ngrok. See [AI agents and remote access](agents.md).
+   Use your own broker server and symbol in the last line. Every command and subcommand has `--help`; the full list
+   is in [Command-line client](cli.md).
+
+   To use it from a bot app such as Grok Bot, Muse or Dots, which cannot reach `127.0.0.1` on your PC, open an ngrok
+   tunnel to the app and give the bot its address: see
+   [Use it from another computer with ngrok](agents.md#use-it-from-another-computer-with-ngrok).
+   [AI agents and remote access](agents.md) covers adding the CLI's skill to an agent and what to ask.
 
 ## Next
 

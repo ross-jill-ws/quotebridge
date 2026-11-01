@@ -213,7 +213,7 @@ A package is its `id` plus its `version`, and the app keeps one version of each 
 
 ## Converting an MT4 indicator
 
-This repository has a skill for coding agents, `mt4-indicator-to-package` (in `.claude/skills/`), that converts an
+This repository has a skill for coding agents, `mt4-indicator-to-package` (in `skills/`), that converts an
 `.mq4` indicator into a package: it checks the indicator can be converted, maps its buffers, writes the four files and
 tests against values worked out by hand, then checks the result against values you copy from MT4's Data Window. Ask
 your agent to convert the indicator and give it the `.mq4` file.

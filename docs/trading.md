@@ -36,8 +36,11 @@ reports (`IsDemo()`), never a setting.
    - **Demo account:** any chart running EA 1.13 or later can trade; there is no input to set. With several, the app
      uses the first ready one (by terminal, then chart). An older EA trades only with its old input
      `EnableDemoTrading=true`; with none, the account shows `zero`.
-   - **Real account:** exactly one chart with the EA input `EnableRealTrading=true` (EA 1.13 or later). With none, the
-     account shows `real-account` and stays read-only; with more than one, `multiple`.
+   - **Real account:** exactly one chart with the EA input `EnableRealTrading=true` (EA 1.13 or later; F7 ›
+     **Inputs**). It is `false` by default. With none, the account shows `real-account` and stays read-only; with more
+     than one, `multiple`.
+
+     ![The QuoteBridge EA's Inputs tab with EnableRealTrading set to false, its default](images/ea-inputs-real-trading.png)
 3. **The executor is ready:** MetaTrader is connected, **AutoTrading** is on, the EA may trade (its *Allow live
    trading* option), and the EA sees fresh server time. A chart that is enabled but not ready shows `not-ready`.
 4. **The EA's cap is known and positive.** The EA input `MaxDemoOrderLots` (default 1.0, needs EA 1.12 or later) caps
