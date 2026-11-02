@@ -1,7 +1,7 @@
 name: Release
 
 # A v* tag builds the DLL, the app and the installer, checks the package against the tagged commit
-# and attaches the installer to a GitHub release (unsigned until SignPath, ADR 8).
+# and attaches the installer to a GitHub release (unsigned for now; SignPath deferred, ADR 8).
 # Run it by hand (workflow_dispatch) to get the installer as a workflow artifact, without a release.
 # Before tagging, compile the EA locally with MetaEditor: 0 errors, 0 warnings (ADR 3): `npm run compile:ea`.
 
@@ -89,7 +89,7 @@ jobs:
           $notes = @"
           QuoteBridge for MetaTrader $env:APP_VERSION for Windows x64. Installs for the current user; no administrator rights needed.
 
-          The installer is not code-signed yet (SignPath application pending), so Windows SmartScreen may warn before it runs. See the [code signing policy](https://github.com/ross-jill-ws/quotebridge#code-signing-policy).
+          The installer is not code-signed yet, so Windows SmartScreen may warn before it runs. See the [code signing policy](https://github.com/ross-jill-ws/quotebridge#code-signing-policy).
 
           MetaTrader is the registered trademark of MetaQuotes Ltd. QuoteBridge for MetaTrader is an independent project, not affiliated with or endorsed by MetaQuotes Ltd.
           "@

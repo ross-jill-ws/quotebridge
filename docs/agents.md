@@ -28,8 +28,8 @@ The bot adds `mt4-quote-bridge-cli` to its skill library.
 
 ![A bot installs the mt4-quote-bridge-cli skill from GitHub, connects to QuoteBridge through an ngrok address, asks for an API key and confirms it is signed in](images/agent-install-skill.gif)
 
-You don't install the CLI yourself. The first time the agent uses the skill, the skill installs `mt4-quote-bridge`
-from GitHub, which can take a minute. Later it updates the CLI when needed. Run `npx skills@latest update` to update
+You don't install the CLI yourself. The first time the agent uses the skill, the agent checks for `mt4-quote-bridge`
+and, when it is missing or too old, installs it from npm (`npm install --global mt4-quote-bridge-cli@latest`). Run `npx skills@latest update` to update
 the skill itself.
 
 ## Connect the agent to the app
